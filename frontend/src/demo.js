@@ -181,13 +181,59 @@ export const demoApi = {
   crawl: (projectId) => {
     const existingCrawl = demoRuns.find((r) => r.projectId === projectId && r.type === "crawl");
     if (existingCrawl) return Promise.resolve({ runId: existingCrawl.id });
-    return Promise.resolve({ runId: "run-2" });
+    const project = demoProjects.find((p) => p.id === projectId);
+    const url = project ? project.url : "https://example.com";
+    const newRun = {
+      id: "run-crawl-" + Date.now(),
+      projectId,
+      type: "crawl",
+      status: "completed",
+      startedAt: new Date(Date.now() - 60000).toISOString(),
+      finishedAt: new Date().toISOString(),
+      pagesFound: 3,
+      tests: [],
+      logs: [
+        `[${new Date().toISOString()}] \uD83D\uDD77\uFE0F  Starting crawl of ${url}`,
+        `[${new Date().toISOString()}] \uD83D\uDCC4 Visiting (depth 0): ${url}/`,
+        `[${new Date().toISOString()}] \uD83D\uDCC4 Visiting (depth 1): ${url}/about`,
+        `[${new Date().toISOString()}] \uD83D\uDCC4 Visiting (depth 1): ${url}/contact`,
+        `[${new Date().toISOString()}] \u2705 Crawl complete. Found 3 pages. Generating tests with AI...`,
+        `[${new Date().toISOString()}] \uD83C\uDF89 Done! Demo mode — no new tests generated.`,
+      ],
+    };
+    demoRuns.push(newRun);
+    return Promise.resolve({ runId: newRun.id });
   },
 
   runTests: (projectId) => {
     const existingRun = demoRuns.find((r) => r.projectId === projectId && r.type === "test_run");
     if (existingRun) return Promise.resolve({ runId: existingRun.id });
-    return Promise.resolve({ runId: "run-1" });
+    const tests = demoTests.filter((t) => t.projectId === projectId);
+    const newRun = {
+      id: "run-test-" + Date.now(),
+      projectId,
+      type: "test_run",
+      status: "completed",
+      startedAt: new Date(Date.now() - 30000).toISOString(),
+      finishedAt: new Date().toISOString(),
+      passed: tests.length,
+      failed: 0,
+      total: tests.length,
+      logs: [
+        `[${new Date().toISOString()}] \uD83D\uDE80 Starting test run: ${tests.length} tests`,
+        ...tests.map((t) => `[${new Date().toISOString()}]   \u2705 PASSED: ${t.name}`),
+        `[${new Date().toISOString()}] \uD83C\uDFC1 Run complete: ${tests.length} passed, 0 failed out of ${tests.length}`,
+      ],
+      results: tests.map((t) => ({
+        testId: t.id,
+        testName: t.name,
+        status: "passed",
+        durationMs: 2000 + Math.floor(Math.random() * 3000),
+        error: null,
+      })),
+    };
+    demoRuns.push(newRun);
+    return Promise.resolve({ runId: newRun.id });
   },
 
   deleteTest: (projectId, testId) => {
