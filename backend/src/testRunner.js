@@ -132,7 +132,7 @@ async function executeTest(test, context, screenshotDir) {
   return result;
 }
 
-export async function runTests(project, tests, run, db) {
+export async function runTests(project, tests, run, db, options = {}) {
   // Create artifacts directories for this run
   const runDir = path.join(ARTIFACTS_DIR, run.id);
   const videoDir = path.join(runDir, "videos");
@@ -146,7 +146,10 @@ export async function runTests(project, tests, run, db) {
   run.artifactsDir = runDir;
   run.artifactsUrl = `/artifacts/${run.id}`;
 
-  const headless = (process.env.HEADLESS || "true").toLowerCase() === "true";
+  // Per-request headed flag overrides the env var default
+  const headless = options.headed === true
+    ? false
+    : (process.env.HEADLESS || "true").toLowerCase() === "true";
 
   const browser = await chromium.launch({
     headless,
