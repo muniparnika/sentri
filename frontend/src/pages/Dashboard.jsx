@@ -120,7 +120,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
-              <div style={{ fontSize: "3rem", marginBottom: 16 }}>🐻</div>
+              <div style={{ fontSize: "3rem", marginBottom: 16 }}>🛡️</div>
               <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "1.2rem", marginBottom: 8 }}>No runs yet</div>
               <div style={{ color: "var(--text2)", marginBottom: 24 }}>Create a project and start crawling to generate your first tests</div>
               <button className="btn btn-primary" onClick={() => navigate("/projects/new")}>

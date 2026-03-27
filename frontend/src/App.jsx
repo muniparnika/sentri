@@ -7,9 +7,11 @@ import ProjectDetail from "./pages/ProjectDetail.jsx";
 import NewProject from "./pages/NewProject.jsx";
 import RunDetail from "./pages/RunDetail.jsx";
 
+const basename = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />

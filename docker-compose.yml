@@ -3,7 +3,7 @@ version: "3.9"
 services:
   backend:
     build: ./backend
-    container_name: bearqa-backend
+    container_name: sentri-backend
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PORT=3001
@@ -24,7 +24,7 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: bearqa-frontend
+    container_name: sentri-frontend
     ports:
       - "80:80"
     depends_on:
@@ -34,4 +34,4 @@ services:
 
 networks:
   default:
-    name: bearqa-network
+    name: sentri-network
