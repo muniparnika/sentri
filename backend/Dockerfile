@@ -1,7 +1,6 @@
 FROM node:20-slim
 
 # Install Chromium + all Playwright system deps
-# libasound2t64 is the correct name in Debian Bookworm (node:20-slim base)
 RUN apt-get update && apt-get install -y \
   chromium \
   libnss3 \
@@ -13,7 +12,7 @@ RUN apt-get update && apt-get install -y \
   libxfixes3 \
   libxrandr2 \
   libgbm1 \
-  libasound2t64 \
+  libasound2 \
   libpango-1.0-0 \
   libcairo2 \
   && rm -rf /var/lib/apt/lists/*

@@ -178,11 +178,17 @@ export const demoApi = {
     return Promise.resolve(project);
   },
 
-  crawl: () =>
-    Promise.resolve({ runId: "demo-crawl-info", message: "Demo mode: crawling is simulated. In production, connect a backend to crawl real sites." }),
+  crawl: (projectId) => {
+    const existingCrawl = demoRuns.find((r) => r.projectId === projectId && r.type === "crawl");
+    if (existingCrawl) return Promise.resolve({ runId: existingCrawl.id });
+    return Promise.resolve({ runId: "run-2" });
+  },
 
-  runTests: () =>
-    Promise.resolve({ runId: "demo-run-info", message: "Demo mode: test execution is simulated. In production, connect a backend to run real tests." }),
+  runTests: (projectId) => {
+    const existingRun = demoRuns.find((r) => r.projectId === projectId && r.type === "test_run");
+    if (existingRun) return Promise.resolve({ runId: existingRun.id });
+    return Promise.resolve({ runId: "run-1" });
+  },
 
   deleteTest: (projectId, testId) => {
     const idx = demoTests.findIndex((t) => t.id === testId);

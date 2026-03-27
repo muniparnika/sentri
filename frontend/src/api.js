@@ -33,9 +33,9 @@ async function req(method, path, body) {
     const runMatch = route.match(/^\/runs\/([^/]+)$/);
     if (runMatch) return demoApi.getRun(runMatch[1]);
     const crawlMatch = route.match(/^\/projects\/([^/]+)\/crawl$/);
-    if (crawlMatch) return demoApi.crawl();
+    if (crawlMatch) return demoApi.crawl(crawlMatch[1]);
     const runTestsMatch = route.match(/^\/projects\/([^/]+)\/run$/);
-    if (runTestsMatch) return demoApi.runTests();
+    if (runTestsMatch) return demoApi.runTests(runTestsMatch[1]);
     return Promise.reject(new Error("Demo: route not found"));
   }
 
