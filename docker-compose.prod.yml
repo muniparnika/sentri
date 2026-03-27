@@ -1,15 +1,15 @@
 # Production compose — uses pre-built images from GitHub Container Registry.
 # Used by the CD pipeline. On your server, run:
-#   BACKEND_IMAGE=ghcr.io/YOU/bearqa-backend:latest \
-#   FRONTEND_IMAGE=ghcr.io/YOU/bearqa-frontend:latest \
+#   BACKEND_IMAGE=ghcr.io/YOU/sentri-backend:latest \
+#   FRONTEND_IMAGE=ghcr.io/YOU/sentri-frontend:latest \
 #   docker compose -f docker-compose.prod.yml up -d
 
 version: "3.9"
 
 services:
   backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/your-org/bearqa-backend:latest}
-    container_name: bearqa-backend
+    image: ${BACKEND_IMAGE:-ghcr.io/your-org/sentri-backend:latest}
+    container_name: sentri-backend
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PORT=3001
@@ -29,8 +29,8 @@ services:
       start_period: 20s
 
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/your-org/bearqa-frontend:latest}
-    container_name: bearqa-frontend
+    image: ${FRONTEND_IMAGE:-ghcr.io/your-org/sentri-frontend:latest}
+    container_name: sentri-frontend
     ports:
       - "80:80"
     depends_on:
@@ -40,4 +40,4 @@ services:
 
 networks:
   default:
-    name: bearqa-network
+    name: sentri-network

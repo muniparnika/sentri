@@ -32,10 +32,10 @@ function Sidebar() {
             width: 34, height: 34, background: "var(--accent)", borderRadius: 8,
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 18, boxShadow: "0 0 16px rgba(0,229,255,0.4)",
-          }}>🐻</div>
+          }}>🛡️</div>
           <div>
-            <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "1rem", color: "var(--text)" }}>BearQA</div>
-            <div style={{ fontSize: "0.7rem", color: "var(--text3)", fontFamily: "var(--font-mono)" }}>autonomous qa</div>
+              <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "1rem", color: "var(--text)" }}>Sentri</div>
+              <div style={{ fontSize: "0.7rem", color: "var(--text3)", fontFamily: "var(--font-mono)" }}>autonomous qa</div>
           </div>
         </div>
       </div>

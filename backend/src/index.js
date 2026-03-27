@@ -163,4 +163,4 @@ app.get("/api/dashboard", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🐻 QA API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🛡️ Sentri QA API running on port ${PORT}`));

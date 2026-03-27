@@ -30,7 +30,7 @@ export default function Projects() {
         </div>
       ) : projects.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "80px 40px" }}>
-          <div style={{ fontSize: "3rem", marginBottom: 16 }}>🌐</div>
+          <div style={{ fontSize: "3rem", marginBottom: 16 }}>🛡️</div>
           <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "1.2rem", marginBottom: 8 }}>No projects yet</div>
           <div style={{ color: "var(--text2)", marginBottom: 24 }}>Add your first web application to start autonomous QA testing</div>
           <button className="btn btn-primary" onClick={() => navigate("/projects/new")}>
