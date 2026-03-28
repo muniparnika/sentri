@@ -199,7 +199,7 @@ export async function crawlAndGenerateTests(project, run, db, externalOnProgress
   log(`📦 Crawl complete. ${pageSnapshots.length} pages snapshotted.`);
 
   // ── PIPELINE ─────────────────────────────
-  const pipelineResults = await runPipelineForCrawl(pageSnapshots);
+  const pipelineResults = await runPipelineForCrawl(pageSnapshots, log);
 
   const allTests = [];
 

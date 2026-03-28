@@ -21,14 +21,13 @@ import { runAgent } from "./agent.js";
  * @param {Array}  crawlOutput.elements - Raw DOM elements snapshot
  * @returns {Promise<PipelineResult>}
  */
-export async function runPipeline(crawlOutput) {
+export async function runPipeline(crawlOutput, log = console.log) {
   const { url, elements } = crawlOutput;
-  console.log(
-    `\n🚀 [Pipeline] Starting for ${url} with ${elements.length} raw elements`
-  );
+
+  log(`🚀 [Pipeline] Starting for ${url} with ${elements.length} raw elements`);
 
   // ── Stage 1: Filter ─────────────────────────────────────────────
-  console.log("🧹 [Pipeline] Stage 1: Filter");
+  log("🧹 [Pipeline] Stage 1: Filter");
 
   const filterInput = {
     page_url: url,
@@ -44,18 +43,16 @@ RULES:
 `,
   };
 
-  let filterOutput = await runAgent("filter", filterInput);
+  let filterOutput = await runAgent("filter", filterInput, log);
 
-  console.log("   Filter raw output:", JSON.stringify(filterOutput, null, 2));
+  log(`📥 Filter raw output: ${JSON.stringify(filterOutput)}`);
 
   // ✅ Fallback if filter removes everything
   if (
     !filterOutput.filtered_elements ||
     filterOutput.filtered_elements.length === 0
   ) {
-    console.log(
-      "   ⚠ Filter removed everything — using fallback (all elements)"
-    );
+    log("⚠ Filter removed everything — using fallback (all elements)");
 
     filterOutput.filtered_elements = elements.map((el, i) => ({
       id: `el-${i}`,
@@ -68,12 +65,10 @@ RULES:
     }));
   }
 
-  console.log(
-    `   ✓ ${filterOutput.filtered_elements.length} elements kept`
-  );
+  log(`✅ ${filterOutput.filtered_elements.length} elements kept`);
 
   // ── Stage 2: Planner ─────────────────────────────────────────────
-  console.log("🧩 [Pipeline] Stage 2: Planner");
+  log("🧩 [Pipeline] Stage 2: Planner");
 
   const plannerInput = {
     page_url: url,
@@ -98,20 +93,15 @@ DO NOT return empty output.
 `,
   };
 
-  let plannerOutput = await runAgent("planner", plannerInput);
+  let plannerOutput = await runAgent("planner", plannerInput, log);
 
-  console.log(
-    "   Planner raw output:",
-    JSON.stringify(plannerOutput, null, 2)
-  );
+  log(`📥 Planner raw output: ${JSON.stringify(plannerOutput)}`);
 
   let plans = plannerOutput.test_plans || [];
 
-  // ✅ Planner fallback (CRITICAL FIX)
+  // ✅ Planner fallback
   if (plans.length === 0) {
-    console.log(
-      "   ⚠ Planner returned 0 plans — generating fallback plans"
-    );
+    log("⚠ Planner returned 0 plans — generating fallback plans");
 
     plans = filterOutput.filtered_elements.slice(0, 3).map((el, i) => ({
       id: `fallback-${i}`,
@@ -124,16 +114,14 @@ DO NOT return empty output.
     }));
   }
 
-  console.log(`   ✓ ${plans.length} test plans created`);
+  log(`✅ ${plans.length} test plans created`);
 
   // ── Stage 3 + 4: Executor → Assertion Enhancer ───────────────────
   const enhancedTests = [];
 
   for (const plan of plans) {
     try {
-      console.log(
-        `\n⚡ [Pipeline] Stage 3: Executor for plan "${plan.goal}"`
-      );
+      log(`⚡ [Pipeline] Stage 3: Executor for "${plan.goal}"`);
 
       const executorInput = {
         plan,
@@ -148,13 +136,11 @@ RULES:
 `,
       };
 
-      const executorOutput = await runAgent("executor", executorInput);
+      const executorOutput = await runAgent("executor", executorInput, log);
 
-      console.log(`   ✓ Generated: ${executorOutput?.test_file}`);
+      log(`✅ Generated file: ${executorOutput?.test_file}`);
 
-      console.log(
-        `🎯 [Pipeline] Stage 4: Assertion Enhancer for "${plan.goal}"`
-      );
+      log(`🎯 [Pipeline] Stage 4: Assertion Enhancer for "${plan.goal}"`);
 
       const enhancerInput = {
         plan_id: plan.id,
@@ -172,11 +158,12 @@ RULES:
 
       const enhancedOutput = await runAgent(
         "assertion_enhancer",
-        enhancerInput
+        enhancerInput,
+        log
       );
 
-      console.log(
-        `   ✓ Assertions: ${enhancedOutput.original_assertion_count} → ${enhancedOutput.enhanced_assertion_count}`
+      log(
+        `✅ Assertions improved: ${enhancedOutput.original_assertion_count} → ${enhancedOutput.enhanced_assertion_count}`
       );
 
       enhancedTests.push({
@@ -187,15 +174,12 @@ RULES:
         assertion_count: enhancedOutput.enhanced_assertion_count,
       });
     } catch (err) {
-      console.error(
-        `❌ Error processing plan "${plan.goal}":`,
-        err.stack
-      );
+      log(`❌ Error processing plan "${plan.goal}": ${err.message}`);
     }
   }
 
-  console.log(
-    `\n✅ [Pipeline] Complete for ${url}: ${enhancedTests.length} high-quality tests generated`
+  log(
+    `✅ [Pipeline] Complete for ${url}: ${enhancedTests.length} tests generated`
   );
 
   return {
@@ -217,8 +201,9 @@ RULES:
  * @param {object} executionResult - Result from testRunner with logs/errors
  * @returns {Promise<AuditReport>}
  */
-export async function auditFailedTest(executionResult) {
-  console.log(`\n🧪 [Auditor] Analyzing failure: ${executionResult.test_id}`);
+export async function auditFailedTest(executionResult, log) {
+  log?.(`🧪 [Auditor] Analyzing failure: ${executionResult.test_id}`);
+
   const auditInput = {
     test_id: executionResult.test_id,
     test_code: executionResult.test_code,
@@ -227,7 +212,7 @@ export async function auditFailedTest(executionResult) {
     instruction:
       "Analyze this test failure. Classify it, find root cause, and prescribe a fix.",
   };
-  return runAgent("auditor", auditInput);
+  return runAgent("auditor", auditInput,log);
 }
 
 /**
@@ -237,16 +222,18 @@ export async function auditFailedTest(executionResult) {
  * @param {Array<object>} crawlResults - Array of per-page crawl outputs
  * @returns {Promise<Array<PipelineResult>>}
  */
-export async function runPipelineForCrawl(crawlResults) {
+export async function runPipelineForCrawl(crawlResults, log) {
   const results = [];
+
   for (const pageResult of crawlResults) {
     try {
-      const pipelineResult = await runPipeline(pageResult);
+      const pipelineResult = await runPipeline(pageResult, log);
       results.push(pipelineResult);
     } catch (err) {
-      console.error(`[Pipeline] Error for ${pageResult.url}:`, err.message);
+      log(`❌ [Pipeline] Error for ${pageResult.url}: ${err.message}`);
       results.push({ url: pageResult.url, error: err.message });
     }
   }
+
   return results;
 }
