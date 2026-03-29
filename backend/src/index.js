@@ -5,22 +5,30 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { fileURLToPath } from "url";
 import { crawlAndGenerateTests } from "./crawler.js";
-import { runTests, runEvents, ARTIFACTS_DIR } from "./testRunner.js";
+import { runTests } from "./testRunner.js";
 import { getDb } from "./db.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { getProviderName, hasProvider, setRuntimeKey, getProviderMeta, getConfiguredKeys } from "./aiProvider.js";
 
 dotenv.config();
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = getDb();
+// ─── Serve Playwright artifacts ────────────────────────────────────────────
+const ARTIFACTS_DIR = path.join(__dirname, "..", "artifacts");
+app.use("/artifacts", express.static(ARTIFACTS_DIR, {
+  setHeaders(res, fp) {
+    if (fp.endsWith(".webm")) res.setHeader("Content-Type", "video/webm");
+    if (fp.endsWith(".zip"))  res.setHeader("Content-Type", "application/zip");
+    if (fp.endsWith(".png"))  res.setHeader("Content-Type", "image/png");
+    res.setHeader("Accept-Ranges", "bytes");
+  },
+}));
 
-// Serve artifacts (videos, screenshots, traces) as static files
-app.use("/artifacts", express.static(ARTIFACTS_DIR));
+const db = getDb();
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
@@ -75,7 +83,6 @@ app.post("/api/projects/:id/crawl", async (req, res) => {
     run.status = "failed";
     run.error = err.message;
     run.finishedAt = new Date().toISOString();
-    run.logs.push(`[${new Date().toISOString()}] FATAL: ${err.message}`);
   });
 
   res.json({ runId });
@@ -87,8 +94,11 @@ app.post("/api/projects/:id/run", async (req, res) => {
   const project = db.projects[req.params.id];
   if (!project) return res.status(404).json({ error: "not found" });
 
-  const tests = Object.values(db.tests).filter((t) => t.projectId === project.id);
-  if (!tests.length) return res.status(400).json({ error: "no tests found, crawl first" });
+  const allTests = Object.values(db.tests).filter((t) => t.projectId === project.id);
+  // Only run approved tests — draft/rejected tests must not enter regression
+  const tests = allTests.filter((t) => t.reviewStatus === "approved");
+  if (!allTests.length) return res.status(400).json({ error: "no tests found, crawl first" });
+  if (!tests.length) return res.status(400).json({ error: "no approved tests — review generated tests and approve them before running regression" });
 
   const runId = uuidv4();
   const run = {
@@ -102,68 +112,17 @@ app.post("/api/projects/:id/run", async (req, res) => {
     passed: 0,
     failed: 0,
     total: tests.length,
+    testQueue: tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
   };
   db.runs[runId] = run;
 
-  const { headed } = req.body || {};
-
-  runTests(project, tests, run, db, { headed: !!headed }).catch((err) => {
+  runTests(project, tests, run, db).catch((err) => {
     run.status = "failed";
     run.error = err.message;
     run.finishedAt = new Date().toISOString();
-    run.logs.push(`[${new Date().toISOString()}] FATAL: ${err.message}`);
-    runEvents.emit(`log:${run.id}`, `[${new Date().toISOString()}] FATAL: ${err.message}`);
-    runEvents.emit(`complete:${run.id}`, run);
   });
 
   res.json({ runId });
-});
-
-// ─── SSE: Real-time log streaming ───────────────────────────────────────────────────
-
-app.get("/api/runs/:runId/stream", (req, res) => {
-  const run = db.runs[req.params.runId];
-  if (!run) return res.status(404).json({ error: "not found" });
-
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-  });
-
-  // Send existing logs first
-  for (const line of run.logs) {
-    res.write(`data: ${JSON.stringify({ type: "log", data: line })}\n\n`);
-  }
-
-  // If already completed, send final state and close
-  if (run.status !== "running") {
-    res.write(`data: ${JSON.stringify({ type: "complete", data: run })}\n\n`);
-    res.end();
-    return;
-  }
-
-  // Listen for new log entries
-  const onLog = (entry) => {
-    res.write(`data: ${JSON.stringify({ type: "log", data: entry })}\n\n`);
-  };
-
-  const onComplete = (completedRun) => {
-    res.write(`data: ${JSON.stringify({ type: "complete", data: completedRun })}\n\n`);
-    cleanup();
-    res.end();
-  };
-
-  runEvents.on(`log:${run.id}`, onLog);
-  runEvents.on(`complete:${run.id}`, onComplete);
-
-  const cleanup = () => {
-    runEvents.off(`log:${run.id}`, onLog);
-    runEvents.off(`complete:${run.id}`, onComplete);
-  };
-
-  req.on("close", cleanup);
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -173,12 +132,85 @@ app.get("/api/projects/:id/tests", (req, res) => {
   res.json(tests);
 });
 
+// ── Single test by ID (for TestDetail page) ───────────────────────────────────
+app.get("/api/tests/:testId", (req, res) => {
+  const test = db.tests[req.params.testId];
+  if (!test) return res.status(404).json({ error: "not found" });
+  res.json(test);
+});
+
+// ── Manual test creation ──────────────────────────────────────────────────────
+app.post("/api/projects/:id/tests", (req, res) => {
+  const project = db.projects[req.params.id];
+  if (!project) return res.status(404).json({ error: "project not found" });
+
+  const { name, description, steps, playwrightCode, priority, type } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
+
+  const testId = uuidv4();
+  const test = {
+    id: testId,
+    projectId: project.id,
+    name: name.trim(),
+    description: description?.trim() || "",
+    steps: Array.isArray(steps) ? steps : [],
+    playwrightCode: playwrightCode || null,
+    priority: priority || "medium",
+    type: type || "manual",
+    sourceUrl: project.url,
+    pageTitle: project.name,
+    createdAt: new Date().toISOString(),
+    lastResult: null,
+    lastRunAt: null,
+    qualityScore: 50,
+    isJourneyTest: false,
+    reviewStatus: "approved", // manually created tests are pre-approved
+    reviewedAt: new Date().toISOString(),
+  };
+
+  db.tests[testId] = test;
+  res.status(201).json(test);
+});
+
 app.delete("/api/projects/:id/tests/:testId", (req, res) => {
   delete db.tests[req.params.testId];
   res.json({ ok: true });
 });
 
-// ─── Runs ─────────────────────────────────────────────────────────────────────
+// ── Run a single test by ID ───────────────────────────────────────────────────
+app.post("/api/tests/:testId/run", async (req, res) => {
+  const test = db.tests[req.params.testId];
+  if (!test) return res.status(404).json({ error: "test not found" });
+
+  const project = db.projects[test.projectId];
+  if (!project) return res.status(404).json({ error: "project not found" });
+
+  const runId = uuidv4();
+  const run = {
+    id: runId,
+    projectId: project.id,
+    type: "test_run",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    logs: [],
+    results: [],
+    passed: 0,
+    failed: 0,
+    total: 1,
+    testQueue: [{ id: test.id, name: test.name, steps: test.steps || [] }],
+  };
+  db.runs[runId] = run;
+
+  runTests(project, [test], run, db).catch((err) => {
+    run.status = "failed";
+    run.error = err.message;
+    run.finishedAt = new Date().toISOString();
+  });
+
+  res.json({ runId });
+});
+
+
 
 app.get("/api/projects/:id/runs", (req, res) => {
   const runs = Object.values(db.runs)
@@ -223,5 +255,109 @@ app.get("/api/dashboard", (req, res) => {
   });
 });
 
+// ── Config & Settings ─────────────────────────────────────────────────────────
+
+// GET /api/config — provider info for the LLM badge shown everywhere
+app.get("/api/config", (req, res) => {
+  const meta = getProviderMeta();
+  res.json({
+    provider: meta?.provider || null,
+    providerName: meta?.name || "No provider configured",
+    model: meta?.model || null,
+    color: meta?.color || null,
+    hasProvider: hasProvider(),
+    supportedProviders: [
+      { id: "anthropic", name: "Claude Sonnet",    model: "claude-sonnet-4-20250514", docsUrl: "https://console.anthropic.com/settings/keys" },
+      { id: "openai",    name: "GPT-4o-mini",      model: "gpt-4o-mini",              docsUrl: "https://platform.openai.com/api-keys" },
+      { id: "google",    name: "Gemini 2.5 Flash", model: "gemini-2.5-flash",         docsUrl: "https://aistudio.google.com/apikey" },
+    ],
+  });
+});
+
+// GET /api/settings — returns masked key status (never full keys)
+app.get("/api/settings", (req, res) => {
+  res.json(getConfiguredKeys());
+});
+
+// POST /api/settings — save API key at runtime (no server restart needed)
+app.post("/api/settings", (req, res) => {
+  const { provider, apiKey } = req.body;
+  const validProviders = ["anthropic", "openai", "google"];
+
+  if (!provider || !validProviders.includes(provider)) {
+    return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
+  }
+  if (!apiKey || apiKey.trim().length < 10) {
+    return res.status(400).json({ error: "apiKey is required and must be at least 10 characters" });
+  }
+
+  setRuntimeKey(provider, apiKey.trim());
+
+  res.json({
+    ok: true,
+    provider,
+    providerName: getProviderMeta()?.name || provider,
+    message: `${provider} API key saved. Provider is now active.`,
+  });
+});
+
+// DELETE /api/settings/:provider — remove a key
+app.delete("/api/settings/:provider", (req, res) => {
+  const { provider } = req.params;
+  setRuntimeKey(provider, "");
+  res.json({ ok: true });
+});
+
+// ── Health ────────────────────────────────────────────────────────────────────
+app.get("/health", (req, res) => res.json({ ok: true }));
+
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🛡️ Sentri QA API running on port ${PORT}`));
+
+// ─── Test Review: Approve / Reject / Restore / Bulk ──────────────────────────
+
+app.patch("/api/projects/:id/tests/:testId/approve", (req, res) => {
+  const test = db.tests[req.params.testId];
+  if (!test || test.projectId !== req.params.id)
+    return res.status(404).json({ error: "not found" });
+  test.reviewStatus = "approved";
+  test.reviewedAt = new Date().toISOString();
+  res.json(test);
+});
+
+app.patch("/api/projects/:id/tests/:testId/reject", (req, res) => {
+  const test = db.tests[req.params.testId];
+  if (!test || test.projectId !== req.params.id)
+    return res.status(404).json({ error: "not found" });
+  test.reviewStatus = "rejected";
+  test.reviewedAt = new Date().toISOString();
+  res.json(test);
+});
+
+app.patch("/api/projects/:id/tests/:testId/restore", (req, res) => {
+  const test = db.tests[req.params.testId];
+  if (!test || test.projectId !== req.params.id)
+    return res.status(404).json({ error: "not found" });
+  test.reviewStatus = "draft";
+  test.reviewedAt = null;
+  res.json(test);
+});
+
+// NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
+app.post("/api/projects/:id/tests/bulk", (req, res) => {
+  const { testIds, action } = req.body;
+  if (!testIds || !Array.isArray(testIds) || !["approve", "reject", "restore"].includes(action))
+    return res.status(400).json({ error: "testIds[] and valid action required" });
+  const statusMap = { approve: "approved", reject: "rejected", restore: "draft" };
+  const updated = [];
+  testIds.forEach((tid) => {
+    const test = db.tests[tid];
+    if (test && test.projectId === req.params.id) {
+      test.reviewStatus = statusMap[action];
+      test.reviewedAt = action === "restore" ? null : new Date().toISOString();
+      updated.push(test);
+    }
+  });
+  res.json({ updated: updated.length, tests: updated });
+});
+
+app.listen(PORT, () => console.log(`🐻 Sentri API running on port ${PORT}`));

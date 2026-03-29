@@ -1,197 +1,385 @@
 import { chromium } from "playwright";
 import { v4 as uuidv4 } from "uuid";
-import fs from "fs";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
-import { EventEmitter } from "events";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-export const ARTIFACTS_DIR = path.join(__dirname, "..", "artifacts");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Global event emitter for SSE log streaming
-export const runEvents = new EventEmitter();
-runEvents.setMaxListeners(50);
+const ARTIFACTS_DIR = path.join(__dirname, "..", "artifacts");
+const VIDEOS_DIR    = path.join(ARTIFACTS_DIR, "videos");
+const TRACES_DIR    = path.join(ARTIFACTS_DIR, "traces");
+const SHOTS_DIR     = path.join(ARTIFACTS_DIR, "screenshots");
 
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+[ARTIFACTS_DIR, VIDEOS_DIR, TRACES_DIR, SHOTS_DIR].forEach((d) => {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+});
 
 function log(run, msg) {
   const entry = `[${new Date().toISOString()}] ${msg}`;
   run.logs.push(entry);
   console.log(entry);
-  // Emit event for SSE streaming
-  runEvents.emit(`log:${run.id}`, entry);
 }
 
-async function executeTest(test, context, screenshotDir) {
+/**
+ * extractTestBody(playwrightCode)
+ *
+ * Pulls the async function body out of the generated Playwright test so we can
+ * run it directly against an already-open page/context — without needing to
+ * spawn a whole new Playwright test runner process.
+ *
+ * Handles both common shapes the AI produces:
+ *   test('name', async ({ page }) => { ... })
+ *   test('name', async ({ page, context }) => { ... })
+ */
+function extractTestBody(playwrightCode) {
+  if (!playwrightCode) return null;
+
+  // Match:  async ({ page ... }) => {  ...  }
+  // We want everything inside the outermost braces of the arrow function body.
+  const arrowMatch = playwrightCode.match(/async\s*\(\s*\{[^}]*\}\s*\)\s*=>\s*\{([\s\S]*)/);
+  if (!arrowMatch) return null;
+
+  // arrowMatch[1] starts just after the opening { of the test body.
+  // We walk character-by-character to find the matching closing brace.
+  const bodyAndRest = arrowMatch[1];
+  let depth = 1;
+  let i = 0;
+  for (; i < bodyAndRest.length && depth > 0; i++) {
+    if (bodyAndRest[i] === "{") depth++;
+    else if (bodyAndRest[i] === "}") depth--;
+  }
+  // Everything up to (but not including) the final closing brace is the body.
+  return bodyAndRest.slice(0, i - 1).trim();
+}
+
+/**
+ * stripPlaywrightImports(code)
+ *
+ * Remove lines like:
+ *   import { test, expect } from '@playwright/test';
+ *   const { test, expect } = require('@playwright/test');
+ * so they don't cause parse errors when we eval the body.
+ */
+function stripPlaywrightImports(code) {
+  return code
+    .split("\n")
+    .filter(line => !line.match(/import\s*\{.*\}\s*from\s*['"]@playwright\/test['"]/))
+    .filter(line => !line.match(/require\s*\(\s*['"]@playwright\/test['"]\s*\)/))
+    .join("\n");
+}
+
+/**
+ * buildSelfHealingHelpers()
+ *
+ * Returns JS code that overrides common Playwright locator patterns with
+ * self-healing versions that try fallback selectors when the primary fails.
+ * Injected at the top of every executed test body.
+ */
+function buildSelfHealingHelpers() {
+  return `
+    // Self-healing helper: tries multiple selector strategies in order
+    async function findElement(page, strategies) {
+      for (const strategy of strategies) {
+        try {
+          const loc = strategy(page);
+          await loc.waitFor({ state: 'visible', timeout: 3000 });
+          return loc;
+        } catch {}
+      }
+      // Return last strategy as a best-effort attempt
+      return strategies[strategies.length - 1](page);
+    }
+
+    // Self-healing fill: tries common input selector patterns
+    async function safeFill(page, labelOrPlaceholder, value) {
+      const strategies = [
+        p => p.getByLabel(labelOrPlaceholder),
+        p => p.getByPlaceholder(labelOrPlaceholder),
+        p => p.getByRole('searchbox', { name: labelOrPlaceholder }),
+        p => p.getByRole('combobox', { name: labelOrPlaceholder }),
+        p => p.getByRole('textbox', { name: labelOrPlaceholder }),
+        p => p.locator(\`input[name*="\${labelOrPlaceholder.toLowerCase().replace(/ /g,'')}"]\`),
+        p => p.locator(\`input[placeholder*="\${labelOrPlaceholder}"]\`),
+      ];
+      const el = await findElement(page, strategies);
+      await el.fill(value);
+    }
+
+    // Self-healing click: tries button text, link text, role patterns
+    async function safeClick(page, text) {
+      const strategies = [
+        p => p.getByRole('button', { name: text }),
+        p => p.getByRole('link', { name: text }),
+        p => p.getByText(text, { exact: true }),
+        p => p.getByText(text),
+        p => p.locator(\`[aria-label*="\${text}"]\`),
+      ];
+      const el = await findElement(page, strategies);
+      await el.click();
+    }
+  `;
+}
+
+/**
+ * runGeneratedCode(page, context, playwrightCode, expect)
+ *
+ * Dynamically executes the AI-generated test body against the live page.
+ * Returns { passed: true } or throws with the error message.
+ */
+async function runGeneratedCode(page, context, playwrightCode, expect) {
+  const body = extractTestBody(playwrightCode);
+  if (!body) {
+    throw new Error("Could not parse test body from generated code");
+  }
+
+  const cleaned = stripPlaywrightImports(body);
+  const helpers = buildSelfHealingHelpers();
+
+  // eslint-disable-next-line no-new-func
+  const fn = new Function("page", "context", "expect", `
+    return (async () => {
+      ${helpers}
+      ${cleaned}
+    })();
+  `);
+
+  await fn(page, context, expect);
+  return { passed: true };
+}
+
+/**
+ * buildExpect(page)
+ *
+ * Returns a minimal `expect` compatible with Playwright's assertion API
+ * by delegating to the real Playwright expect imported dynamically.
+ * We lazy-import it here because Playwright's `expect` lives in the test
+ * runner module which we don't load at the top level.
+ */
+async function getExpect() {
+  // Playwright exports expect from its test module — import it at runtime.
+  const { expect } = await import("@playwright/test");
+  return expect;
+}
+
+async function executeTest(test, browser, runId, stepIndex, runStart) {
+  const testVideoDir = path.join(VIDEOS_DIR, runId, `step${stepIndex}`);
+  if (!fs.existsSync(testVideoDir)) fs.mkdirSync(testVideoDir, { recursive: true });
+
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    recordVideo: { dir: testVideoDir, size: { width: 1280, height: 720 } },
+    viewport: { width: 1280, height: 720 },
+    // Accept all permissions so interactions aren't blocked
+    permissions: ["geolocation", "notifications"],
+    ignoreHTTPSErrors: true,
+  });
+
   const page = await context.newPage();
+  const networkLogs = [];
+  const consoleLogs = [];
+
   const result = {
     testId: test.id,
     testName: test.name,
+    steps: test.steps || [],
     status: "passed",
     durationMs: 0,
     error: null,
     screenshot: null,
     screenshotPath: null,
     videoPath: null,
+    runTimestamp: 0,
+    network: [],
+    consoleLogs: [],
+    domSnapshot: null,
   };
+
+  page.on("request", (req) => {
+    networkLogs.push({
+      id: uuidv4(),
+      method: req.method(),
+      url: req.url(),
+      startTime: Date.now(),
+      status: null,
+      size: null,
+      duration: null,
+    });
+  });
+
+  page.on("response", async (res) => {
+    const entry = networkLogs.find((n) => n.url === res.url() && n.status === null);
+    if (entry) {
+      entry.status = res.status();
+      entry.duration = Date.now() - entry.startTime;
+      try {
+        const body = await res.body().catch(() => Buffer.alloc(0));
+        entry.size = body.length;
+      } catch { entry.size = 0; }
+    }
+  });
+
+  page.on("console", (msg) => {
+    consoleLogs.push({ time: new Date().toISOString(), level: msg.type(), text: msg.text() });
+  });
+
+  page.on("pageerror", (err) => {
+    consoleLogs.push({ time: new Date().toISOString(), level: "error", text: err.message });
+  });
 
   const start = Date.now();
 
   try {
-    // Navigate to the page
-    await page.goto(test.sourceUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await page.waitForTimeout(500);
+    const expect = await getExpect();
 
-    // Execute basic validations based on test type
-    if (test.type === "visibility") {
-      // Check page loaded
-      const title = await page.title();
-      if (!title) throw new Error("Page has no title");
+    if (test.playwrightCode && extractTestBody(test.playwrightCode)) {
+      // ── PRIMARY PATH: Execute the actual AI-generated Playwright code ──────
+      const body = extractTestBody(test.playwrightCode);
+      const codeAlreadyNavigates = body.includes("page.goto(");
 
-      // Check for error pages
-      const bodyText = await page.locator("body").innerText().catch(() => "");
-      const errorPatterns = ["404", "not found", "500", "error", "forbidden"];
-      const hasError = errorPatterns.some((p) => bodyText.toLowerCase().includes(p));
-      if (hasError) {
-        // Soft check - only fail if prominent
-        const h1 = await page.locator("h1").first().innerText().catch(() => "");
-        if (errorPatterns.some((p) => h1.toLowerCase().includes(p))) {
-          throw new Error(`Error page detected: ${h1}`);
-        }
+      // Only pre-navigate if the generated code doesn't do it itself
+      if (!codeAlreadyNavigates) {
+        await page.goto(test.sourceUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+        await page.waitForTimeout(800);
       }
-    }
 
-    if (test.type === "navigation") {
-      // Verify page loads and has expected content
-      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+      // Run the full generated test body
+      await runGeneratedCode(page, context, test.playwrightCode, expect);
+
+    } else {
+      // ── FALLBACK: No parseable code — run a basic smoke test ──────────────
+      await page.goto(test.sourceUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+      await page.waitForTimeout(500);
+
+      const title = await page.title();
+      if (!title) throw new Error("Page has no title — possible load failure");
+
       const url = page.url();
       if (!url.startsWith("http")) throw new Error("Invalid URL after navigation");
     }
 
-    if (test.type === "form") {
-      // Check forms exist
-      const forms = await page.locator("form").count();
-      const inputs = await page.locator("input:visible").count();
-      if (forms === 0 && inputs === 0) {
-        // Not a hard fail - page might have changed
-        result.status = "warning";
-        result.error = "No forms found on page (may have changed)";
-      }
-    }
-
-    if (test.type === "interaction") {
-      // Click primary CTA buttons if present
-      const buttons = page.locator("button:visible, [role='button']:visible");
-      const count = await buttons.count();
-      if (count > 0) {
-        // Just verify buttons are clickable, don't actually click to avoid side effects
-        const firstBtn = buttons.first();
-        const isEnabled = await firstBtn.isEnabled().catch(() => false);
-        if (!isEnabled) {
-          result.status = "warning";
-          result.error = "Primary button appears disabled";
+    // DOM snapshot (always, after test runs)
+    result.domSnapshot = await page.evaluate(() => {
+      function serialize(node, depth = 0) {
+        if (depth > 4 || !node) return null;
+        if (node.nodeType === Node.TEXT_NODE) {
+          const t = node.textContent?.trim();
+          return t ? { type: "text", text: t.slice(0, 80) } : null;
         }
+        if (node.nodeType !== Node.ELEMENT_NODE) return null;
+        const el = node;
+        const tag = el.tagName.toLowerCase();
+        if (["script","style","noscript","svg","path"].includes(tag)) return null;
+        const attrs = {};
+        for (const a of el.attributes) {
+          if (["id","class","href","src","type","role","aria-label","name"].includes(a.name))
+            attrs[a.name] = a.value.slice(0, 60);
+        }
+        const children = [];
+        for (const child of el.childNodes) {
+          const c = serialize(child, depth + 1);
+          if (c) children.push(c);
+          if (children.length >= 6) break;
+        }
+        return { type: "element", tag, attrs, children };
       }
-    }
+      return serialize(document.body);
+    }).catch(() => null);
 
-    // Take screenshot on success and save to disk
-    const screenshotFile = path.join(screenshotDir, `${test.id}.png`);
-    await page.screenshot({ path: screenshotFile, type: "png" });
-    result.screenshot = fs.readFileSync(screenshotFile).toString("base64");
-    result.screenshotPath = screenshotFile;
+    // Screenshot of final state
+    const shotName = `${runId}-step${stepIndex}.png`;
+    const shotPath = path.join(SHOTS_DIR, shotName);
+    const buf = await page.screenshot({ type: "png", fullPage: false });
+    fs.writeFileSync(shotPath, buf);
+    result.screenshot = buf.toString("base64");
+    result.screenshotPath = `/artifacts/screenshots/${shotName}`;
+
   } catch (err) {
     result.status = "failed";
-    result.error = err.message;
+    // Strip ANSI escape codes so the UI shows clean text
+    result.error = err.message.replace(/\x1B\[[0-9;]*[mGKHF]/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
+    // Screenshot the failure state
     try {
-      const screenshotFile = path.join(screenshotDir, `${test.id}.png`);
-      await page.screenshot({ path: screenshotFile, type: "png" });
-      result.screenshot = fs.readFileSync(screenshotFile).toString("base64");
-      result.screenshotPath = screenshotFile;
-    } catch {
-      // Screenshot capture failed
-    }
+      const buf = await page.screenshot({ type: "png", fullPage: false });
+      result.screenshot = buf.toString("base64");
+      const shotName = `${runId}-step${stepIndex}-fail.png`;
+      const shotPath = path.join(SHOTS_DIR, shotName);
+      fs.writeFileSync(shotPath, buf);
+      result.screenshotPath = `/artifacts/screenshots/${shotName}`;
+    } catch {}
   } finally {
     result.durationMs = Date.now() - start;
+    result.runTimestamp = start - runStart;
+    result.network = networkLogs;
+    result.consoleLogs = consoleLogs;
 
-    // Capture video path before closing the page
+    // Close page first then context — this flushes video to disk
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+
+    // Move the video to a stable named path
     try {
-      const video = page.video();
-      if (video) {
-        result.videoPath = await video.path();
+      const files = fs.readdirSync(testVideoDir).filter(f => f.endsWith(".webm"));
+      if (files.length > 0) {
+        const src = path.join(testVideoDir, files[0]);
+        const videoName = `${runId}-step${stepIndex}.webm`;
+        const dst = path.join(VIDEOS_DIR, videoName);
+        fs.renameSync(src, dst);
+        result.videoPath = `/artifacts/videos/${videoName}`;
       }
-    } catch {
-      // Video path retrieval failed
+      fs.rmSync(testVideoDir, { recursive: true, force: true });
+    } catch (videoErr) {
+      console.warn(`Video move failed for step ${stepIndex}:`, videoErr.message);
     }
-
-    await page.close();
   }
 
   return result;
 }
 
-export async function runTests(project, tests, run, db, options = {}) {
-  // Create artifacts directories for this run
-  const runDir = path.join(ARTIFACTS_DIR, run.id);
-  const videoDir = path.join(runDir, "videos");
-  const screenshotDir = path.join(runDir, "screenshots");
-  const traceDir = path.join(runDir, "traces");
-  ensureDir(videoDir);
-  ensureDir(screenshotDir);
-  ensureDir(traceDir);
-
-  // Store artifact info in run for later reference
-  run.artifactsDir = runDir;
-  run.artifactsUrl = `/artifacts/${run.id}`;
-
-  // Per-request headed flag overrides the env var default
-  const headless = options.headed === true
-    ? false
-    : (process.env.HEADLESS || "true").toLowerCase() === "true";
+export async function runTests(project, tests, run, db) {
+  const runId = run.id;
+  const tracePath = path.join(TRACES_DIR, `${runId}.zip`);
 
   const browser = await chromium.launch({
-    headless,
+    headless: true,
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
-  const context = await browser.newContext({
+
+  // Shared tracing context (separate from per-test video contexts)
+  const traceContext = await browser.newContext({
     userAgent: "Mozilla/5.0 (compatible; AutonomousQA/1.0)",
-    recordVideo: {
-      dir: videoDir,
-      size: { width: 1280, height: 720 },
-    },
+    viewport: { width: 1280, height: 720 },
   });
+  await traceContext.tracing.start({ screenshots: true, snapshots: true, sources: false });
 
-  // Start tracing for this run
-  await context.tracing.start({
-    screenshots: true,
-    snapshots: true,
-    sources: false,
-  });
+  log(run, `🚀 Starting test run: ${tests.length} tests`);
 
-  log(run, `Starting test run: ${tests.length} tests`);
-  log(run, `Headed mode: ${!headless} | Video recording: enabled | Tracing: enabled`);
+  const runStart = Date.now();
+  const allVideoSegments = [];
 
-  for (const test of tests) {
-    log(run, `  Running: ${test.name}`);
+  for (let i = 0; i < tests.length; i++) {
+    const test = tests[i];
+    const hasCode = !!(test.playwrightCode && extractTestBody(test.playwrightCode));
+    log(run, `  ▶ [${i + 1}/${tests.length}] ${test.name} ${hasCode ? "(executing generated code)" : "(fallback smoke test)"}`);
+
     try {
-      const result = await executeTest(test, context, screenshotDir);
+      const result = await executeTest(test, browser, runId, i, runStart);
       run.results.push(result);
+
+      if (result.videoPath) allVideoSegments.push(result.videoPath);
 
       if (result.status === "passed") {
         run.passed++;
-        log(run, `    PASSED (${result.durationMs}ms)`);
+        log(run, `    ✅ PASSED (${result.durationMs}ms)`);
       } else if (result.status === "warning") {
-        run.passed++; // Count warnings as passed
-        log(run, `    WARNING: ${result.error}`);
+        run.passed++;
+        log(run, `    ⚠️  WARNING: ${result.error}`);
       } else {
         run.failed++;
-        log(run, `    FAILED: ${result.error}`);
+        log(run, `    ❌ FAILED: ${result.error}`);
       }
 
-      // Update test's last result
       if (db.tests[test.id]) {
         db.tests[test.id].lastResult = result.status;
         db.tests[test.id].lastRunAt = new Date().toISOString();
@@ -199,56 +387,33 @@ export async function runTests(project, tests, run, db, options = {}) {
     } catch (err) {
       run.failed++;
       run.results.push({
-        testId: test.id,
-        testName: test.name,
-        status: "failed",
-        error: err.message,
-        durationMs: 0,
+        testId: test.id, testName: test.name,
+        status: "failed", error: err.message,
+        durationMs: 0, network: [], consoleLogs: [],
       });
-      log(run, `    FAILED (exception): ${err.message}`);
+      log(run, `    ❌ FAILED (exception): ${err.message}`);
     }
   }
 
-  // Stop tracing and save trace file
-  const traceFile = path.join(traceDir, "trace.zip");
+  // Save trace
   try {
-    await context.tracing.stop({ path: traceFile });
-    run.tracePath = traceFile;
-    run.traceUrl = `/artifacts/${run.id}/traces/trace.zip`;
-    log(run, `Trace saved: ${run.traceUrl}`);
-  } catch (err) {
-    log(run, `Warning: Failed to save trace: ${err.message}`);
+    await traceContext.tracing.stop({ path: tracePath });
+    run.tracePath = `/artifacts/traces/${runId}.zip`;
+    log(run, `  📊 Trace saved`);
+  } catch (e) {
+    log(run, `  ⚠️  Trace save failed: ${e.message}`);
   }
-
-  await context.close();
-
-  // After context is closed, video files are finalized
-  // Map video files to test results
-  try {
-    const videoFiles = fs.readdirSync(videoDir);
-    log(run, `Videos generated: ${videoFiles.length} files`);
-    run.videos = videoFiles.map((f) => `/artifacts/${run.id}/videos/${f}`);
-
-    // Assign video URLs to results using the captured videoPath
-    for (const result of run.results) {
-      if (result.videoPath) {
-        const filename = path.basename(result.videoPath);
-        result.videoUrl = `/artifacts/${run.id}/videos/${filename}`;
-      }
-    }
-  } catch (err) {
-    log(run, `Warning: Could not read video directory: ${err.message}`);
-  }
-
+  await traceContext.close().catch(() => {});
   await browser.close();
+
+  if (allVideoSegments.length > 0) {
+    run.videoPath = allVideoSegments[0];
+    run.videoSegments = allVideoSegments;
+    log(run, `  🎬 ${allVideoSegments.length} video segment(s) saved`);
+  }
 
   run.status = "completed";
   run.finishedAt = new Date().toISOString();
-  log(
-    run,
-    `Run complete: ${run.passed} passed, ${run.failed} failed out of ${run.total}`
-  );
-
-  // Emit run completed event for SSE
-  runEvents.emit(`complete:${run.id}`, run);
+  run.duration = Date.now() - runStart;
+  log(run, `🏁 Run complete: ${run.passed} passed, ${run.failed} failed out of ${run.total}`);
 }
