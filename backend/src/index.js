@@ -7,9 +7,20 @@ import { fileURLToPath } from "url";
 import { crawlAndGenerateTests, generateSingleTest } from "./crawler.js";
 import { runTests } from "./testRunner.js";
 import { getDb } from "./db.js";
-import { getProviderName, hasProvider, setRuntimeKey, getProviderMeta, getConfiguredKeys } from "./aiProvider.js";
+import { getProviderName, hasProvider, setRuntimeKey, setRuntimeOllama, checkOllamaConnection, getProviderMeta, getConfiguredKeys } from "./aiProvider.js";
 
 dotenv.config();
+
+// ─── Process-level crash guards ───────────────────────────────────────────────
+// Prevent the server from dying on unhandled errors (which wipes the in-memory DB).
+// Playwright can throw unhandled rejections from browser internals, page event
+// handlers, or video flush operations — especially when assertions fail mid-test.
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception (server kept alive):", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled rejection (server kept alive):", reason);
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -208,6 +219,11 @@ app.get("/api/projects/:id/tests", (req, res) => {
   res.json(tests);
 });
 
+// ── All tests (batch endpoint for frontend) ──────────────────────────────────
+app.get("/api/tests", (req, res) => {
+  res.json(Object.values(db.tests));
+});
+
 // ── Single test by ID (for TestDetail page) ───────────────────────────────────
 app.get("/api/tests/:testId", (req, res) => {
   const test = db.tests[req.params.testId];
@@ -372,8 +388,8 @@ app.delete("/api/projects/:id/tests/:testId", (req, res) => {
 // Enhance → Validate), skipping stages 1-2 (Crawl & Filter) since the user
 // provides a title + description instead of a URL to crawl.
 //
-// Runs synchronously and returns the first created test object directly so the
-// frontend CreateTestModal can display steps and transition to the review phase.
+// Returns 202 { runId } immediately. The AI pipeline runs asynchronously in the
+// background — the frontend navigates to the live run view to track progress.
 app.post("/api/projects/:id/tests/generate", async (req, res) => {
   const project = db.projects[req.params.id];
   if (!project) return res.status(404).json({ error: "project not found" });
@@ -407,26 +423,20 @@ app.post("/api/projects/:id/tests/generate", async (req, res) => {
     detail: `Test generation pipeline started for "${name.trim()}"`, status: "running",
   });
 
-  try {
-    const createdTestIds = await generateSingleTest(project, run, db, {
-      name: name.trim(),
-      description: (description || "").trim(),
-    });
+  // Respond immediately with runId so the frontend can navigate to the live
+  // run view while the pipeline executes asynchronously in the background.
+  res.status(202).json({ runId });
 
+  // Run pipeline async after response is flushed
+  generateSingleTest(project, run, db, {
+    name: name.trim(),
+    description: (description || "").trim(),
+  }).then(createdTestIds => {
     logActivity({
       type: "test.generate", projectId: project.id, projectName: project.name,
       detail: `Test generation completed — ${createdTestIds.length} test(s) created for "${name.trim()}"`,
     });
-
-    // Return the first created test object so the frontend can display steps
-    // and transition to the review phase immediately.
-    const firstTest = createdTestIds.length > 0 ? db.tests[createdTestIds[0]] : null;
-    if (firstTest) {
-      res.status(201).json(firstTest);
-    } else {
-      res.status(200).json({ runId, message: "Pipeline completed but no tests passed validation." });
-    }
-  } catch (err) {
+  }).catch(err => {
     run.status = "failed";
     run.error = err.message;
     run.finishedAt = new Date().toISOString();
@@ -435,8 +445,7 @@ app.post("/api/projects/:id/tests/generate", async (req, res) => {
       detail: `Test generation failed for "${name.trim()}" — ${err.message}`,
       status: "failed",
     });
-    res.status(500).json({ error: err.message || "AI generation failed" });
-  }
+  });
 });
 
 // ── Run a single test by ID ───────────────────────────────────────────────────
@@ -549,6 +558,7 @@ app.get("/api/config", (req, res) => {
       { id: "anthropic", name: "Claude Sonnet",    model: "claude-sonnet-4-20250514", docsUrl: "https://console.anthropic.com/settings/keys" },
       { id: "openai",    name: "GPT-4o-mini",      model: "gpt-4o-mini",              docsUrl: "https://platform.openai.com/api-keys" },
       { id: "google",    name: "Gemini 2.5 Flash", model: "gemini-2.5-flash",         docsUrl: "https://aistudio.google.com/apikey" },
+      { id: "local",     name: "Ollama (local)",   model: "llama3.2",                 docsUrl: "https://ollama.ai" },
     ],
   });
 });
@@ -559,13 +569,51 @@ app.get("/api/settings", (req, res) => {
 });
 
 // POST /api/settings — save API key at runtime (no server restart needed)
+// For the "local" (Ollama) provider, apiKey is not required;
+// instead accepts { baseUrl?, model? } for Ollama configuration.
 app.post("/api/settings", (req, res) => {
-  const { provider, apiKey } = req.body;
-  const validProviders = ["anthropic", "openai", "google"];
+  const { provider, apiKey, baseUrl, model } = req.body;
+  const validProviders = ["anthropic", "openai", "google", "local"];
 
   if (!provider || !validProviders.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
+
+  if (provider === "local") {
+    // Validate Ollama base URL if provided.
+    // Unlike /api/test-connection, we allow localhost and LAN IPs (where Ollama
+    // legitimately runs), but block cloud metadata and link-local addresses.
+    if (baseUrl && baseUrl.trim()) {
+      let parsedUrl;
+      try { parsedUrl = new URL(baseUrl.trim()); } catch {
+        return res.status(400).json({ error: "Invalid Ollama base URL format" });
+      }
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ error: "Ollama base URL must use http or https protocol" });
+      }
+      const host = parsedUrl.hostname.replace(/^\[|\]$/g, "");
+      const ollamaBlocked =
+        host === "169.254.169.254" ||
+        host === "metadata.google.internal" ||
+        /^fe80:/i.test(host);                                // link-local IPv6
+      if (ollamaBlocked) {
+        return res.status(400).json({ error: "Ollama base URL must not point to cloud metadata or link-local addresses" });
+      }
+    }
+    // Ollama — no API key needed, just update base URL / model if provided
+    // Clear the disabled flag so Ollama becomes active again after deactivation
+    // Trim values so whitespace-only strings don't bypass validation and cause
+    // malformed fetch URLs (e.g. "   /api/generate").
+    setRuntimeOllama({ baseUrl: (baseUrl || "").trim(), model: (model || "").trim(), disabled: false });
+    logActivity({ type: "settings.update", detail: "Ollama (local) provider configured" });
+    return res.json({
+      ok: true,
+      provider: "local",
+      providerName: getProviderMeta()?.name || "Ollama (local)",
+      message: "Local Ollama provider activated. Ensure Ollama is running.",
+    });
+  }
+
   if (!apiKey || apiKey.trim().length < 10) {
     return res.status(400).json({ error: "apiKey is required and must be at least 10 characters" });
   }
@@ -585,14 +633,19 @@ app.post("/api/settings", (req, res) => {
   });
 });
 
-// DELETE /api/settings/:provider — remove a key
+// DELETE /api/settings/:provider — remove a key or deactivate local provider
 app.delete("/api/settings/:provider", (req, res) => {
   const { provider } = req.params;
-  setRuntimeKey(provider, "");
+
+  if (provider === "local") {
+    setRuntimeOllama({ baseUrl: "", model: "", disabled: true });
+  } else {
+    setRuntimeKey(provider, "");
+  }
 
   logActivity({
     type: "settings.update",
-    detail: `API key removed for provider "${provider}"`,
+    detail: `Provider "${provider}" deactivated`,
   });
 
   res.json({ ok: true });
@@ -614,6 +667,88 @@ app.get("/api/activities", (req, res) => {
 
   const limit = parseInt(req.query.limit, 10) || 200;
   res.json(activities.slice(0, limit));
+});
+
+// GET /api/ollama/status — check Ollama connectivity + list available models
+// Used by the Settings UI to give real-time feedback on the local provider.
+app.get("/api/ollama/status", async (req, res) => {
+  const status = await checkOllamaConnection();
+  // Always return 200 so the frontend can read the structured { ok, error, availableModels }
+  // body. Returning 503 causes api.js to throw before the component can parse the JSON.
+  res.json(status);
+});
+
+// ── URL reachability test ──────────────────────────────────────────────────────
+// POST /api/test-connection — verify that a URL is reachable before creating a project
+app.post("/api/test-connection", async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "url is required" });
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return res.status(400).json({ error: "Invalid URL format" });
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return res.status(400).json({ error: "URL must use http or https protocol" });
+  }
+  // SSRF protection: block loopback, link-local, and private IP ranges
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+
+  // Resolve IPv4-mapped IPv6 addresses (e.g. ::ffff:a00:1 or ::ffff:127.0.0.1)
+  // Node's URL parser converts ::ffff:10.0.0.1 → ::ffff:a00:1 (hex), which would
+  // bypass naive regex checks against dotted-decimal private ranges.
+  function extractMappedIPv4(host) {
+    // Dotted form: ::ffff:10.0.0.1
+    const dottedMatch = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+    if (dottedMatch) return dottedMatch[1];
+    // Hex form: ::ffff:AABB:CCDD → A.B.C.D
+    const hexMatch = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+    if (hexMatch) {
+      const hi = parseInt(hexMatch[1], 16);
+      const lo = parseInt(hexMatch[2], 16);
+      return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    }
+    return null;
+  }
+
+  // Check an IPv4 address (dotted-decimal) against private/reserved ranges
+  function isPrivateIPv4(ip) {
+    return (
+      /^127\.\d+\.\d+\.\d+$/.test(ip) ||                // 127.0.0.0/8
+      /^10\.\d+\.\d+\.\d+$/.test(ip) ||                  // 10.0.0.0/8
+      /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(ip) ||  // 172.16.0.0/12
+      /^192\.168\.\d+\.\d+$/.test(ip) ||                  // 192.168.0.0/16
+      ip === "0.0.0.0" ||
+      ip === "169.254.169.254"                             // AWS metadata
+    );
+  }
+
+  const mappedIPv4 = extractMappedIPv4(hostname);
+  const blocked =
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    isPrivateIPv4(hostname) ||
+    (mappedIPv4 && isPrivateIPv4(mappedIPv4)) ||            // IPv4-mapped IPv6 bypass
+    hostname === "0.0.0.0" ||
+    hostname === "::" ||                                     // IPv6 unspecified (equivalent to 0.0.0.0)
+    hostname === "::1" ||
+    (/^::ffff:/i.test(hostname) && mappedIPv4 === null) ||   // unknown ::ffff: form — block
+    hostname === "169.254.169.254" ||                        // AWS metadata
+    hostname === "metadata.google.internal" ||               // GCE metadata
+    hostname.endsWith(".internal") ||                        // GCE internal DNS
+    /^fe80:/i.test(hostname) ||                              // link-local IPv6
+    /^fd[0-9a-f]{2}:/i.test(hostname) ||                    // unique-local IPv6
+    /^fc[0-9a-f]{2}:/i.test(hostname);                      // unique-local IPv6
+  if (blocked) {
+    return res.status(400).json({ error: "URL must not point to localhost, private, or internal addresses" });
+  }
+  try {
+    const response = await fetch(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(10000) });
+    res.json({ ok: true, status: response.status });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
 });
 
 // ── Health ────────────────────────────────────────────────────────────────────

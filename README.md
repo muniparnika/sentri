@@ -13,7 +13,7 @@
 Sentri is an autonomous QA platform that removes the manual burden of writing and maintaining end-to-end tests. Point it at any web application and it will:
 
 1. **Crawl** your app — mapping pages, forms, buttons, and interactive elements up to 3 levels deep
-2. **Generate** meaningful Playwright test cases using your choice of AI provider (Anthropic Claude, Google Gemini, or OpenAI GPT-4o-mini)
+2. **Generate** meaningful Playwright test cases using your choice of AI provider (Anthropic Claude, Google Gemini, OpenAI GPT-4o-mini, or Ollama local models)
 3. **Review** — all generated tests land in a **Draft** queue for human approval before they enter regression
 4. **Execute** approved tests against your live app with one click, with per-step video, screenshots, network, and console capture
 5. **Report** pass/fail results with live log streaming, browser view replays, and run history
@@ -25,7 +25,8 @@ Sentri is an autonomous QA platform that removes the manual burden of writing an
 | Feature | Description |
 |---|---|
 | 🕷️ **Autonomous Crawler** | Explores your app up to 3 levels deep, mapping all pages and interactive elements |
-| 🤖 **Multi-AI Test Generation** | Anthropic Claude Sonnet, Google Gemini 2.5 Flash, or OpenAI GPT-4o-mini — switch with one env var |
+| 🤖 **Multi-AI Test Generation** | Anthropic Claude Sonnet, Google Gemini 2.5 Flash, OpenAI GPT-4o-mini, or Ollama local models — switch with one env var |
+| 🦙 **Ollama (Local Models)** | Run models locally with Ollama — completely free and private, no API key needed |
 | ✦ **Create Test from Description** | Describe a scenario in plain English; AI generates steps + a Playwright script in seconds |
 | 🧬 **Self-Healing Tests** | Multi-strategy element finding with adaptive healing history — tests auto-recover when selectors change |
 | 🔄 **Two-Phase AI Pipeline** | PLAN → GENERATE split avoids token truncation; AI-assisted intent classification for ambiguous pages |
@@ -37,6 +38,15 @@ Sentri is an autonomous QA platform that removes the manual burden of writing an
 | ⚙️ **Runtime API Key Config** | Set or change your AI provider key in the Settings UI — no server restart needed |
 | 📊 **Live Dashboard** | Real-time pass/fail metrics, run history, pass rate trends, and per-project analytics |
 | 📝 **Activity Log** | Complete timeline of all user and system actions — crawls, runs, edits, approvals |
+| ⚡ **Async Test Generation** | `POST /projects/:id/tests/generate` returns `202 { runId }` immediately; the AI pipeline runs in the background |
+| 🔗 **API Resilience** | `AbortController`-based timeouts (30s default, 5min for long ops), connection testing, and API key validation endpoints |
+| 📦 **Data Caching** | `useProjectData` hook with module-level 30s TTL cache + batch `/api/tests` endpoint to eliminate N+1 fetches |
+| 🌙 **Dark Mode** | Automatic dark mode via `prefers-color-scheme` — all UI components adapt seamlessly |
+| ⌨️ **Keyboard Shortcuts** | `a` approve, `r` reject, `/` search, `Esc` clear — speed up test review workflows |
+| 🔍 **Global Test Search** | Search across all tests from the sidebar; results open the `/tests` page with URL-synced filters |
+| 📄 **Pagination & Sorting** | Tests page and project review tab paginate at 50/page with sortable columns and URL-synced filters |
+| ☑️ **Bulk Actions** | Select multiple tests for bulk approve/reject with confirmation modal for "select all" operations |
+| 🛡️ **Error Boundary & 404** | Graceful crash recovery and a proper 404 page for unknown routes |
 | 🐳 **Docker Ready** | Full Docker Compose setup for instant deployment |
 
 ---
@@ -46,7 +56,7 @@ Sentri is an autonomous QA platform that removes the manual burden of writing an
 ### Prerequisites
 
 - Node.js 20+
-- An API key for at least one supported AI provider (see [AI Providers](#ai-providers))
+- An API key for at least one supported AI provider, **or** a local Ollama installation (see [AI Providers](#ai-providers))
 - Docker & Docker Compose (for containerised deployment)
 
 ---
@@ -99,13 +109,15 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ### 1. Configure an AI Provider
 
-Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google. The active provider is shown in the top-right badge. You can also set it in `backend/.env` before starting.
+Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google — or configure **Ollama** for free local inference (no API key needed). The active provider is shown in the top-right badge. You can also set it in `backend/.env` before starting.
 
 ### 2. Create a Project
 
 - Click **New Project**
 - Enter your app name and URL (e.g. `https://myapp.com`)
-- Optionally configure login credentials (CSS selectors for username/password fields and their values)
+- Use the **Test** button next to the URL field to verify the URL is reachable before saving
+- URLs without a protocol are auto-prefixed with `https://` on blur
+- Optionally configure login credentials (CSS selectors for username/password fields and their values) — all auth fields are required when auth is enabled, and toggling auth off preserves your entered values
 
 ### 3a. Crawl & Generate Tests (Automated)
 
@@ -156,27 +168,40 @@ Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google. The
 
 ### 7. Monitor
 
-- The **Dashboard** shows aggregate pass rate, test counts, and run history
-- The **Work** page lists all runs across all projects with search, status filters, and type filters
-- The **Reports** page provides pass/fail trend charts, per-project breakdown, flaky test detection, and top failures with CSV export
-- The **Applications** page shows per-project health at a glance with pass rate bars and test counts
-- The **Context** page displays AI provider status and per-application environment details
+- The **Dashboard** (`/dashboard`) shows aggregate pass rate, test counts, run history chart (shown with 1+ runs), and a first-time onboarding banner for new users
+- The **Tests** page (`/tests`) provides a unified view of all tests across all projects with sortable columns, pagination (50/page), bulk select/approve/reject, keyboard shortcuts (`a`/`r`/`Esc`), and URL-synced filters (`?q=`, `?status=`, `?review=`)
+- The **Projects** page (`/projects`) shows per-project health at a glance with pass rate bars and test counts
+- The **Work** page (`/work`) lists all runs across all projects with search, status filters, type filters, and an inline **New Run** modal
+- The **Reports** page (`/reports`) provides pass/fail trend charts, per-project breakdown, flaky test detection, and top failures with CSV export (disabled when no runs match the current filter)
+- The **Context** page (`/context`) displays AI provider status and per-application environment details
 
 ---
 
 ## AI Providers
 
-Sentri supports three AI providers for test generation. Auto-detection picks the first key that is set; you can force a specific provider with `AI_PROVIDER`.
+Sentri supports four AI providers for test generation. Auto-detection picks the first key that is set; you can force a specific provider with `AI_PROVIDER`.
 
 | Provider | `AI_PROVIDER` value | Env Variable | Model |
 |---|---|---|---|
 | Anthropic Claude | `anthropic` | `ANTHROPIC_API_KEY` | claude-sonnet-4-20250514 |
 | OpenAI | `openai` | `OPENAI_API_KEY` | gpt-4o-mini |
 | Google Gemini | `google` | `GOOGLE_API_KEY` | gemini-2.5-flash |
+| Ollama (Local) | `local` | `AI_PROVIDER=local` | Configurable (default: `llama3.2`) |
 
-**Auto-detection priority:** Anthropic → OpenAI → Google (first key present wins).
+**Auto-detection priority:** Anthropic → OpenAI → Google → Ollama (first key/config present wins).
 
 You can also set or change keys at runtime from the **Settings** page without restarting the server.
+
+### Ollama Setup
+
+[Ollama](https://ollama.com) lets you run AI models locally — completely free and private.
+
+1. Install Ollama from [ollama.com](https://ollama.com)
+2. Pull a model: `ollama pull llama3.2`
+3. Enable in Sentri via **Settings** UI or set `AI_PROVIDER=local` in `backend/.env`
+4. Optionally configure `OLLAMA_BASE_URL` and `OLLAMA_MODEL` (defaults: `http://localhost:11434` and `llama3.2`)
+
+Ollama must be running on the same machine as the Sentri backend (or set `OLLAMA_BASE_URL` to a remote host).
 
 ---
 
@@ -184,10 +209,13 @@ You can also set or change keys at runtime from the **Settings** page without re
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AI_PROVIDER` | No | auto-detect | Force a specific provider: `anthropic`, `openai`, or `google` |
+| `AI_PROVIDER` | No | auto-detect | Force a specific provider: `anthropic`, `openai`, `google`, or `local` |
 | `ANTHROPIC_API_KEY` | If using Anthropic | — | Get from [console.anthropic.com](https://console.anthropic.com) |
 | `OPENAI_API_KEY` | If using OpenAI | — | Get from [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | If using Google | — | Get from [aistudio.google.com](https://aistudio.google.com/apikey) |
+| `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | No | `llama3.2` | Ollama model to use for generation |
+| `OLLAMA_TIMEOUT_MS` | No | `120000` | Timeout (ms) for Ollama API calls — increase for slow machines or large models |
 | `PORT` | No | `3001` | Backend server port |
 
 See [`backend/.env.example`](backend/.env.example) for the full template.
@@ -219,11 +247,11 @@ sentri/
 │   └── package.json
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx               # Router setup
-│   │   ├── api.js                # API client (fetch wrapper)
-│   │   ├── index.css             # Design system (CSS variables, components)
+│   │   ├── App.jsx               # Router setup + ErrorBoundary + 404 page
+│   │   ├── api.js                # API client (fetch wrapper with AbortController timeouts, 30s/5min)
+│   │   ├── index.css             # Design system (CSS variables, components, light + dark mode)
 │   │   ├── hooks/
-│   │   │   └── useProjectData.js # Shared hook: fetches projects + tests + runs in parallel
+│   │   │   └── useProjectData.js # Shared hook: fetches projects + tests + runs with 30s TTL cache
 │   │   ├── utils/
 │   │   │   └── formatters.js     # Shared date/time/duration formatters
 │   │   ├── components/
@@ -238,17 +266,17 @@ sentri/
 │   │   │   ├── PassFailChart.jsx # Recharts area chart for pass/fail trends
 │   │   │   └── PassRateBar.jsx   # Horizontal pass-rate bar with percentage
 │   │   └── pages/
-│   │       ├── Dashboard.jsx     # Pass rate, metrics, recent runs
-│   │       ├── Projects.jsx      # Test library + multi-phase Create Test wizard
-│   │       ├── ProjectDetail.jsx # Draft/Regression/Runs tabs per project
-│   │       ├── NewProject.jsx    # Project creation form
+│   │       ├── Dashboard.jsx     # Pass rate, metrics, recent activity, onboarding banner
+│   │       ├── Tests.jsx         # Unified test library: sort, paginate, bulk actions, URL-synced filters
+│   │       ├── ProjectDetail.jsx # Draft/Regression/Runs tabs per project with pagination & keyboard shortcuts
+│   │       ├── NewProject.jsx    # Project creation form with validation & connection test
 │   │       ├── TestDetail.jsx    # Individual test view + inline editing + export
 │   │       ├── RunDetail.jsx     # Run detail orchestrator (crawl or test run)
-│   │       ├── Work.jsx          # All runs with search, status & type filters
+│   │       ├── Work.jsx          # All runs with search, status & type filters + inline Run modal
 │   │       ├── Reports.jsx       # Analytics: trends, flaky tests, top failures, CSV export
-│   │       ├── Applications.jsx  # Per-project health overview with pass rate bars
+│   │       ├── Applications.jsx  # Projects page: per-project health overview with pass rate bars
 │   │       ├── Context.jsx       # AI provider status + per-app environment details
-│   │       └── Settings.jsx      # AI keys, test execution config, data management, system info
+│   │       └── Settings.jsx      # AI keys (incl. Ollama), test execution config, data management
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
