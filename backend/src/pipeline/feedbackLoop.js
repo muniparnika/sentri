@@ -12,6 +12,7 @@
  */
 
 import { generateText, parseJSON } from "../aiProvider.js";
+import { throwIfAborted } from "../utils/abortHelper.js";
 
 // ── Failure classification ────────────────────────────────────────────────────
 
@@ -172,16 +173,18 @@ export function analyzeRunResults(runResults, testMap, snapshotsByUrl) {
 }
 
 /**
- * regenerateFailingTest(improvement) → improved test or null
+ * regenerateFailingTest(improvement, signal) → improved test or null
  *
  * Calls the AI to produce a fixed version of a failing test.
+ * Accepts an optional AbortSignal so the operation can be cancelled.
  */
-export async function regenerateFailingTest(improvement) {
+export async function regenerateFailingTest(improvement, signal) {
   const { test, failureCategory, errorMessage, snapshot } = improvement;
 
   try {
+    throwIfAborted(signal);
     const prompt = buildImprovementPrompt(test, failureCategory, errorMessage, snapshot);
-    const text = await generateText(prompt);
+    const text = await generateText(prompt, { signal });
     const improved = parseJSON(text);
 
     // Only pick safe fields from the AI response — never let the LLM
@@ -199,17 +202,19 @@ export async function regenerateFailingTest(improvement) {
       _originalCode: test.playwrightCode,
     };
   } catch (err) {
+    if (err.name === "AbortError") throw err; // propagate abort
     return null; // Regeneration failed — keep original
   }
 }
 
 /**
- * applyFeedbackLoop(run, db) → summary
+ * applyFeedbackLoop(run, db, { signal } = {}) → summary
  *
  * Full feedback loop: analyzes results, regenerates failing tests.
  * Called after a test run completes.
+ * Accepts an optional AbortSignal so long-running AI calls can be cancelled.
  */
-export async function applyFeedbackLoop(run, db) {
+export async function applyFeedbackLoop(run, db, { signal } = {}) {
   if (!run.results?.length) return { improved: 0, skipped: 0 };
 
   // Build lookup maps
@@ -229,7 +234,8 @@ export async function applyFeedbackLoop(run, db) {
   let improved = 0;
   for (const improvement of improvements) {
     if (improvement.priority !== "high") continue; // Only auto-fix high priority failures
-    const regenerated = await regenerateFailingTest(improvement);
+    if (signal?.aborted) break; // Respect abort signal between AI calls
+    const regenerated = await regenerateFailingTest(improvement, signal);
     if (regenerated) {
       db.tests[improvement.testId] = { ...db.tests[improvement.testId], ...regenerated };
       improved++;

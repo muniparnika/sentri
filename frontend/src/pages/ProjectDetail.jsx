@@ -1,11 +1,16 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  Search, Play, Trash2, ArrowRight, CheckCircle2, XCircle,
+  Search, Play, Trash2, ArrowRight, CheckCircle2, XCircle, Ban,
   AlertTriangle, RefreshCw, Globe, ThumbsUp, ThumbsDown,
-  RotateCcw, Info, Shield, AlertCircle,
+  RotateCcw, Info, Shield, AlertCircle, StopCircle,
 } from "lucide-react";
 import { api } from "../api.js";
+import CrawlDialsPanel from "../components/CrawlDialsPanel.jsx";
+import { loadSavedConfig } from "../utils/testDialsStorage.js";
+import AgentTag from "../components/AgentTag.jsx";
+import ModalShell from "../components/ModalShell.jsx";
+import { cleanTestName } from "../utils/formatTestName.js";
 
 function StatusBadge({ s }) {
   if (!s) return <span className="badge badge-gray">Not run</span>;
@@ -13,6 +18,7 @@ function StatusBadge({ s }) {
   if (s === "failed")    return <span className="badge badge-red"><XCircle size={10} /> Failing</span>;
   if (s === "running")   return <span className="badge badge-blue pulse">● Running</span>;
   if (s === "completed") return <span className="badge badge-green">✓ Completed</span>;
+  if (s === "aborted")   return <span className="badge badge-gray"><Ban size={10} /> Aborted</span>;
   return <span className="badge badge-gray">{s}</span>;
 }
 
@@ -20,11 +26,6 @@ function ReviewBadge({ status }) {
   if (status === "approved") return <span className="badge badge-green"><CheckCircle2 size={10} /> Approved</span>;
   if (status === "rejected") return <span className="badge badge-red"><XCircle size={10} /> Rejected</span>;
   return <span className="badge badge-amber"><AlertCircle size={10} /> Draft</span>;
-}
-
-function AgentTag({ type = "TA" }) {
-  const s = { QA: "avatar-qa", TA: "avatar-ta", EX: "avatar-ex" };
-  return <div className={`avatar ${s[type] || "avatar-ta"}`}>{type}</div>;
 }
 
 function ConfBar({ score }) {
@@ -79,6 +80,7 @@ export default function ProjectDetail() {
   const [activeRunId, setActiveRunId]     = useState(null); // for toast link
   const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
+  const [crawlDialsCfg, setCrawlDialsCfg] = useState(() => loadSavedConfig());
   const [tab, setTab]                     = useState("review");
   const [reviewFilter, setReviewFilter]   = useState("draft");
   const [search, setSearch]               = useState("");
@@ -123,7 +125,8 @@ export default function ProjectDetail() {
   async function doCrawl() {
     setActionLoading("crawl");
     try {
-      const { runId } = await api.crawl(id);
+      // Send structured config to the backend — it validates and builds the prompt server-side
+      const { runId } = await api.crawl(id, crawlDialsCfg ? { dialsConfig: crawlDialsCfg } : undefined);
       setActiveRun(runId);
       setActiveRunId(runId);
       showToast("Crawl started — new tests will appear as Draft", "info", runId);
@@ -270,17 +273,22 @@ export default function ProjectDetail() {
               <a href={project.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.78rem", color: "var(--text3)", fontFamily: "var(--font-mono)" }}>{project.url}</a>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button className="btn btn-ghost btn-sm" onClick={doCrawl} disabled={!!actionLoading}>
-              {actionLoading === "crawl" ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
-              {tests.length > 0 ? "Re-Crawl" : "Crawl & Generate Tests"}
-            </button>
-            <button className="btn btn-primary btn-sm" onClick={doRun}
-              disabled={!!actionLoading || approvedTests.length === 0}
-              title={approvedTests.length === 0 ? "Approve tests first to run regression" : undefined}>
-              {actionLoading === "run" ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
-              Run Regression ({approvedTests.length})
-            </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-ghost btn-sm" onClick={doCrawl} disabled={!!actionLoading}>
+                {actionLoading === "crawl" ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
+                {tests.length > 0 ? "Re-Crawl" : "Crawl & Generate Tests"}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={doRun}
+                disabled={!!actionLoading || approvedTests.length === 0}
+                title={approvedTests.length === 0 ? "Approve tests first to run regression" : undefined}>
+                {actionLoading === "run" ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
+                Run Regression ({approvedTests.length})
+              </button>
+            </div>
+            <div style={{ width: "100%", minWidth: 300, maxWidth: 440 }}>
+              <CrawlDialsPanel onChange={setCrawlDialsCfg} />
+            </div>
           </div>
         </div>
 
@@ -319,9 +327,25 @@ export default function ProjectDetail() {
             <RefreshCw size={14} color="var(--blue)" className="spin" />
             <span style={{ fontWeight: 500, fontSize: "0.875rem", color: "var(--blue)" }}>Run in progress…</span>
           </div>
-          <button className="btn btn-ghost btn-xs" onClick={() => navigate(`/runs/${activeRun}`)}>
-            View live <ArrowRight size={12} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              className="btn btn-xs"
+              style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
+              onClick={async () => {
+                try {
+                  await api.abortRun(activeRun);
+                  setActiveRun(null);
+                  showToast("Run aborted", "info");
+                  refresh();
+                } catch (err) { showToast(err.message, "error"); }
+              }}
+            >
+              <StopCircle size={11} /> Stop
+            </button>
+            <button className="btn btn-ghost btn-xs" onClick={() => navigate(`/runs/${activeRun}`)}>
+              View live <ArrowRight size={12} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -455,14 +479,14 @@ export default function ProjectDetail() {
                             </td>
                             <td>
                               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text3)" }}>
-                                {t.id.slice(0, 8)}…
+                                {t.id.length > 8 ? t.id.slice(0, 8) + "…" : t.id}
                               </span>
                             </td>
                             <td style={{ cursor: "pointer" }} onClick={() => navigate(`/tests/${t.id}`)}>
                               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                 <AgentTag type="TA" />
                                 <div>
-                                  <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{t.name}</div>
+                                  <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{cleanTestName(t.name)}</div>
                                   {t.description && <div style={{ fontSize: "0.73rem", color: "var(--text3)", marginTop: 1 }}>{t.description?.slice(0, 64)}</div>}
                                   <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
                                     {t.isJourneyTest && <span className="badge badge-purple">Journey</span>}
@@ -582,14 +606,14 @@ export default function ProjectDetail() {
                       <tr key={t.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/tests/${t.id}`)}>
                         <td>
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text3)" }}>
-                            {t.id.slice(0, 8)}…
+                            {t.id.length > 8 ? t.id.slice(0, 8) + "…" : t.id}
                           </span>
                         </td>
                         <td>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <AgentTag type="TA" />
                             <div>
-                              <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{t.name}</div>
+                              <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{cleanTestName(t.name)}</div>
                               <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
                                 {t.isJourneyTest && <span className="badge badge-purple">Journey</span>}
                                 {t.scenario === "positive" && <span className="badge badge-green" style={{ fontSize: "0.65rem" }}>✓ Positive</span>}
@@ -648,7 +672,7 @@ export default function ProjectDetail() {
                       <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/runs/${r.id}`)}>
                         <td>
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "var(--text3)" }}>
-                            {r.id.slice(0, 8)}…
+                            {r.id.length > 8 ? r.id.slice(0, 8) + "…" : r.id}
                           </span>
                         </td>
                         <td>
@@ -661,7 +685,8 @@ export default function ProjectDetail() {
                           {r.status === "completed" && <span className="badge badge-green">✓ Completed</span>}
                           {r.status === "running"   && <span className="badge badge-blue" style={{ animation: "pulse 1.5s ease-in-out infinite" }}>● Running</span>}
                           {r.status === "failed"    && <span className="badge badge-red">✗ Failed</span>}
-                          {!["completed","running","failed"].includes(r.status) && <span className="badge badge-gray">{r.status}</span>}
+                          {r.status === "aborted"   && <span className="badge badge-gray"><Ban size={10} /> Aborted</span>}
+                          {!["completed","running","failed","aborted"].includes(r.status) && <span className="badge badge-gray">{r.status}</span>}
                         </td>
                         <td>
                           {isCrawl && (
@@ -702,26 +727,23 @@ export default function ProjectDetail() {
 
       {/* Bulk action confirmation modal */}
       {bulkConfirm && (
-        <>
-          <div onClick={() => setBulkConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 1000, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "28px 32px", width: "min(420px,95vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
-            <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Confirm bulk action</div>
-            <div style={{ fontSize: "0.875rem", color: "var(--text2)", marginBottom: 20, lineHeight: 1.6 }}>
-              You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong>{bulkConfirm.action === "delete" ? ". This cannot be undone." : " (all visible tests). This cannot be undone easily."}
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
-              <button
-                className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
-                onClick={() => bulkConfirm.action === "delete"
-                  ? executeBulkDelete(bulkConfirm.ids)
-                  : executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
-              >
-                {bulkConfirm.action === "approve" ? "Approve all" : bulkConfirm.action === "delete" ? "Delete all" : "Reject all"}
-              </button>
-            </div>
+        <ModalShell onClose={() => setBulkConfirm(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
+          <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Confirm bulk action</div>
+          <div style={{ fontSize: "0.875rem", color: "var(--text2)", marginBottom: 20, lineHeight: 1.6 }}>
+            You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong>{bulkConfirm.action === "delete" ? ". This cannot be undone." : " (all visible tests). This cannot be undone easily."}
           </div>
-        </>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
+            <button
+              className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
+              onClick={() => bulkConfirm.action === "delete"
+                ? executeBulkDelete(bulkConfirm.ids)
+                : executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
+            >
+              {bulkConfirm.action === "approve" ? "Approve all" : bulkConfirm.action === "delete" ? "Delete all" : "Reject all"}
+            </button>
+          </div>
+        </ModalShell>
       )}
 
       {/* Fix #20: Keyboard shortcut hint */}

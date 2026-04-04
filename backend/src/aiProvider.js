@@ -18,6 +18,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { throwIfAborted } from "./utils/abortHelper.js";
 
 // ── Runtime key store (set via /api/settings, survives until process restart) ─
 const runtimeKeys = {};
@@ -212,7 +213,7 @@ const DEFAULT_MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS, 10) || 16384;
 
 // ── Ollama caller ─────────────────────────────────────────────────────────────
 
-async function callOllama(prompt, maxTokens) {
+async function callOllama(prompt, maxTokens, externalSignal) {
   const base  = getOllamaBaseUrl();
   const model = getOllamaModel();
 
@@ -239,6 +240,22 @@ async function callOllama(prompt, maxTokens) {
   // Ollama can be slow for large prompts — give it generous time
   const timeoutMs = parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) || 120_000;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // If an external abort signal is provided (e.g. user clicked "Stop Task"),
+  // forward it to our internal controller so the fetch is cancelled immediately.
+  // We keep a reference to the handler so we can remove it in `finally` —
+  // without cleanup, 60+ sequential AI calls sharing one signal would trigger
+  // a MaxListenersExceededWarning.
+  let onExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timeoutId);
+      throw new DOMException("Aborted", "AbortError");
+    } else {
+      onExternalAbort = () => controller.abort();
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
 
   try {
     const res = await fetch(`${base}/api/generate`, {
@@ -286,17 +303,24 @@ async function callOllama(prompt, maxTokens) {
     return data.response;
   } catch (err) {
     if (err.name === "AbortError") {
+      // Distinguish user-initiated abort from internal timeout
+      if (externalSignal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       throw new Error(`Ollama request timed out after ${timeoutMs / 1000}s. Try a smaller/faster model or increase OLLAMA_TIMEOUT_MS.`);
     }
     throw err;
   } finally {
     clearTimeout(timeoutId);
+    if (onExternalAbort && externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }
 
 // ── Core API call ─────────────────────────────────────────────────────────────
 
-async function callProvider(provider, prompt, maxTokens) {
+async function callProvider(provider, prompt, maxTokens, signal) {
   const tokens = maxTokens || DEFAULT_MAX_TOKENS;
 
   if (provider === "anthropic") {
@@ -306,7 +330,7 @@ async function callProvider(provider, prompt, maxTokens) {
         model: buildProviderMeta().anthropic.model,
         max_tokens: tokens,
         messages: [{ role: "user", content: prompt }],
-      });
+      }, { signal });
       return msg.content[0].text;
     }, "Anthropic");
   }
@@ -319,7 +343,7 @@ async function callProvider(provider, prompt, maxTokens) {
         max_tokens: tokens,
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt }],
-      });
+      }, { signal });
       return res.choices[0].message.content;
     }, "OpenAI");
   }
@@ -331,7 +355,7 @@ async function callProvider(provider, prompt, maxTokens) {
         model: buildProviderMeta().google.model,
         generationConfig: { responseMimeType: "application/json", maxOutputTokens: tokens },
       });
-      const result = await model.generateContent(prompt);
+      const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] }, { signal });
       return result.response.text();
     }, "Google Gemini");
   }
@@ -340,8 +364,10 @@ async function callProvider(provider, prompt, maxTokens) {
     // Retry on connection errors AND Ollama HTTP 500s (model overload / context overflow)
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await callOllama(prompt, tokens);
+        return await callOllama(prompt, tokens, signal);
       } catch (err) {
+        // Don't retry if the user aborted
+        if (err.name === "AbortError" || signal?.aborted) throw err;
         const isRetryable =
           err.message.includes("ECONNREFUSED") ||
           err.message.includes("fetch failed") ||
@@ -362,7 +388,7 @@ async function callProvider(provider, prompt, maxTokens) {
 /**
  * generateText(prompt, options?)
  * @param {string} prompt
- * @param {{ maxTokens?: number }} options
+ * @param {{ maxTokens?: number, signal?: AbortSignal }} options
  */
 export async function generateText(prompt, options) {
   const provider = detectProvider();
@@ -374,7 +400,7 @@ export async function generateText(prompt, options) {
       "         Optionally: OLLAMA_MODEL=llama3.2  OLLAMA_BASE_URL=http://localhost:11434"
     );
   }
-  return callProvider(provider, prompt, options?.maxTokens);
+  return callProvider(provider, prompt, options?.maxTokens, options?.signal);
 }
 
 export function parseJSON(text) {
@@ -394,10 +420,16 @@ export function parseJSON(text) {
  *
  * Falls back to a single blocking call (Google / Ollama) that delivers
  * the entire response as one synthetic "token".
+ *
+ * @param {string} prompt
+ * @param {(token: string) => void} onToken
+ * @param {{ maxTokens?: number, signal?: AbortSignal }} options
  */
 export async function streamText(prompt, onToken, options = {}) {
   const provider = detectProvider();
   if (!provider) throw new Error("No AI provider configured.");
+
+  const { signal } = options;
 
   if (provider === "anthropic") {
     const client = new Anthropic({ apiKey: getKey("ANTHROPIC_API_KEY") });
@@ -405,8 +437,9 @@ export async function streamText(prompt, onToken, options = {}) {
       model: buildProviderMeta().anthropic.model,
       max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { signal });
     for await (const chunk of stream) {
+      throwIfAborted(signal);
       if (chunk.type === "content_block_delta" && chunk.delta?.text) {
         onToken(chunk.delta.text);
       }
@@ -422,9 +455,10 @@ export async function streamText(prompt, onToken, options = {}) {
       stream: true,
       response_format: { type: "json_object" },
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { signal });
     let full = "";
     for await (const chunk of stream) {
+      throwIfAborted(signal);
       const token = chunk.choices[0]?.delta?.content ?? "";
       if (token) { full += token; onToken(token); }
     }

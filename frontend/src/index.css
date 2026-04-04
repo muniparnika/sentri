@@ -82,6 +82,12 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* Sidebar nav hover — fixes missing hover feedback on nav items */
+.nav-link:hover {
+  background: var(--bg3) !important;
+  color: var(--text) !important;
+}
+
 .mono { font-family: var(--font-mono); font-size: 0.85em; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -189,6 +195,71 @@ label {
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite;
   border-radius: var(--radius);
+}
+
+/* ── Shared modal primitives ────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 999;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(2px);
+}
+.modal-panel {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+  overflow: auto;
+}
+.modal-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text3); padding: 2px; display: flex;
+}
+.modal-close:hover { color: var(--text); }
+
+/* ── Section accordion header (TestDials collapsible, CrawlDialsPanel) ────── */
+.section-header {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: none; border: none; cursor: pointer;
+  gap: 10px; text-align: left;
+}
+.section-header:hover { background: var(--bg2); }
+
+/* ── Dial / form labels ─────────────────────────────────────────────────────── */
+.dial-label {
+  font-size: 0.82rem; font-weight: 600; color: var(--text2);
+}
+
+/* ── Inline error alert ─────────────────────────────────────────────────────── */
+.alert-error {
+  background: var(--red-bg); color: var(--red);
+  border-radius: var(--radius); padding: 8px 12px;
+  font-size: 0.82rem; line-height: 1.5;
+}
+
+/* Dial textarea focus ring (replaces onFocus/onBlur DOM hack) */
+.dial-textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg2); color: var(--text);
+  font-size: 0.85rem; resize: vertical;
+  font-family: var(--font-sans); line-height: 1.5;
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.dial-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91,110,245,0.1);
+}
+.dial-textarea::placeholder { color: var(--text3); }
+
+/* Active-count pill (used by TestDials header, CrawlDialsPanel, tab badges) */
+.active-count-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-bg); color: var(--accent);
+  padding: 2px 9px; border-radius: 99px;
+  font-size: 0.72rem; font-weight: 600;
 }
 
 /* Progress bar */

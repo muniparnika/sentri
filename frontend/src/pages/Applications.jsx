@@ -2,11 +2,13 @@ import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Globe, Search, ExternalLink,
-  RefreshCw, FlaskConical, ChevronRight,
+  RefreshCw, FlaskConical, ChevronRight, Trash2,
 } from "lucide-react";
-import useProjectData from "../hooks/useProjectData";
+import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData";
 import { fmtRelativeDate } from "../utils/formatters";
 import PassRateBar from "../components/PassRateBar";
+import DeleteProjectModal from "../components/DeleteProjectModal.jsx";
+import { api } from "../api.js";
 
 function StatusDot({ status }) {
   const colors = {
@@ -24,8 +26,9 @@ function StatusDot({ status }) {
 }
 
 export default function Projects() {
-  const { projects, allTests, allRuns, loading } = useProjectData();
+  const { projects, allTests, allRuns, loading, refresh } = useProjectData();
   const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null); // project to confirm-delete
   const navigate = useNavigate();
 
   // Derive per-project stats from the shared hook data
@@ -205,13 +208,24 @@ export default function Projects() {
                 </div>
 
                 {/* Quick actions */}
-                <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                <div
+                  style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}
+                  onClick={e => e.stopPropagation()}
+                >
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => navigate(`/projects/${p.id}`)}
                     title="View project"
                   >
                     <FlaskConical size={13} /> Tests
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ color: "var(--text3)" }}
+                    onClick={() => setDeleteTarget(p)}
+                    title="Delete project"
+                  >
+                    <Trash2 size={13} />
                   </button>
                   <ChevronRight size={16} color="var(--text3)" style={{ marginLeft: 4 }} />
                 </div>
@@ -220,6 +234,15 @@ export default function Projects() {
           );
         })}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <DeleteProjectModal
+          project={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => { invalidateProjectDataCache(); refresh(); }}
+        />
+      )}
     </div>
   );
 }

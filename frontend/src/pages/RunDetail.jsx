@@ -7,6 +7,8 @@ import {
   RefreshCw,
   Clock,
   Download,
+  StopCircle,
+  Ban,
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE, requestNotifPermission } from "../hooks/useRunSSE.js";
@@ -14,6 +16,7 @@ import { useRunSSE, requestNotifPermission } from "../hooks/useRunSSE.js";
 import CrawlView from "../components/CrawlView";
 import GenerateView from "../components/GenerateView";
 import TestRunView from "../components/TestRunView";
+import AgentTag from "../components/AgentTag.jsx";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,11 +24,6 @@ function fmtMs(ms) {
   if (!ms && ms !== 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function AgentTag({ type = "TA" }) {
-  const s = { QA: "avatar-qa", TA: "avatar-ta", EX: "avatar-ex" };
-  return <div className={`avatar ${s[type] || "avatar-ta"}`}>{type}</div>;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -39,12 +37,31 @@ export default function RunDetail() {
   const [initialStatus, setInitialStatus] = useState(undefined);
   const [frames, setFrames] = useState([]);
   const [llmTokens, setLlmTokens] = useState("");
+  const [aborting, setAborting] = useState(false);
+
+  // Cap the streamed token buffer so long-running generation jobs don't
+  // accumulate hundreds of thousands of characters and cause layout/memory issues.
+  const LLM_TOKEN_LIMIT = 50_000;
 
   const fetchRun = useCallback(async () => {
     const r = await api.getRun(runId).catch(() => null);
     if (r) setRun(r);
     return r;
   }, [runId]);
+
+  const handleAbort = useCallback(async () => {
+    if (aborting) return;
+    setAborting(true);
+    try {
+      await api.abortRun(runId);
+      setRun((prev) => prev ? { ...prev, status: "aborted" } : prev);
+      setFrames([]);
+    } catch (err) {
+      console.error("Abort failed:", err);
+    } finally {
+      setAborting(false);
+    }
+  }, [runId, aborting]);
 
   // Initial fetch — capture the run's status at load time so useRunSSE can
   // skip SSE entirely for already-finished runs (prevents spurious notifications).
@@ -88,7 +105,15 @@ export default function RunDetail() {
       // Keep only the latest frame — canvas paints it on rAF
       setFrames([event.data]);
     } else if (event.type === "llm_token") {
-      setLlmTokens((prev) => prev + event.token);
+      setLlmTokens((prev) => {
+        const next = prev + event.token;
+        // Keep the most recent LLM_TOKEN_LIMIT chars; prepend a truncation notice
+        // so the user knows older output was trimmed, not lost.
+        if (next.length > LLM_TOKEN_LIMIT) {
+          return "[…output truncated…]\n" + next.slice(next.length - LLM_TOKEN_LIMIT);
+        }
+        return next;
+      });
     } else if (event.type === "done") {
       // Immediately mark as completed so the UI stops showing "running"
       // (isRunning = run.status === "running" flips to false right away,
@@ -182,7 +207,7 @@ export default function RunDetail() {
             fontWeight: 500,
           }}
         >
-          <ArrowLeft size={14} /> Work
+          <ArrowLeft size={14} /> Runs
         </button>
         <span>›</span>
         <span>Run Detail</span>
@@ -199,7 +224,7 @@ export default function RunDetail() {
           }}
         >
           <h1 style={{ fontWeight: 700, fontSize: "1.3rem" }}>
-            Task #{runId.slice(0, 6).toUpperCase()}:{" "}
+            Task #{runId.length > 6 ? runId.slice(0, 6).toUpperCase() + "…" : runId.toUpperCase()}:{" "}
             {isCrawl ? "Crawl & Generate" : isGenerate ? "AI Generate" : "Test Run"}
           </h1>
 
@@ -216,8 +241,29 @@ export default function RunDetail() {
               <XCircle size={10} /> Failed
             </span>
           )}
+          {run.status === "aborted" && (
+            <span className="badge badge-gray">
+              <Ban size={10} /> Aborted
+            </span>
+          )}
 
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {isRunning && (
+              <button
+                className="btn btn-sm"
+                style={{
+                  background: "var(--red-bg)", color: "var(--red)",
+                  border: "1px solid #fca5a5", fontWeight: 600,
+                }}
+                onClick={handleAbort}
+                disabled={aborting}
+              >
+                {aborting
+                  ? <RefreshCw size={12} className="spin" />
+                  : <StopCircle size={12} />}
+                {aborting ? "Stopping…" : "Stop Task"}
+              </button>
+            )}
             {traceUrl && (
               <a href={traceUrl} download className="btn btn-ghost btn-sm">
                 <Download size={12} /> Trace ZIP
@@ -240,7 +286,7 @@ export default function RunDetail() {
           }}
         >
           <span style={{ fontFamily: "var(--font-mono)" }}>
-            #{runId.slice(0, 8)}
+            #{runId.length > 8 ? runId.slice(0, 8) + "…" : runId}
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <AgentTag type="TA" /> Sentri Agent

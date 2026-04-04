@@ -3,11 +3,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Plus, X, CheckCircle2, XCircle, Clock,
   ChevronRight, Loader2, Play, Flag, Sparkles,
-  AlertCircle, ListFilter, ArrowUpDown, Trash2,
+  AlertCircle, ArrowUpDown, Trash2,
   ThumbsUp, ThumbsDown,
 } from "lucide-react";
 import { api } from "../api.js";
 import { invalidateProjectDataCache } from "../hooks/useProjectData.js";
+import GenerateTestModal from "../components/GenerateTestModal.jsx";
+import AgentTag from "../components/AgentTag.jsx";
+import RunRegressionModal from "../components/RunRegressionModal.jsx";
+import ModalShell from "../components/ModalShell.jsx";
+import { cleanTestName } from "../utils/formatTestName.js";
 
 // Exclude "All" sentinel entries — reset is handled by clicking an active filter
 // or the explicit clear-all button in the bar.
@@ -47,11 +52,6 @@ function relativeTime(dateStr) {
   return "—";
 }
 
-function AgentTag({ type = "TA" }) {
-  const s = { QA: "avatar-qa", TA: "avatar-ta", EX: "avatar-ex" };
-  return <div className={`avatar ${s[type] || "avatar-ta"}`}>{type}</div>;
-}
-
 function StatusBadge({ result }) {
   if (!result) return <span className="badge badge-gray"><Clock size={10} /> Not run</span>;
   if (result === "passed") return <span className="badge badge-green"><CheckCircle2 size={10} /> Passing</span>;
@@ -59,249 +59,43 @@ function StatusBadge({ result }) {
   return <span className="badge badge-amber">{result}</span>;
 }
 
-// ── Create Test Modal ──────────────────────────────────────────────────────────
-
-function CreateTestModal({ projects, onClose, defaultProjectId }) {
-  const [phase, setPhase] = useState("form");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [projectId, setProjectId] = useState(defaultProjectId || projects[0]?.id || "");
-  const [error, setError] = useState(null);
-
-  const navigate = useNavigate();
-  const nameRef = useRef(null);
-
-  useEffect(() => { nameRef.current?.focus(); }, []);
-  useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  async function handleGenerateSteps(e) {
-    e?.preventDefault();
-    setError(null);
-    if (!name.trim()) { setError("Test name is required."); return; }
-    if (!projectId) { setError("Please select a project."); return; }
-    setPhase("submitting");
-    try {
-      const { runId } = await api.generateTest(projectId, {
-        name: name.trim(),
-        description: description.trim(),
-      });
-      onClose();
-      navigate(`/runs/${runId}`);
-    } catch (err) {
-      setError(err.message || "Failed to start generation.");
-      setPhase("form");
-    }
-  }
-
-  const selectedProject = projects.find(p => p.id === projectId);
-
-  return (
-    <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999, backdropFilter: "blur(2px)" }} />
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-        zIndex: 1000, background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
-        width: "min(500px, 96vw)", maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, flex: 1 }}>Generate a Test Case</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text3)", padding: 2, display: "flex" }}>
-            <X size={18} />
-          </button>
-        </div>
-        <div style={{ padding: "20px 22px 24px", overflowY: "auto", flex: 1 }}>
-          {(phase === "form" || phase === "submitting") && (
-            <>
-              <p style={{ fontSize: "0.82rem", color: "var(--text2)", marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
-                Describe what you want to test. AI will generate detailed steps and a Playwright script, saved as a <strong>Draft</strong> for your review.
-              </p>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 5, color: "var(--text2)" }}>Project</label>
-                <select className="input" value={projectId} onChange={e => setProjectId(e.target.value)} style={{ height: 38 }}>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                {selectedProject && (
-                  <div style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: 4, fontFamily: "var(--font-mono)" }}>
-                    {selectedProject.url}
-                  </div>
-                )}
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 5, color: "var(--text2)" }}>Test Name</label>
-                <input
-                  ref={nameRef}
-                  className="input"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="e.g. Dashboard loads all employee charts"
-                  style={{ height: 38 }}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleGenerateSteps(e); }}
-                />
-              </div>
-              <div style={{ marginBottom: error ? 12 : 20 }}>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 5, color: "var(--text2)" }}>
-                  Description
-                  <span style={{ fontWeight: 400, color: "var(--text3)", marginLeft: 6 }}>(optional but recommended)</span>
-                </label>
-                <textarea
-                  className="input"
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  placeholder="Verify the employees age and the distribution and make sure all the graphs are loading as expected"
-                  rows={4}
-                  style={{ resize: "vertical", lineHeight: 1.6, paddingTop: 10 }}
-                />
-              </div>
-              {error && (
-                <div style={{ background: "var(--red-bg)", color: "var(--red)", borderRadius: "var(--radius)", padding: "8px 12px", fontSize: "0.82rem", marginBottom: 16, lineHeight: 1.5 }}>
-                  {error}
-                </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={handleGenerateSteps}
-                  disabled={!name.trim() || !projectId || phase === "submitting"}
-                >
-                  Generate with AI ✦
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ── Run All Modal ──────────────────────────────────────────────────────────────
-
-function RunAllModal({ projects, onClose, defaultProjectId }) {
-  // FIX #8: default to most recently active project passed from caller
-  const [projectId, setProjectId] = useState(defaultProjectId || projects[0]?.id || "");
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState(null);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  async function handleRun() {
-    if (!projectId) { setError("Please select a project."); return; }
-    setError(null);
-    setRunning(true);
-    try {
-      const { runId } = await api.runTests(projectId);
-      onClose();
-      navigate(`/runs/${runId}`);
-    } catch (err) {
-      setError(err.message || "Failed to start run.");
-      setRunning(false);
-    }
-  }
-
-  return (
-    <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999, backdropFilter: "blur(2px)" }} />
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-        zIndex: 1000, background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
-        width: "min(420px, 95vw)", overflow: "hidden",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 16px", borderBottom: "1px solid var(--border)" }}>
-          <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, flex: 1 }}>Run Regression Tests</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text3)", padding: 2, display: "flex" }}><X size={18} /></button>
-        </div>
-        <div style={{ padding: "20px 22px 24px" }}>
-          <p style={{ fontSize: "0.82rem", color: "var(--text2)", marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
-            Select a project to run all approved tests in its regression suite.
-          </p>
-          {projects.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <label>Project</label>
-              <select className="input" value={projectId} onChange={e => setProjectId(e.target.value)} style={{ height: 38 }}>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-          )}
-          {error && (
-            <div style={{ background: "var(--red-bg)", color: "var(--red)", borderRadius: "var(--radius)", padding: "8px 12px", fontSize: "0.82rem", marginBottom: 16 }}>
-              {error}
-            </div>
-          )}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary btn-sm" onClick={handleRun} disabled={running || !projectId}>
-              {running ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
-              {running ? "Starting…" : "Run Tests"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
 
 // ── Review Modal ───────────────────────────────────────────────────────────────
 
 function ReviewModal({ projects, onClose }) {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
   return (
-    <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999, backdropFilter: "blur(2px)" }} />
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-        zIndex: 1000, background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
-        width: "min(420px, 95vw)", overflow: "hidden",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 16px", borderBottom: "1px solid var(--border)" }}>
-          <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, flex: 1 }}>Review & Fix Tests</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text3)", padding: 2, display: "flex" }}><X size={18} /></button>
+    <ModalShell onClose={onClose} width="min(420px, 95vw)" style={{ overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 16px", borderBottom: "1px solid var(--border)" }}>
+        <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, flex: 1 }}>Review & Fix Tests</h2>
+        <button className="modal-close" onClick={onClose}><X size={18} /></button>
+      </div>
+      <div style={{ padding: "20px 22px 24px" }}>
+        <p style={{ fontSize: "0.82rem", color: "var(--text2)", marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
+          Go to a project to review generated draft tests, approve them for regression, or reject failing ones.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          {projects.length === 0 ? (
+            <div style={{ fontSize: "0.82rem", color: "var(--text3)", textAlign: "center", padding: "16px 0" }}>No projects yet.</div>
+          ) : projects.map(p => (
+            <button
+              key={p.id}
+              className="btn btn-ghost btn-sm"
+              style={{ justifyContent: "flex-start", gap: 10 }}
+              onClick={() => { onClose(); navigate(`/projects/${p.id}`); }}
+            >
+              <Flag size={13} color="var(--accent)" />
+              {p.name}
+              <ChevronRight size={13} style={{ marginLeft: "auto" }} />
+            </button>
+          ))}
         </div>
-        <div style={{ padding: "20px 22px 24px" }}>
-          <p style={{ fontSize: "0.82rem", color: "var(--text2)", marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
-            Go to a project to review generated draft tests, approve them for regression, or reject failing ones.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-            {projects.length === 0 ? (
-              <div style={{ fontSize: "0.82rem", color: "var(--text3)", textAlign: "center", padding: "16px 0" }}>No projects yet.</div>
-            ) : projects.map(p => (
-              <button
-                key={p.id}
-                className="btn btn-ghost btn-sm"
-                style={{ justifyContent: "flex-start", gap: 10 }}
-                onClick={() => { onClose(); navigate(`/projects/${p.id}`); }}
-              >
-                <Flag size={13} color="var(--accent)" />
-                {p.name}
-                <ChevronRight size={13} style={{ marginLeft: "auto" }} />
-              </button>
-            ))}
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
-          </div>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
         </div>
       </div>
-    </>
+    </ModalShell>
   );
 }
 
@@ -976,14 +770,14 @@ export default function Tests() {
                       </td>
                       <td>
                         <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text3)" }}>
-                          {t.id.slice(0, 8)}…
+                          {t.id.length > 8 ? t.id.slice(0, 8) + "…" : t.id}
                         </span>
                       </td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <AgentTag type="TA" />
                           <div>
-                            <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{t.name}</div>
+                            <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{cleanTestName(t.name)}</div>
                             {t.description && (
                               <div style={{ fontSize: "0.75rem", color: "var(--text3)", marginTop: 1, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {t.description}
@@ -1064,14 +858,13 @@ export default function Tests() {
 
       {/* Modals */}
       {showCreateModal && (
-        <CreateTestModal
+        <GenerateTestModal
           projects={projects}
           onClose={() => setShowCreateModal(false)}
-          defaultProjectId={projects[0]?.id || ""}
         />
       )}
       {showRunModal && (
-        <RunAllModal projects={projects} onClose={() => setShowRunModal(false)} defaultProjectId={filtered[0]?.projectId || projects[0]?.id || ""} />
+        <RunRegressionModal projects={projects} onClose={() => setShowRunModal(false)} defaultProjectId={filtered[0]?.projectId || projects[0]?.id || ""} />
       )}
       {showReviewModal && (
         <ReviewModal projects={projects} onClose={() => setShowReviewModal(false)} />
@@ -1079,24 +872,21 @@ export default function Tests() {
 
       {/* Bulk action confirmation modal */}
       {bulkConfirm && (
-        <>
-          <div onClick={() => setBulkConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 999 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 1000, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "28px 32px", width: "min(420px,95vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
-            <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Confirm bulk action</div>
-            <div style={{ fontSize: "0.875rem", color: "var(--text2)", marginBottom: 20, lineHeight: 1.6 }}>
-              You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong> (all visible draft tests). This cannot be undone easily.
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
-              <button
-                className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
-                onClick={() => executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
-              >
-                {bulkConfirm.action === "approve" ? "Approve all" : "Reject all"}
-              </button>
-            </div>
+        <ModalShell onClose={() => setBulkConfirm(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
+          <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Confirm bulk action</div>
+          <div style={{ fontSize: "0.875rem", color: "var(--text2)", marginBottom: 20, lineHeight: 1.6 }}>
+            You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong> (all visible draft tests). This cannot be undone easily.
           </div>
-        </>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
+            <button
+              className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
+              onClick={() => executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
+            >
+              {bulkConfirm.action === "approve" ? "Approve all" : "Reject all"}
+            </button>
+          </div>
+        </ModalShell>
       )}
     </div>
   );

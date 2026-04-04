@@ -37,7 +37,7 @@ export const api = {
   deleteProject: (id)   => req("DELETE", `/projects/${id}`),
 
   // Crawl & Run
-  crawl:         (id)    => req("POST", `/projects/${id}/crawl`, undefined, TIMEOUT_LONG),
+  crawl:         (id, body) => req("POST", `/projects/${id}/crawl`, body || undefined, TIMEOUT_LONG),
   runTests:      (id)    => req("POST", `/projects/${id}/run`,   undefined, TIMEOUT_LONG),
   runSingleTest: (testId)=> req("POST", `/tests/${testId}/run`,  undefined, TIMEOUT_LONG),
 
@@ -60,8 +60,9 @@ export const api = {
     req("POST", `/projects/${projectId}/tests/bulk`, { testIds, action: "delete" }),
 
   // Runs
-  getRuns: (id)    => req("GET", `/projects/${id}/runs`),
-  getRun:  (runId) => req("GET", `/runs/${runId}`),
+  getRuns:   (id)    => req("GET", `/projects/${id}/runs`),
+  getRun:    (runId) => req("GET", `/runs/${runId}`),
+  abortRun:  (runId) => req("POST", `/runs/${runId}/abort`),
 
   // Dashboard
   getDashboard: () => req("GET", "/dashboard"),

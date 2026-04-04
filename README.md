@@ -29,6 +29,9 @@ Sentri is an autonomous QA platform that removes the manual burden of writing an
 | 🤖 **Multi-AI Test Generation** | Anthropic Claude Sonnet, Google Gemini 2.5 Flash, OpenAI GPT-4o-mini, or Ollama local models — switch with one env var |
 | 🦙 **Ollama (Local Models)** | Run models locally with Ollama — completely free and private, no API key needed. NDJSON response fallback, `OLLAMA_MAX_PREDICT` token cap, and HTTP 500 retry for robust local inference |
 | ✦ **Create Test from Description** | Describe a scenario in plain English; AI generates steps + a Playwright script in seconds |
+| 🎛️ **Test Dials** | Configurable AI generation: pick strategy (happy path, edge cases, comprehensive…), workflow perspective, quality checks, output format, test count, and language. Presets like "Smoke Test" and "BDD Blueprint" auto-fill multiple dials. Config is validated server-side to prevent prompt injection |
+| ⛔ **Abort / Cancel** | Stop any running crawl, generation, or test run via the UI or `POST /api/runs/:id/abort`. `AbortSignal` is threaded through the entire pipeline so AI calls, browser operations, and feedback loops halt immediately |
+| 🆔 **Human-Readable IDs** | Sequential IDs (`TC-1`, `RUN-2`, `PRJ-3`, `ACT-4`) replace UUIDs — easier to reference in conversations and bug reports. Counters persist in the DB and rehydrate on startup |
 | 🧬 **Self-Healing Tests** | Multi-strategy element finding with adaptive healing history — tests auto-recover when selectors change. Visualised with a **Healing Timeline** showing the fallback chain |
 | 🔄 **Two-Phase AI Pipeline** | PLAN → GENERATE split avoids token truncation; AI-assisted intent classification for ambiguous pages |
 | 📡 **Real-Time SSE Streaming** | Server-Sent Events replace polling — live log, result, frame, and LLM token events pushed to the browser with automatic reconnection and exponential backoff |
@@ -43,17 +46,19 @@ Sentri is an autonomous QA platform that removes the manual burden of writing an
 | 🗺️ **Site Graph** | D3 force-directed graph of crawled pages with live node status, edge inference, and a "+ Generate test" action per page |
 | 🔑 **Auth Support** | Login to your app before crawling using CSS selectors for username/password fields |
 | ⚙️ **Runtime API Key Config** | Set or change your AI provider key in the Settings UI — no server restart needed |
-| 📊 **Live Dashboard** | Real-time pass/fail metrics, run history, pass rate trends, and per-project analytics |
-| 📝 **Activity Log** | Complete timeline of all user and system actions — crawls, runs, edits, approvals |
+| 📊 **Rich Dashboard** | Pass rate, defect category breakdown, flaky test detection, test growth sparkline, MTTR, run status distribution, test review pipeline, and auto-fix / self-healing stats |
+| 📝 **Activity Log** | Complete timeline of all user and system actions — crawls, runs, edits, approvals, aborts |
 | ⚡ **Async Test Generation** | `POST /projects/:id/tests/generate` returns `202 { runId }` immediately; the AI pipeline runs in the background |
 | 🔗 **API Resilience** | `AbortController`-based timeouts (30s default, 5min for long ops), connection testing, and API key validation endpoints |
 | 📦 **Data Caching** | `useProjectData` hook with module-level 30s TTL cache + batch `/api/tests` endpoint to eliminate N+1 fetches |
+| 🪵 **Centralized Logging** | Env-driven log level, timestamp format, timezone, and optional JSON-lines mode (`LOG_LEVEL`, `LOG_DATE_FORMAT`, `LOG_TIMEZONE`, `LOG_JSON`) |
 | 🌙 **Dark Mode** | Automatic dark mode via `prefers-color-scheme` — all UI components adapt seamlessly |
 | ⌨️ **Keyboard Shortcuts** | `a` approve, `r` reject, `/` search, `Esc` clear — speed up test review workflows |
 | 🔍 **Global Test Search** | Search across all tests from the sidebar; results open the `/tests` page with URL-synced filters |
 | 📄 **Pagination & Sorting** | Tests page and project review tab paginate at 50/page with sortable columns and URL-synced filters |
 | ☑️ **Bulk Actions** | Select multiple tests for bulk approve/reject/delete with confirmation modal for "select all" operations |
 | 🔔 **Browser Notifications** | Optional desktop notifications when a run completes, with favicon badge (⏳/✅/❌) while running |
+| 🗑️ **Project Deletion** | Cascade-delete a project and all its tests, runs, and activities — with an active-run guard to prevent orphaned data |
 | 🛡️ **Error Boundary & 404** | Graceful crash recovery and a proper 404 page for unknown routes |
 | 🐳 **Docker Ready** | Full Docker Compose setup for instant deployment |
 
@@ -130,6 +135,7 @@ Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google — 
 ### 3a. Crawl & Generate Tests (Automated)
 
 - Open your project and click **Crawl & Generate Tests**
+- Optionally expand the **Test Dials** panel to configure strategy, test count, workflow perspective, quality checks, output format, and language before starting
 - Sentri visits your app, follows internal links, snapshots each page (including form structures, semantic sections, and heading hierarchy), and sends those snapshots through an 8-step pipeline:
   1. **Crawl** — discover pages up to 3 levels deep
   2. **Filter** — remove noise from interactive elements
@@ -140,17 +146,15 @@ Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google — 
   7. **Validate** — reject malformed or placeholder tests before they enter the DB
   8. **Done** — store validated tests as Draft
 - Watch crawl progress live in the **Site Graph** — a D3 force-directed map of discovered pages with status indicators
+- Click **Stop** at any time to abort the crawl — all in-progress AI calls and browser operations are cancelled immediately
 - All generated tests appear in the **Generated Tests** tab as **Draft**
 
 ### 3b. Create a Test from Description (Manual)
 
-- Click **Create Tests** from the Tests page
-- Select your project (auto-populated), enter a test name and plain-English description
-- AI generates detailed test steps and a Playwright script — review and edit the steps in a multi-phase wizard:
-  - **Form** → describe what you want to test
-  - **Generating** → AI analyses your description and writes steps + Playwright code. Watch output arrive token-by-token in the **LLM Stream Panel**
-  - **Review** → edit, add, remove, or reorder steps before saving
-  - **Done** → test saved as Draft
+- Click **Create Tests** from the Tests page — opens the **Generate Test Modal** with two tabs:
+  - **Story** — select your project, enter a test name and plain-English description
+  - **Test Dials** — configure AI generation behaviour (strategy, test count, format, etc.)
+- AI generates detailed test steps and a Playwright script. Watch output arrive token-by-token in the **LLM Stream Panel**
 - The test is saved as **Draft** in your project's Generated Tests queue
 
 ### 4. Review & Approve Tests
@@ -166,26 +170,28 @@ Go to **Settings** and paste in an API key for Anthropic, OpenAI, or Google — 
 - Add, remove, or reorder steps inline
 - On save, Playwright code is **automatically regenerated** from your updated steps via AI
 - Click **Show changes** to view a **Code Diff** (Myers line diff) of the previous vs. current Playwright code
-- Export test data + run history as JSON from the test detail page
+- Export test data + run history as CSV from the test detail page
 
 ### 6. Run Regression
 
 - Click **Run Regression** to execute all approved tests
 - Tests run with **self-healing**: if a selector breaks, the runtime tries multiple fallback strategies (role, label, text, aria-label, title) and remembers which strategy won for future runs
 - Watch live progress via **SSE streaming** — no more polling. The Run Detail view updates in real time with logs, results, and a **live browser view** (CDP screencast at ~7 FPS)
+- Click **Stop Task** at any time to abort the run — remaining tests are skipped and the run is marked as "aborted"
 - The **Execution Timeline** (Gantt chart) shows each test's start time and duration
 - Click any test case to drill into its **Step Results** — **OverlayCanvas** draws bounding boxes on screenshots, plus network requests, console logs, and DOM snapshot
 - The **Healing Timeline** visualises which selector strategies were tried and which one won
 - After failures, an automatic **feedback loop** classifies each failure and auto-regenerates high-priority failing tests
+- A post-run **Outcome Banner** offers "Review Tests" and "Re-run Tests" actions
 
 ### 7. Monitor
 
-- The **Dashboard** (`/dashboard`) shows aggregate pass rate, test counts, run history chart (shown with 1+ runs), and a first-time onboarding banner for new users
+- The **Dashboard** (`/dashboard`) shows pass rate, defect category breakdown (selector / navigation / timeout / assertion), flaky test count, test growth sparkline, MTTR, run status distribution, test review pipeline, auto-fix and self-healing stats, and recent activity
 - The **Tests** page (`/tests`) provides a unified view of all tests across all projects with sortable columns, pagination (50/page), bulk select/approve/reject, keyboard shortcuts (`a`/`r`/`Esc`), and URL-synced filters (`?q=`, `?status=`, `?review=`)
-- The **Projects** page (`/projects`) shows per-project health at a glance with pass rate bars and test counts
-- The **Work** page (`/work`) lists all runs across all projects with search, status filters, type filters, and an inline **New Run** modal
+- The **Projects** page (`/projects`) shows per-project health at a glance with pass rate bars, test counts, and a delete button with cascade confirmation
+- The **Runs** page (`/work`) lists all runs across all projects with search, status filters (including "aborted"), type filters, and an inline **New Run** modal
 - The **Reports** page (`/reports`) provides pass/fail trend charts, per-project breakdown, flaky test detection, and top failures with CSV export (disabled when no runs match the current filter)
-- The **Context** page (`/context`) displays AI provider status and per-application environment details
+- The **System** page (`/context`) displays AI provider status and per-application environment details
 
 ---
 
@@ -230,6 +236,10 @@ Ollama must be running on the same machine as the Sentri backend (or set `OLLAMA
 | `OLLAMA_MAX_PREDICT` | No | `4096` | Max token output cap for Ollama — prevents context overflow HTTP 500s on small models |
 | `OLLAMA_TIMEOUT_MS` | No | `120000` | Timeout (ms) for Ollama API calls — increase for slow machines or large models |
 | `PORT` | No | `3001` | Backend server port |
+| `LOG_LEVEL` | No | `info` | Minimum severity to print: `debug`, `info`, `warn`, or `error` |
+| `LOG_DATE_FORMAT` | No | `iso` | Timestamp format: `iso`, `utc`, `local`, or `epoch` |
+| `LOG_TIMEZONE` | No | system | IANA timezone for `local` format (e.g. `America/New_York`) |
+| `LOG_JSON` | No | `false` | Emit structured JSON lines on stdout instead of human-readable text |
 
 See [`backend/.env.example`](backend/.env.example) for the full template.
 
@@ -241,61 +251,120 @@ See [`backend/.env.example`](backend/.env.example) for the full template.
 sentri/
 ├── backend/
 │   ├── src/
-│   │   ├── index.js              # Express API server, all routes, activity logging, SSE registry + emitRunEvent
-│   │   ├── aiProvider.js         # Multi-AI provider abstraction + retry + circuit breaker + streamText()
-│   │   ├── crawler.js            # 8-layer pipeline: crawl → filter → classify → generate → dedup → enhance → validate → store (SSE-emitting)
-│   │   ├── selfHealing.js        # Self-healing runtime: multi-strategy element finding, healing history, transform engine
-│   │   ├── testRunner.js         # Playwright test executor with self-healing, CDP screencast, SSE events + feedback loop
-│   │   ├── db.js                 # In-memory store with activities + healing history (swap for Postgres in production)
+│   │   ├── index.js                  # App bootstrap, route mounting, DB init, server listen
+│   │   ├── aiProvider.js             # Multi-AI abstraction + retry + abort signal + streamText()
+│   │   ├── crawler.js                # Thin pipeline orchestrator: crawl → classify → generate → persist
+│   │   ├── selfHealing.js            # Self-healing runtime: multi-strategy element finding, healing history
+│   │   ├── testRunner.js             # Thin test executor: browser lifecycle, per-test loop, status transitions
+│   │   ├── testDials.js              # Server-side Test Dials: validation + prompt builder
+│   │   ├── db.js                     # In-memory store with counters + healing history
+│   │   ├── middleware/
+│   │   │   └── appSetup.js           # Express app creation, CORS, JSON parsing, static serving
+│   │   ├── routes/
+│   │   │   ├── projects.js           # Project CRUD + cascade delete with active-run guard
+│   │   │   ├── tests.js              # Test CRUD, AI generation, single-test run, review, bulk
+│   │   │   ├── runs.js               # Crawl, test execution, abort endpoint, run listing
+│   │   │   ├── sse.js                # SSE registry, emitRunEvent, GET /runs/:runId/events
+│   │   │   ├── dashboard.js          # Analytics: pass rate, defects, flaky tests, MTTR, growth
+│   │   │   ├── settings.js           # AI provider config, Ollama status, API key management
+│   │   │   └── system.js             # Activities, test-connection, system info, data management
+│   │   ├── utils/
+│   │   │   ├── idGenerator.js        # Sequential IDs (TC-1, RUN-2, PRJ-3, ACT-4) + rehydration
+│   │   │   ├── activityLogger.js     # Shared activity logging helper
+│   │   │   ├── runWithAbort.js       # Abortable run helper + AbortController registry
+│   │   │   ├── abortHelper.js        # throwIfAborted, isRunAborted, finalizeRunIfNotAborted
+│   │   │   ├── runLogger.js          # Centralized log + SSE emit with level helpers
+│   │   │   └── logFormatter.js       # Env-driven timestamp format, log level, JSON mode
+│   │   ├── runner/
+│   │   │   ├── config.js             # Env constants + artifact directory setup
+│   │   │   ├── codeParsing.js        # extractTestBody, patchNetworkIdle, stripPlaywrightImports
+│   │   │   ├── codeExecutor.js       # runGeneratedCode + getExpect (dynamic eval)
+│   │   │   ├── executeTest.js        # Single-test orchestration: context, artifacts, cleanup
+│   │   │   ├── screencast.js         # CDP screencast lifecycle for live streaming
+│   │   │   ├── pageCapture.js        # DOM snapshot, screenshot, bounding-box capture
+│   │   │   ├── healingPersistence.js # Persist self-healing events to DB
+│   │   │   └── feedbackIntegration.js # Post-run AI feedback loop wrapper
 │   │   └── pipeline/
-│   │       ├── smartCrawl.js     # Page discovery and snapshotting
-│   │       ├── elementFilter.js  # Noise reduction on crawled elements
-│   │       ├── intentClassifier.js  # Page intent classification with AI-assisted fallback
-│   │       ├── journeyGenerator.js  # Two-phase PLAN → GENERATE test generation
-│   │       ├── deduplicator.js   # Removes duplicate generated tests
-│   │       ├── assertionEnhancer.js # Strengthens Playwright assertions
-│   │       └── feedbackLoop.js   # Auto-regeneration of failing tests
+│   │       ├── crawlBrowser.js        # Playwright browser crawl loop + login + snapshots
+│   │       ├── pageSnapshot.js        # DOM snapshot serialization (forms, sections, elements)
+│   │       ├── smartCrawl.js          # SmartCrawlQueue, structure fingerprinting, path patterns
+│   │       ├── elementFilter.js       # Noise reduction on crawled elements
+│   │       ├── intentClassifier.js    # Page intent classification with AI fallback
+│   │       ├── journeyGenerator.js    # Test generation orchestrator (delegates to prompts/)
+│   │       ├── pipelineOrchestrator.js # Shared post-generation: dedup → enhance → validate
+│   │       ├── testPersistence.js     # persistGeneratedTests + buildPipelineStats
+│   │       ├── testValidator.js       # validateTest — pure function, zero deps
+│   │       ├── stepSanitiser.js       # Convert Playwright code to human-readable steps
+│   │       ├── promptHelpers.js       # resolveTestCountInstruction, withDials
+│   │       ├── deduplicator.js        # Removes duplicate generated tests
+│   │       ├── assertionEnhancer.js   # Strengthens Playwright assertions
+│   │       ├── feedbackLoop.js        # Failure classification + auto-regeneration
+│   │       └── prompts/
+│   │           ├── intentPrompt.js        # Single-page intent-based prompt
+│   │           ├── journeyPrompt.js       # Multi-page journey prompt
+│   │           └── userRequestedPrompt.js # User-requested test prompt
 │   ├── .env.example
 │   ├── Dockerfile
 │   └── package.json
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx               # Router setup + ErrorBoundary + 404 page
-│   │   ├── api.js                # API client (fetch wrapper with AbortController timeouts, 30s/5min)
-│   │   ├── index.css             # Design system (CSS variables, components, light + dark mode)
+│   │   ├── App.jsx                          # Router setup + ErrorBoundary + 404 page
+│   │   ├── api.js                           # API client with AbortController timeouts + abort support
+│   │   ├── index.css                        # Design system (CSS vars, modals, dials, dark mode)
+│   │   ├── config/
+│   │   │   └── testDialsConfig.js           # Pure data definitions for Test Dials options + defaults
 │   │   ├── hooks/
-│   │   │   ├── useProjectData.js # Shared hook: fetches projects + tests + runs with 30s TTL cache
-│   │   │   └── useRunSSE.js      # SSE hook: reconnect with backoff, polling fallback, favicon badge, notifications
+│   │   │   ├── useProjectData.js            # Shared hook: projects + tests + runs with 30s TTL cache
+│   │   │   ├── useRunSSE.js                 # SSE hook: reconnect with backoff, favicon badge, notifications
+│   │   │   └── useLogBuffer.js              # Accumulates log lines across SSE polls, resets on run change
 │   │   ├── utils/
-│   │   │   └── formatters.js     # Shared date/time/duration formatters
+│   │   │   ├── formatters.js                # Shared date/time/duration formatters
+│   │   │   ├── formatTestName.js            # Strip AI scenario prefixes (POSITIVE:, NEGATIVE:, etc.)
+│   │   │   └── testDialsStorage.js          # localStorage persistence + countActiveDials
 │   │   ├── components/
-│   │   │   ├── Layout.jsx        # Sidebar navigation shell
-│   │   │   ├── CrawlView.jsx     # Live crawl pipeline progress with SiteGraph integration
-│   │   │   ├── GenerateView.jsx  # Compact pipeline progress + LLMStreamPanel
-│   │   │   ├── TestRunView.jsx   # Test suite list → case preview + LiveBrowserView + ExecutionTimeline
-│   │   │   ├── StepResultsView.jsx  # Per-test-case step drill-down + OverlayCanvas + HealingTimeline
-│   │   │   ├── LiveBrowserView.jsx  # CDP screencast canvas renderer with LIVE badge
-│   │   │   ├── LLMStreamPanel.jsx   # Real-time LLM token output with raw/JSON modes
-│   │   │   ├── SiteGraph.jsx     # D3 force-directed graph of crawled pages
-│   │   │   ├── ExecutionTimeline.jsx # Gantt-style horizontal test execution timeline
-│   │   │   ├── OverlayCanvas.jsx # Screenshot canvas with bounding-box overlays
-│   │   │   ├── HealingTimeline.jsx  # Self-healing selector fallback chain visualisation
-│   │   │   ├── DiffView.jsx      # Myers line diff for Playwright code changes
-│   │   │   ├── ProviderBadge.jsx # Active AI provider indicator
-│   │   │   ├── StatCard.jsx      # Reusable stat card component
-│   │   │   ├── StatusBadge.jsx   # Consistent status badge (completed/failed/running)
-│   │   │   ├── PassFailChart.jsx # Recharts area chart for pass/fail trends
-│   │   │   └── PassRateBar.jsx   # Horizontal pass-rate bar with percentage
+│   │   │   ├── Layout.jsx                   # Sidebar navigation shell
+│   │   │   ├── TestDials.jsx                # Configurable AI generation dials UI
+│   │   │   ├── CrawlDialsPanel.jsx          # Collapsible Test Dials panel for crawl flow
+│   │   │   ├── GenerateTestModal.jsx        # AI test generation modal with Story + Dials tabs
+│   │   │   ├── CrawlView.jsx                # Live crawl pipeline progress with SiteGraph
+│   │   │   ├── GenerateView.jsx             # Compact pipeline progress + LLMStreamPanel
+│   │   │   ├── TestRunView.jsx              # Test suite list → case preview + LiveBrowserView
+│   │   │   ├── StepResultsView.jsx          # Per-test-case step drill-down + OverlayCanvas
+│   │   │   ├── LiveBrowserView.jsx          # CDP screencast canvas renderer with LIVE badge
+│   │   │   ├── LLMStreamPanel.jsx           # Real-time LLM token output with raw/JSON modes
+│   │   │   ├── SiteGraph.jsx                # D3 force-directed graph of crawled pages
+│   │   │   ├── ExecutionTimeline.jsx        # Gantt-style horizontal test execution timeline
+│   │   │   ├── OverlayCanvas.jsx            # Screenshot canvas with bounding-box overlays
+│   │   │   ├── HealingTimeline.jsx          # Self-healing selector fallback chain visualisation
+│   │   │   ├── DiffView.jsx                 # Myers line diff for Playwright code changes
+│   │   │   ├── PipelineCard.jsx             # Shared pipeline stage list with progress bar
+│   │   │   ├── ActivityLogCard.jsx          # Collapsible log viewer with color-coded entries
+│   │   │   ├── RunSidebar.jsx               # Stats card + run info card (status, duration, error)
+│   │   │   ├── ModalShell.jsx               # Shared modal backdrop + panel + Escape dismiss
+│   │   │   ├── OutcomeBanner.jsx            # Success/error strip with action buttons
+│   │   │   ├── GenerationSuccessBanner.jsx  # Post-run CTA to review generated tests
+│   │   │   ├── RunRegressionModal.jsx       # Shared modal for running regression tests
+│   │   │   ├── DeleteProjectModal.jsx       # Cascade-delete confirmation with active-run guard
+│   │   │   ├── Collapsible.jsx              # Generic collapsible section / accordion
+│   │   │   ├── Tooltip.jsx                  # Generic hover tooltip
+│   │   │   ├── AgentTag.jsx                 # Avatar chip for agent/run types (QA/TA/EX)
+│   │   │   ├── ProviderBadge.jsx            # Active AI provider indicator
+│   │   │   ├── StatCard.jsx                 # Reusable stat card component
+│   │   │   ├── StatusBadge.jsx              # Status badge (completed/failed/running/aborted)
+│   │   │   ├── PassFailChart.jsx            # Recharts area chart for pass/fail trends
+│   │   │   ├── SparklineChart.jsx           # Minimal sparkline area chart for trends
+│   │   │   ├── StackedBar.jsx               # Horizontal stacked bar for proportional segments
+│   │   │   └── PassRateBar.jsx              # Horizontal pass-rate bar with percentage
 │   │   └── pages/
-│   │       ├── Dashboard.jsx     # Pass rate, metrics, recent activity, onboarding banner
+│   │       ├── Dashboard.jsx     # Rich analytics dashboard with KPIs, charts, defect breakdown
 │   │       ├── Tests.jsx         # Unified test library: sort, paginate, bulk actions, URL-synced filters
-│   │       ├── ProjectDetail.jsx # Draft/Regression/Runs tabs per project with pagination & keyboard shortcuts
+│   │       ├── ProjectDetail.jsx # Draft/Regression/Runs tabs with Test Dials + abort support
 │   │       ├── NewProject.jsx    # Project creation form with validation & connection test
-│   │       ├── TestDetail.jsx    # Individual test view + inline editing + DiffView + export
-│   │       ├── RunDetail.jsx     # Run detail orchestrator — SSE-driven (crawl or test run)
-│   │       ├── Work.jsx          # All runs with search, icon-pill status & type filters + inline Run modal
+│   │       ├── TestDetail.jsx    # Individual test view + inline editing + DiffView + CSV export
+│   │       ├── RunDetail.jsx     # Run detail orchestrator — SSE-driven with Stop Task button
+│   │       ├── Work.jsx          # All runs with search, status filters (incl. aborted) + Run modal
 │   │       ├── Reports.jsx       # Analytics: trends, flaky tests, top failures, CSV export
-│   │       ├── Applications.jsx  # Projects page: per-project health overview with pass rate bars
+│   │       ├── Applications.jsx  # Projects page: health overview + delete with cascade
 │   │       ├── Context.jsx       # AI provider status + per-app environment details
 │   │       └── Settings.jsx      # AI keys (incl. Ollama), test execution config, data management
 │   ├── Dockerfile
@@ -317,12 +386,13 @@ sentri/
 | `POST` | `/api/projects` | Create a new project |
 | `GET` | `/api/projects` | List all projects |
 | `GET` | `/api/projects/:id` | Get a single project |
+| `DELETE` | `/api/projects/:id` | Delete project + cascade (tests, runs, activities). Blocked while runs are active |
 
 ### Crawl & Run
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/projects/:id/crawl` | Start crawl + AI test generation |
+| `POST` | `/api/projects/:id/crawl` | Start crawl + AI test generation. Accepts optional `{ dialsConfig }` for Test Dials |
 | `POST` | `/api/projects/:id/run` | Execute all approved tests (regression run) |
 
 ### Tests
@@ -333,7 +403,7 @@ sentri/
 | `GET` | `/api/tests` | List all tests (batch endpoint for frontend) |
 | `GET` | `/api/tests/:testId` | Get a single test |
 | `POST` | `/api/projects/:id/tests` | Create a manual test (saved as Draft) |
-| `POST` | `/api/projects/:id/tests/generate` | **AI-generate** steps + Playwright script from title & description (saved as Draft) |
+| `POST` | `/api/projects/:id/tests/generate` | **AI-generate** steps + Playwright script from title, description & optional `dialsConfig` (saved as Draft) |
 | `PATCH` | `/api/tests/:testId` | Update test steps, name, description, priority; optionally regenerate Playwright code |
 | `DELETE` | `/api/projects/:id/tests/:testId` | Delete a test |
 | `POST` | `/api/tests/:testId/run` | Run a single test |
@@ -354,6 +424,7 @@ sentri/
 | `GET` | `/api/projects/:id/runs` | List all runs for a project |
 | `GET` | `/api/runs/:runId` | Get run detail |
 | `GET` | `/api/runs/:runId/events` | **SSE stream** — real-time `snapshot`, `log`, `result`, `frame`, `llm_token`, and `done` events |
+| `POST` | `/api/runs/:runId/abort` | **Abort** a running crawl, generation, or test run. Returns `409` if not in progress |
 
 ### Config & Settings
 
@@ -365,7 +436,7 @@ sentri/
 | `DELETE` | `/api/settings/:provider` | Remove a provider key |
 | `GET` | `/api/ollama/status` | Check Ollama connectivity + list available models |
 | `POST` | `/api/test-connection` | Verify that a URL is reachable before creating a project |
-| `GET` | `/api/dashboard` | Summary stats (projects, tests, pass rate, recent runs) |
+| `GET` | `/api/dashboard` | Rich analytics: pass rate, defect breakdown, flaky tests, MTTR, test growth, run status distribution |
 
 ### Activities & System
 
