@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import AppLogo from "../components/AppLogo.jsx";
-import { API_BASE } from "../utils/api.js";
+import { API_BASE, parseJsonResponse } from "../utils/api.js";
 
 const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
@@ -56,6 +56,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(null);
@@ -73,7 +74,7 @@ export default function Login() {
     const provider = params.get("provider");
     const err = params.get("error");
     if (err) { setError(decodeURIComponent(err)); window.history.replaceState({}, "", `${import.meta.env.BASE_URL}login`); return; }
-    if (code && provider) handleOAuthCallback(provider, code);
+    if (code && provider && ["github", "google"].includes(provider)) handleOAuthCallback(provider, code);
   }, []);
 
   useEffect(() => { if (user) navigate(from, { replace: true }); }, [user]);
@@ -82,9 +83,16 @@ export default function Login() {
   async function handleOAuthCallback(provider, code) {
     setOauthLoading(provider); setError("");
     try {
+      const params = new URLSearchParams(location.search);
+      const returnedState = params.get("state");
+      const savedState = sessionStorage.getItem("oauth_state");
+      sessionStorage.removeItem("oauth_state");
+      if (!returnedState || returnedState !== savedState) {
+        throw new Error("OAuth state mismatch — possible CSRF attack. Please try again.");
+      }
       const res = await fetch(`${API_BASE}/api/auth/${provider}/callback?code=${code}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "OAuth login failed");
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || "OAuth sign-in failed");
       await login(data.token, data.user);
       window.history.replaceState({}, "", `${import.meta.env.BASE_URL}login`);
     } catch (e) { setError(e.message); setOauthLoading(null); window.history.replaceState({}, "", `${import.meta.env.BASE_URL}login`); }
@@ -107,18 +115,22 @@ export default function Login() {
 
   async function handleSubmit(e) {
     e.preventDefault(); setError(""); setSuccess("");
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setError("Please enter a valid email address."); return;
+    }
     if (mode === "register") {
       if (!name.trim()) { setError("Full name is required."); return; }
       if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+      if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     }
     setLoading(true);
     try {
       const endpoint = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
       const body = mode === "login" ? { email, password } : { name, email, password };
       const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await res.json();
+      const data = await parseJsonResponse(res);
       if (!res.ok) throw new Error(data.error || "Something went wrong");
-      if (mode === "register") { setSuccess("Account created! You can now sign in."); setMode("login"); setPassword(""); }
+      if (mode === "register") { setSuccess("Account created! You can now sign in."); setMode("login"); setPassword(""); setConfirmPassword(""); }
       else await login(data.token, data.user);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -232,8 +244,12 @@ export default function Login() {
         <div className="lp-left">
           <div className="lp-grid"/>
           <div className="lp-orb lp-orb-1"/><div className="lp-orb lp-orb-2"/><div className="lp-orb lp-orb-3"/>
-          <div className="lp-brand">
+          <div className="lp-brand" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <AppLogo size={36} variant="full" color="#f1f5f9" />
+            <a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer" style={{fontSize:"0.78rem",color:"#64748b",textDecoration:"none",display:"flex",alignItems:"center",gap:5,transition:"color 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#a5b4fc"}} onMouseLeave={e=>{e.currentTarget.style.color="#64748b"}}>
+              Docs
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </a>
           </div>
 
           <div className="lp-hero">
@@ -327,8 +343,17 @@ export default function Login() {
                   </div>
                 )}
               </div>
+              {mode==="register" && (
+                <div className="lp-field fe">
+                  <div className="lp-lrow"><label className="lp-lbl" htmlFor="reg-confirm-pw">Confirm password</label></div>
+                  <input id="reg-confirm-pw" type={showPassword?"text":"password"} className="lp-in" placeholder="Re-enter your password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} autoComplete="new-password" required disabled={loading}/>
+                  {confirmPassword && password !== confirmPassword && (
+                    <div style={{fontSize:"0.75rem",color:"#f87171",marginTop:6}}>Passwords do not match.</div>
+                  )}
+                </div>
+              )}
 
-              <button type="submit" className="lp-sub" disabled={loading||!!oauthLoading}>
+              <button type="submit" className="lp-sub" disabled={loading||!!oauthLoading||(mode==="register"&&password!==confirmPassword)}>
                 {loading && <Spinner/>}
                 {loading?(mode==="login"?"Signing in…":"Creating account…"):(mode==="login"?"Sign in to Sentri":"Create account")}
               </button>
@@ -336,11 +361,12 @@ export default function Login() {
 
             <p className="lp-sw">
               {mode==="login"
-                ? (<>Don't have an account?{" "}<button className="lp-swb" onClick={()=>{setMode("register");setError("");setSuccess("");}}>Sign up free</button></>)
-                : (<>Already have an account?{" "}<button className="lp-swb" onClick={()=>{setMode("login");setError("");setSuccess("");}}>Sign in</button></>)
+                ? (<>Don't have an account?{" "}<button className="lp-swb" onClick={()=>{setMode("register");setError("");setSuccess("");setPassword("");setConfirmPassword("");}}>Create account</button></>)
+                : (<>Already have an account?{" "}<button className="lp-swb" onClick={()=>{setMode("login");setError("");setSuccess("");setPassword("");setConfirmPassword("");}}>Sign in</button></>)
               }
             </p>
             <p className="lp-tos">By continuing you agree to our <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</p>
+            <p className="lp-tos" style={{marginTop:8}}><a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer">Documentation</a></p>
           </div>
         </div>
       </div>
