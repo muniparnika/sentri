@@ -16,10 +16,18 @@ import { api } from "../api.js";
 import ModalShell from "./ModalShell.jsx";
 import TestDials from "./TestDials.jsx";
 import { countActiveDials, loadSavedConfig } from "../utils/testDialsStorage.js";
+import { EXPLORE_MODE_OPTIONS, EXPLORER_TUNING } from "../config/testDialsConfig.js";
 
 const ACCEPTED_EXTENSIONS = ".txt,.md,.csv,.json,.xml,.html,.yml,.yaml,.feature,.gherkin";
 const MAX_ATTACHMENT_SIZE  = 40_000;    // 40 KB per file
 const MAX_TOTAL_ATTACHMENT = 45_000;    // 45 KB cumulative — backend caps description at 50 KB
+
+// MIME types that are safe to read as text — anything else is rejected.
+const TEXT_MIME_PREFIXES = ["text/", "application/json", "application/xml", "application/x-yaml", "application/yaml"];
+const TEXT_MIME_EXACT = new Set([
+  "text/plain", "text/csv", "text/html", "text/markdown", "text/xml", "text/yaml",
+  "application/json", "application/xml", "application/x-yaml", "application/yaml",
+]);
 
 // ── Sample prompts for the Examples popover ─────────────────────────────────────
 
@@ -76,7 +84,7 @@ function Toggle({ value, onChange, disabled }) {
 
 // ── Generate CTA (single source of truth) ─────────────────────────────────────
 
-function GenerateCTA({ error, canSubmit, phase, onGenerate, showNameHint }) {
+function GenerateCTA({ canSubmit, phase, onGenerate, showNameHint }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -85,11 +93,6 @@ function GenerateCTA({ error, canSubmit, phase, onGenerate, showNameHint }) {
           <Clock size={11} /> ~30-60 seconds
         </span>
       </div>
-      {error && (
-        <div className="alert-error" style={{ marginBottom: 12 }}>
-          {error}
-        </div>
-      )}
       <button
         className="btn btn-primary"
         style={{ width: "100%", justifyContent: "center", fontWeight: 700, fontSize: "0.9rem" }}
@@ -168,18 +171,43 @@ export default function GenerateTestModal({ projects = [], onClose }) {
     setTimeout(() => nameRef.current?.focus(), 60);
   }, []);
 
+  function isTextMime(file) {
+    const mime = (file.type || "").toLowerCase();
+    // Files with no MIME (e.g. .feature, .gherkin) — allow if extension is in the accept list
+    if (!mime) return true;
+    if (TEXT_MIME_EXACT.has(mime)) return true;
+    if (TEXT_MIME_PREFIXES.some(p => mime.startsWith(p))) return true;
+    return false;
+  }
+
   function handleFileSelect(e) {
     const files = Array.from(e.target.files || []);
     e.target.value = ""; // reset so the same file can be re-selected
     for (const file of files) {
+      if (!isTextMime(file)) {
+        setError(`"${file.name}" appears to be a binary file (${file.type || "unknown type"}). Only text-based files are supported.`);
+        continue;
+      }
       if (file.size > MAX_ATTACHMENT_SIZE) {
         setError(`"${file.name}" is too large (${Math.round(file.size / 1000)} KB). Max is 40 KB per file.`);
         continue;
       }
       const reader = new FileReader();
       reader.onload = () => {
+        const raw = reader.result;
+        // Detect binary content that slipped through MIME check — if more than 5%
+        // of the first 1 KB is non-printable, reject it.
+        const sample = raw.slice(0, 1024);
+        const nonPrintable = [...sample].filter(c => {
+          const code = c.charCodeAt(0);
+          return code < 32 && code !== 9 && code !== 10 && code !== 13; // allow tab, LF, CR
+        }).length;
+        if (sample.length > 0 && nonPrintable / sample.length > 0.05) {
+          setError(`"${file.name}" contains binary data and cannot be used as a text attachment.`);
+          return;
+        }
         // Strip common prompt-injection markers (mirrors backend testDials.js sanitisation)
-        const content = reader.result
+        const content = raw
           .replace(/^(SYSTEM|ASSISTANT|USER|HUMAN|AI)\s*:/gim, "")
           .replace(/```/g, "");
         setAttachments(prev => {
@@ -264,6 +292,13 @@ export default function GenerateTestModal({ projects = [], onClose }) {
 
     setPhase("submitting");
     try {
+      // Pre-flight: check if an AI provider is configured before calling the LLM
+      const config = await api.getConfig().catch(() => null);
+      if (!config?.hasProvider) {
+        setError("No AI provider configured — go to Settings to add an API key or enable Ollama.");
+        setPhase("form");
+        return;
+      }
       // Send the structured config object — the backend validates it and builds
       // the prompt server-side via resolveDialsPrompt(), matching the crawl endpoint.
       const { runId } = await api.generateTest(projectId, {
@@ -283,7 +318,7 @@ export default function GenerateTestModal({ projects = [], onClose }) {
   const canSubmit = name.trim() && projectId && phase !== "submitting";
 
   return (
-    <ModalShell onClose={onClose} width="min(560px, 96vw)" style={{ maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <ModalShell onClose={onClose} width="min(560px, 96vw)" style={{ height: "min(92vh, calc(100vh - 32px))" }}>
       {/* Header */}
       <div style={{
           display: "flex", alignItems: "center", gap: 10,
@@ -307,8 +342,17 @@ export default function GenerateTestModal({ projects = [], onClose }) {
           <Tab label="Options" active={tab === "options"} onClick={() => setTab("options")} />
         </div>
 
-        {/* Body */}
-        <div style={{ overflowY: "auto", flex: 1, padding: "20px 22px" }}>
+        {/* Persistent error banner — visible on all tabs, never lost on tab switch */}
+        {error && (
+          <div style={{ padding: "0 22px", flexShrink: 0 }}>
+            <div className="alert-error" style={{ marginTop: 12 }}>
+              {error}
+            </div>
+          </div>
+        )}
+
+        {/* Body — minHeight:0 required for flex child to shrink below content size */}
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 0, padding: "20px 22px" }}>
 
           {/* ── Story tab ── */}
           {tab === "story" && (
@@ -392,7 +436,7 @@ export default function GenerateTestModal({ projects = [], onClose }) {
                     ref={nameRef}
                     className="input"
                     value={name}
-                    onChange={e => { setName(e.target.value); if (error) setError(null); }}
+                    onChange={e => setName(e.target.value)}
                     placeholder="e.g. Dashboard loads all employee charts"
                     style={{ height: 38 }}
                     onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleGenerate(e); }}
@@ -559,7 +603,7 @@ export default function GenerateTestModal({ projects = [], onClose }) {
 
               {/* AI Generate section */}
               <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 16 }}>
-                <GenerateCTA error={error} canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} />
+                <GenerateCTA canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} />
               </div>
             </div>
           )}
@@ -567,11 +611,11 @@ export default function GenerateTestModal({ projects = [], onClose }) {
           {/* ── Test Dials tab ── */}
           {tab === "dials" && (
             <div>
-              <TestDials onChange={setDialsConfig} />
+              <TestDials value={dialsConfig} onChange={setDialsConfig} />
 
               {/* Generate CTA also on dials tab */}
               <div style={{ marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-                <GenerateCTA error={error} canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} showNameHint={!name.trim()} />
+                <GenerateCTA canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} showNameHint={!name.trim()} />
               </div>
             </div>
           )}
@@ -583,8 +627,74 @@ export default function GenerateTestModal({ projects = [], onClose }) {
                 Test Generation Settings
               </div>
 
+              {/* Explore mode */}
+              <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 10, color: "var(--text)" }}>
+                Explore Mode
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                {EXPLORE_MODE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setDialsConfig(prev => ({ ...prev, exploreMode: opt.id }))}
+                    style={{
+                      flex: 1, padding: "8px 10px", borderRadius: "var(--radius)",
+                      border: `1.5px solid ${dialsConfig?.exploreMode === opt.id ? "var(--accent)" : "var(--border)"}`,
+                      background: dialsConfig?.exploreMode === opt.id ? "var(--accent-bg)" : "var(--bg2)",
+                      color: dialsConfig?.exploreMode === opt.id ? "var(--accent)" : "var(--text2)",
+                      cursor: "pointer", fontSize: "0.8rem", fontWeight: 500,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {opt.label}
+                    <div style={{ fontSize: "0.68rem", color: "var(--text3)", marginTop: 2, fontWeight: 400 }}>
+                      {opt.desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Explorer tuning — only when state mode */}
+              {dialsConfig?.exploreMode === "state" && (
+                <div style={{
+                  padding: 12, background: "var(--bg2)", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius)", display: "flex", flexDirection: "column", gap: 10,
+                  marginBottom: 12,
+                }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Explorer Tuning
+                  </div>
+                  {EXPLORER_TUNING.map(t => (
+                    <div key={t.id}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                        <span style={{ fontSize: "0.78rem", color: "var(--text)", fontWeight: 500 }}>
+                          {t.label}
+                        </span>
+                        <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--accent)", fontWeight: 600 }}>
+                          {dialsConfig?.[t.id] ?? t.defaultVal}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={t.min}
+                        max={t.max}
+                        step={t.step}
+                        value={dialsConfig?.[t.id] ?? t.defaultVal}
+                        onChange={e => setDialsConfig(prev => ({ ...prev, [t.id]: parseInt(e.target.value, 10) }))}
+                        style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+                      />
+                      <div style={{ fontSize: "0.65rem", color: "var(--text3)", marginTop: 1 }}>
+                        {t.desc}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Divider */}
+              <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0 16px" }} />
+
               {/* Toggle row */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: "0.82rem", color: "var(--text2)" }}>
                   <Toggle value={splitByAC} onChange={setSplitByAC} />
                   Split by Acceptance Criteria
@@ -648,7 +758,7 @@ export default function GenerateTestModal({ projects = [], onClose }) {
 
               {/* Generate CTA */}
               <div style={{ marginTop: 24 }}>
-                <GenerateCTA error={error} canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} />
+                <GenerateCTA canSubmit={canSubmit} phase={phase} onGenerate={handleGenerate} />
               </div>
             </div>
           )}

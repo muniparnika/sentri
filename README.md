@@ -21,17 +21,20 @@ There are plenty of "AI test generator" repos. Most generate code and leave you 
 | You can't see what the test is doing | Live browser screencast, real-time SSE log stream, per-step screenshots with bounding-box overlays |
 | Tests fail and nobody knows why | AI feedback loop classifies every failure (selector / timeout / assertion / navigation) and auto-regenerates the worst offenders |
 | Vendor lock-in on AI providers | Swap between Anthropic, OpenAI, Google, or **Ollama (free, local, private)** with one setting — no code changes |
+| Crawlers only see links, not flows | State Exploration mode clicks, fills, and submits — discovers auth flows, checkout funnels, and multi-step wizards that link crawlers miss |
 | Generated tests are shallow | 8-stage pipeline: classify page intent → plan → generate → deduplicate → enhance assertions → validate — not just "write a test for this HTML" |
+| No API coverage | **API test generation** — during crawl, Sentri captures every fetch/XHR call your app makes, deduplicates endpoints, and auto-generates Playwright `request` API contract tests alongside UI tests |
+| Large test suites are slow | **Parallel execution** — run 1–10 tests simultaneously in isolated browser contexts. Select ⚡ 4x from the UI and a 40-test suite finishes in ¼ the time |
 
 ---
 
 ## How It Works
 
-1. **Crawl** — Chromium explores your app, maps pages with a live D3 site graph
-2. **Generate** — 8-stage AI pipeline: crawl → filter → classify → plan → generate → deduplicate → enhance → validate
-3. **Describe** — or skip crawling — write a plain-English scenario and AI generates the test
+1. **Discover** — Two modes: **Link Crawl** follows `<a>` tags to map pages, or **State Exploration** executes real UI actions (click, fill, submit) to discover multi-step flows. Pick the mode from Test Dials before each crawl
+2. **Generate** — 8-stage AI pipeline: discover → filter → classify → plan → generate (UI + API tests from captured traffic) → deduplicate → enhance → validate
+3. **Describe** — or skip discovery — write a plain-English scenario and AI generates the test
 4. **Review** — every test lands in Draft. Approve/reject with keyboard shortcuts before anything runs
-5. **Execute** — one-click regression with live browser view, SSE log stream, and per-step screenshots
+5. **Execute** — one-click regression with live browser view, SSE log stream, and per-step screenshots. Run up to 10 tests in parallel for 5–10x faster suites
 6. **Self-heal** — multi-strategy selector waterfall that remembers what worked per element
 7. **Monitor** — dashboard with pass rate, defect breakdown, flaky detection, MTTR, and growth trends
 
@@ -43,8 +46,11 @@ There are plenty of "AI test generator" repos. Most generate code and leave you 
 
 | Feature | What it actually does |
 |---|---|
+| ⚡ **Parallel Execution** | Run 1–10 tests simultaneously in isolated browser contexts within a single Chromium instance. Select parallelism from the UI or set `PARALLEL_WORKERS` env var. Each worker gets its own video, screenshots, and network logs — full isolation, no shared state |
+| 🌐 **API Test Generation** | **Two paths:** (1) During crawl, captures every same-origin fetch/XHR call and auto-generates API tests. (2) From the Generate Test modal — describe endpoints in plain English, paste `METHOD /path` patterns, or attach an OpenAPI spec. Sentri auto-detects API intent and generates Playwright `request` tests that verify status codes, JSON shapes, error payloads, and contract compliance |
 | 🧬 **Adaptive Self-Healing** | Not just "retry with a different selector" — records which strategy won per element and tries it first next run. Tests get more resilient over time |
-| 🎛️ **Test Dials** | 6 strategies × 5 workflows × 8 quality checks × 3 formats × 8 languages. Presets auto-fill. Config validated server-side to block prompt injection |
+| 🎛️ **Test Dials** | 6 strategies × 5 workflows × 8 quality checks × 3 formats × 8 languages × 2 explore modes. Presets auto-fill. Config validated server-side to block prompt injection |
+| 🧭 **State Exploration** | Goes beyond link crawling — clicks buttons, fills forms, submits, and tracks state transitions to discover real multi-step user flows. Tunable per-run: max states, depth, actions per state, action timeout |
 | 🔄 **Two-Phase AI Pipeline** | PLAN → GENERATE split avoids token truncation. Intent classification (AUTH/CHECKOUT/SEARCH/CRUD/NAVIGATION/CONTENT) focuses each prompt |
 | 📡 **Real-Time SSE** | No polling. Server-Sent Events push log, result, frame, and LLM token events to the browser with auto-reconnect and exponential backoff |
 | 🖥️ **Live Browser View** | CDP screencast at ~7 FPS rendered on a `<canvas>` — watch the browser do what your test does |
@@ -103,6 +109,7 @@ npm run dev                 # Starts on :3001
 ```bash
 cd frontend
 npm install
+cp .env.example .env        # Optional — defaults work for local dev
 npm run dev                 # Starts on :3000, proxies /api to :3001
 ```
 
@@ -117,7 +124,7 @@ Open [http://localhost:3000](http://localhost:3000)
 | Anthropic Claude | `ANTHROPIC_API_KEY` | claude-sonnet-4-20250514 |
 | OpenAI | `OPENAI_API_KEY` | gpt-4o-mini |
 | Google Gemini | `GOOGLE_API_KEY` | gemini-2.5-flash |
-| Ollama (local, free) | `AI_PROVIDER=local` | llama3.2 (configurable) |
+| Ollama (local, free) | `AI_PROVIDER=local` | mistral:7b (configurable) |
 
 Auto-detects in order: Anthropic → OpenAI → Google → Ollama. Switch at any time from the Settings page.
 
@@ -127,7 +134,7 @@ Auto-detects in order: Anthropic → OpenAI → Google → Ollama. Switch at any
 
 ## Configuration
 
-Key environment variables (see [`backend/.env.example`](backend/.env.example) for the full list):
+Key environment variables (see [`backend/.env.example`](backend/.env.example) and [`frontend/.env.example`](frontend/.env.example) for the full lists):
 
 ```bash
 # AI provider (pick one)
@@ -136,6 +143,9 @@ ANTHROPIC_API_KEY=sk-ant-...       # or OPENAI_API_KEY, GOOGLE_API_KEY, AI_PROVI
 # Auth (required in production)
 JWT_SECRET=<openssl rand -base64 48>
 NODE_ENV=production
+
+# Parallel test execution (1 = sequential, max 10)
+PARALLEL_WORKERS=4
 
 # Frontend (build-time, for cross-origin deploys)
 VITE_API_URL=https://your-backend.onrender.com
@@ -222,6 +232,8 @@ See the [full deployment guide](https://rameshbabuprudhvi.github.io/sentri/docs/
 | **Rate Limiting** | ✅ 10 sign-in attempts per IP per 15 min |
 | **OAuth CSRF** | ✅ State parameter validated |
 | **SPA Routing** | ✅ GitHub Pages `404.html` redirect |
+| **Parallel Execution** | ✅ 1–10 concurrent browser contexts per run (`PARALLEL_WORKERS` env or UI selector) |
+| **API Test Generation** | ✅ HAR capture during crawl → auto-generated Playwright `request` API contract tests |
 | **Database** | ⬜ Replace in-memory `db.js` with PostgreSQL + Prisma ORM |
 | **Job Queue** | ⬜ Add BullMQ + Redis for background crawl/run jobs |
 | **File Storage** | ⬜ Store videos/screenshots to S3/R2 instead of local disk |

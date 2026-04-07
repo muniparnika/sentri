@@ -8,7 +8,7 @@
  * | Anthropic Claude | `ANTHROPIC_API_KEY` | claude-sonnet-4-20250514   |
  * | OpenAI GPT       | `OPENAI_API_KEY`    | gpt-4o-mini                |
  * | Google Gemini    | `GOOGLE_API_KEY`    | gemini-2.5-flash           |
- * | Ollama (local)   | `AI_PROVIDER=local` | llama3.2 (configurable)    |
+ * | Ollama (local)   | `AI_PROVIDER=local` | mistral:7b (configurable)    |
  *
  * **Detection order:** `AI_PROVIDER` env var (explicit) → auto-detect (Anthropic → OpenAI → Google → Ollama).
  *
@@ -52,7 +52,7 @@ export function setRuntimeKey(provider, key) {
  * Configure Ollama runtime settings (via Settings page).
  * @param {Object}  [opts]
  * @param {string}  [opts.baseUrl]  - Ollama server URL.
- * @param {string}  [opts.model]    - Model name (e.g. `"llama3.2"`).
+ * @param {string}  [opts.model]    - Model name (e.g. `"mistral:7b"`).
  * @param {boolean} [opts.disabled] - Set `true` to deactivate Ollama.
  */
 export function setRuntimeOllama({ baseUrl, model, disabled } = {}) {
@@ -78,7 +78,7 @@ function getOllamaBaseUrl() {
 function getOllamaModel() {
   return runtimeOllamaModel
     || process.env.OLLAMA_MODEL
-    || "llama3.2";
+    || "mistral:7b";
 }
 
 // ── Provider metadata ─────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ export async function checkOllamaConnection() {
     if (!tagsRes.ok) return { ok: false, error: `Ollama /api/tags returned HTTP ${tagsRes.status}` };
     const { models = [] } = await tagsRes.json();
     const names = models.map(m => m.name.split(":")[0]);
-    // model name may include a tag (llama3.2:latest) — strip for comparison
+    // model name may include a tag (mistral:7b:latest) — strip for comparison
     const modelBase = model.split(":")[0];
     const found = names.some(n => n === modelBase || n === model);
     if (!found) {
@@ -208,13 +208,27 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function isRateLimitError(err) {
-  const msg = err?.message || "";
+/**
+ * Detect whether an error is a rate limit / quota exhaustion from any AI provider.
+ * Used internally for retry decisions and exported for the pipeline to detect
+ * rate limits that survived all retries.
+ *
+ * @param {Error} err
+ * @returns {boolean}
+ */
+export function isRateLimitError(err) {
+  const msg = (err?.message || "").toLowerCase();
   const status = err?.status || err?.statusCode || 0;
-  return RATE_LIMIT_CODES.includes(status)
-    || RETRY_ERRORS.some(e => msg.includes(e))
-    || msg.includes("quota")
-    || msg.includes("429");
+  if (RATE_LIMIT_CODES.includes(status)) return true;
+  // Use word-boundary-aware patterns to avoid false positives on port
+  // numbers (e.g. "localhost:4290"), disk quota errors, etc.
+  return /\brate.?limit/i.test(msg)
+    || /\brate_limit/i.test(msg)
+    || /\b429\b/.test(msg)
+    || /\bquota\s*(exceeded|exhausted|limit)/i.test(msg)
+    || /\btoo many requests\b/i.test(msg)
+    || /\bresource.?exhausted\b/i.test(msg)
+    || /\boverloaded/i.test(msg);
 }
 
 function extractRetryAfter(err) {
@@ -463,7 +477,7 @@ export async function generateText(prompt, options) {
       "No AI provider configured. Options:\n" +
       "  Cloud: set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY in backend/.env\n" +
       "  Local: set AI_PROVIDER=local (requires Ollama running at http://localhost:11434)\n" +
-      "         Optionally: OLLAMA_MODEL=llama3.2  OLLAMA_BASE_URL=http://localhost:11434"
+      "         Optionally: OLLAMA_MODEL=mistral:7b  OLLAMA_BASE_URL=http://localhost:11434"
     );
   }
   return callProvider(provider, prompt, options?.maxTokens, options?.signal);

@@ -16,9 +16,13 @@ export default function GenerationSuccessBanner({ run, isRunning }) {
 
   const testCount = run?.tests?.length || run?.testsGenerated || 0;
 
-  if (isRunning || run?.status !== "completed" || !run?.projectId || testCount === 0) {
+  // Rate limit warnings are shown by RunDetail.jsx at the page level —
+  // don't duplicate them here inside the pipeline view.
+  if (isRunning || run?.status !== "completed" || !run?.projectId || run.rateLimitError) {
     return null;
   }
+
+  if (testCount === 0) return null;
 
   return (
     <OutcomeBanner

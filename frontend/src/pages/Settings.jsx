@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import { invalidateConfigCache } from "../components/ProviderBadge.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 const PROVIDERS = [
   {
@@ -56,7 +57,7 @@ const PROVIDERS = [
     id: "local",
     name: "Ollama",
     company: "Local / Self-hosted",
-    model: "llama3.2",            // shown as default; overridden by live config
+    model: "mistral:7b",            // shown as default; overridden by live config
     placeholder: null,            // no API key
     docsUrl: "https://ollama.ai",
     color: "#7c3aed",
@@ -87,8 +88,8 @@ function OllamaStatusPanel({ baseUrl, model, onModelChange, onBaseUrlChange }) {
       setStatus(s);
       // Sync model state to the exact option value returned by Ollama so the
       // controlled <select> stays in sync. Ollama tags include a suffix like
-      // ":latest" that the saved config may omit (e.g. "llama3.2" vs
-      // "llama3.2:latest"), causing a value mismatch → flicker loop.
+      // ":latest" that the saved config may omit (e.g. "mistral:7b" vs
+      // "mistral:7b:latest"), causing a value mismatch → flicker loop.
       const cur = modelRef.current;
       if (s.availableModels?.length && !s.availableModels.includes(cur)) {
         const match = s.availableModels.find(m => m.split(":")[0] === cur.split(":")[0]);
@@ -176,7 +177,7 @@ function OllamaStatusPanel({ baseUrl, model, onModelChange, onBaseUrlChange }) {
             className="input"
             value={model}
             onChange={e => onModelChange(e.target.value)}
-            placeholder="llama3.2"
+            placeholder="mistral:7b"
             style={{ fontFamily: "var(--font-mono)" }}
           />
         </div>
@@ -209,7 +210,7 @@ function OllamaStatusPanel({ baseUrl, model, onModelChange, onBaseUrlChange }) {
 curl -fsSL https://ollama.ai/install.sh | sh
 
 # 2. Pull a model (one-time download)
-ollama pull llama3.2          # ~2 GB, good quality
+ollama pull mistral:7b          # ~2 GB, good quality
 ollama pull qwen2.5-coder:7b  # great for code generation
 ollama pull mistral           # lighter alternative
 
@@ -222,7 +223,7 @@ ollama serve                  # default: http://localhost:11434`
         <Info size={11} style={{ flexShrink: 0, marginTop: 2 }} />
         <span>
           For best results use a model with strong JSON output and code generation.
-          Recommended: <strong>llama3.2</strong>, <strong>qwen2.5-coder:7b</strong>, <strong>mistral</strong>.
+          Recommended: <strong>mistral:7b</strong>, <strong>qwen2.5-coder:7b</strong>, <strong>mistral</strong>.
           Small models (≤3B) may struggle to produce valid Playwright code.
         </span>
       </div>
@@ -246,16 +247,27 @@ function ProviderCard({ provider, activeProvider, maskedKey, ollamaBaseUrl, olla
     return () => clearTimeout(timer);
   }, [confirmingDelete]);
 
+  // Warn before navigating away with unsaved API key input
+  useEffect(() => {
+    if (!input.trim()) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [input]);
+
   // Ollama-specific local state — sync with props when parent reloads settings.
   // Always sync (not just when truthy) so deactivation resets to defaults.
   const [ollamaUrl, setOllamaUrl]   = useState(ollamaBaseUrl || "http://localhost:11434");
-  const [ollamaMdl, setOllamaMdl]   = useState(ollamaModel   || "llama3.2");
+  const [ollamaMdl, setOllamaMdl]   = useState(ollamaModel   || "mistral:7b");
 
   useEffect(() => {
     setOllamaUrl(ollamaBaseUrl || "http://localhost:11434");
   }, [ollamaBaseUrl]);
   useEffect(() => {
-    setOllamaMdl(ollamaModel || "llama3.2");
+    setOllamaMdl(ollamaModel || "mistral:7b");
   }, [ollamaModel]);
 
   const isActive = activeProvider === provider.id;
@@ -461,7 +473,7 @@ function ProviderCard({ provider, activeProvider, maskedKey, ollamaBaseUrl, olla
 
 function SectionTitle({ icon, title, sub }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, marginTop: 40 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
       <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg3)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         {icon}
       </div>
@@ -526,12 +538,21 @@ function fmtUptime(seconds) {
   return `${h}h ${m}m`;
 }
 
+const SETTINGS_TABS = [
+  { key: "providers", label: "AI Providers", icon: <Zap size={14} /> },
+  { key: "execution", label: "Execution",    icon: <Cpu size={14} /> },
+  { key: "data",      label: "Data",         icon: <Database size={14} /> },
+  { key: "system",    label: "System",       icon: <Server size={14} /> },
+];
+
 export default function Settings() {
+  usePageTitle("Settings");
   const navigate = useNavigate();
   const [settings, setSettings] = useState(null);
   const [config, setConfig]     = useState(null);
   const [sysInfo, setSysInfo]   = useState(null);
   const [loading, setLoading]   = useState(true);
+  const [tab, setTab]           = useState("providers");
 
   async function reload() {
     const [s, c, sys] = await Promise.all([
@@ -559,18 +580,37 @@ export default function Settings() {
   }
 
   return (
-    <div className="fade-in" style={{ maxWidth: 760, margin: "0 auto" }}>
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 24 }} onClick={() => navigate(-1)}>
+    <div className="fade-in page-container-md">
+      <button className="btn btn-ghost btn-sm mb-lg" onClick={() => navigate(-1)}>
         <ArrowLeft size={14} /> Back
       </button>
 
-      <div style={{ marginBottom: 32 }}>
+      <div className="mb-lg">
         <h1 style={{ fontWeight: 800, fontSize: "1.9rem" }}>Settings</h1>
-        <p style={{ color: "var(--text2)", marginTop: 6 }}>
-          Choose your AI provider. Cloud providers need an API key; Ollama runs fully locally.
+        <p className="page-subtitle" style={{ marginTop: 6 }}>
+          Configure AI providers, execution defaults, and manage data.
         </p>
       </div>
 
+      {/* ── Tab bar ── */}
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: 20 }}>
+        {SETTINGS_TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            padding: "10px 18px", fontSize: "0.875rem",
+            fontWeight: tab === t.key ? 600 : 400,
+            color: tab === t.key ? "var(--accent)" : "var(--text2)",
+            borderBottom: tab === t.key ? "2px solid var(--accent)" : "2px solid transparent",
+            marginBottom: -1, display: "flex", alignItems: "center", gap: 6,
+            transition: "color 0.12s",
+          }}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Tab: AI Providers ── */}
+      {tab === "providers" && <>
       {/* Active provider banner */}
       {!loading && config && (
         <div style={{
@@ -642,10 +682,12 @@ GOOGLE_API_KEY=AIza...
 # Local / Ollama (no key needed)
 AI_PROVIDER=local
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2`}</pre>
+OLLAMA_MODEL=mistral:7b`}</pre>
       </div>
+      </>}
 
-      {/* ── Test Execution ── */}
+      {/* ── Tab: Execution ── */}
+      {tab === "execution" && <>
       <SectionTitle icon={<Cpu size={16} color="var(--accent)" />} title="Test Execution" sub="Self-healing runtime defaults — applied to every test run" />
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
         {[
@@ -675,16 +717,20 @@ OLLAMA_MODEL=llama3.2`}</pre>
         <Info size={11} style={{ verticalAlign: "middle", marginRight: 4 }} />
         These values are compiled into the self-healing runtime. To customise, edit <span style={{ fontFamily: "var(--font-mono)", background: "var(--bg3)", padding: "1px 5px", borderRadius: 3 }}>backend/src/selfHealing.js</span>
       </div>
+      </>}
 
-      {/* ── Data Management ── */}
+      {/* ── Tab: Data ── */}
+      {tab === "data" && <>
       <SectionTitle icon={<Database size={16} color="var(--amber)" />} title="Data Management" sub="Clear in-memory data — all data is ephemeral and resets on server restart" />
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <DataAction icon={<Activity size={16} />} label="Run History" sub="All crawl and test run records, including logs and results" count={sysInfo?.runs} btnLabel="Clear Runs" onAction={async () => { const r = await api.clearRuns(); await reload(); return r; }} />
         <DataAction icon={<Clock size={16} />} label="Activity Log" sub="Timeline of all user and system actions" count={sysInfo?.activities} btnLabel="Clear Log" onAction={async () => { const r = await api.clearActivities(); await reload(); return r; }} />
         <DataAction icon={<Shield size={16} />} label="Self-Healing History" sub="Learned selector strategies — clearing forces the waterfall to start fresh" count={sysInfo?.healingEntries} btnLabel="Clear History" onAction={async () => { const r = await api.clearHealing(); await reload(); return r; }} />
       </div>
+      </>}
 
-      {/* ── System Info ── */}
+      {/* ── Tab: System ── */}
+      {tab === "system" && <>
       <SectionTitle icon={<Server size={16} color="var(--green)" />} title="System" sub="Server runtime and resource information" />
       {sysInfo ? (
         <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
@@ -708,6 +754,7 @@ OLLAMA_MODEL=llama3.2`}</pre>
       ) : (
         <div style={{ padding: "20px 0", color: "var(--text3)", fontSize: "0.85rem" }}>Could not load system info.</div>
       )}
+      </>}
 
       <div style={{ height: 40 }} />
     </div>

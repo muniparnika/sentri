@@ -48,11 +48,18 @@ export function emitRunEvent(runId, type, payload = {}) {
 }
 
 // GET /api/runs/:id/events  — SSE stream for a single run
+// Auth is handled by the requireAuth middleware (mounted in index.js) which
+// accepts both Authorization header and ?token= query param. The query param
+// fallback exists because EventSource cannot send custom headers.
 router.get("/runs/:runId/events", (req, res) => {
   const db = getDb();
   const { runId } = req.params;
   const run = db.runs[runId];
   if (!run) return res.status(404).json({ error: "not found" });
+
+  // Verify the run's project exists (future: check user ownership here)
+  const project = db.projects[run.projectId];
+  if (!project) return res.status(404).json({ error: "project not found" });
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

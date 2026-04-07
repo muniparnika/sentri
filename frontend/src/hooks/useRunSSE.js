@@ -18,6 +18,14 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { API_BASE } from "../utils/api.js";
 
+/** localStorage key — must match AuthContext.jsx and api.js */
+const TOKEN_KEY = "app_auth_token";
+
+/** Read the stored JWT token for SSE and polling requests. */
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
 // ── Favicon badge ─────────────────────────────────────────────────────────────
 
 function setFaviconStatus(status) {
@@ -92,6 +100,8 @@ export function useRunSSE(runId, onEvent, initialStatus) {
   const pollTimer     = useRef(null);
   const retryCount    = useRef(0);
   const [sseDown, setSseDown] = useState(false);
+  const [retryIn, setRetryIn] = useState(null);  // seconds until next reconnect attempt
+  const countdownRef  = useRef(null);
 
   useEffect(() => { onEventRef.current = onEvent; }, [onEvent]);
 
@@ -101,7 +111,10 @@ export function useRunSSE(runId, onEvent, initialStatus) {
     const poll = async () => {
       if (doneRef.current) return;
       try {
-        const res = await fetch(`${API_BASE}/api/runs/${runId}`);
+        const headers = {};
+        const tk = getToken();
+        if (tk) headers["Authorization"] = `Bearer ${tk}`;
+        const res = await fetch(`${API_BASE}/api/runs/${runId}`, { headers });
         if (res.ok) {
           const run = await res.json();
           onEventRef.current?.({ type: "snapshot", run });
@@ -123,7 +136,11 @@ export function useRunSSE(runId, onEvent, initialStatus) {
   const connect = useCallback(() => {
     if (!runId || doneRef.current) return;
 
-    const es = new EventSource(`${API_BASE}/api/runs/${runId}/events`);
+    // EventSource cannot send custom headers, so pass the JWT as a query param.
+    // The backend requireAuth middleware accepts ?token= as a fallback.
+    const tk = getToken();
+    const sseUrl = `${API_BASE}/api/runs/${runId}/events${tk ? `?token=${encodeURIComponent(tk)}` : ""}`;
+    const es = new EventSource(sseUrl);
     esRef.current = es;
 
     es.onmessage = (e) => {
@@ -132,6 +149,8 @@ export function useRunSSE(runId, onEvent, initialStatus) {
 
       retryCount.current = 0;
       setSseDown(false);
+      setRetryIn(null);
+      clearInterval(countdownRef.current);
 
       onEventRef.current?.(parsed);
 
@@ -164,6 +183,15 @@ export function useRunSSE(runId, onEvent, initialStatus) {
 
       // Exponential backoff: 1.5 s, 3 s, 6 s, 12 s … capped at 30 s
       const delay = Math.min(1500 * Math.pow(2, retryCount.current - 1), MAX_BACKOFF_MS);
+      // Start a visible countdown so the user knows when reconnection will be attempted
+      let remaining = Math.ceil(delay / 1000);
+      setRetryIn(remaining);
+      clearInterval(countdownRef.current);
+      countdownRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) { clearInterval(countdownRef.current); setRetryIn(null); }
+        else setRetryIn(remaining);
+      }, 1000);
       retryTimer.current = setTimeout(connect, delay);
     };
   }, [runId, startPolling]);
@@ -198,10 +226,11 @@ export function useRunSSE(runId, onEvent, initialStatus) {
       doneRef.current = true;
       clearTimeout(retryTimer.current);
       clearTimeout(pollTimer.current);
+      clearInterval(countdownRef.current);
       esRef.current?.close();
       resetFavicon();
     };
   }, [connect, runId, initialStatus]);
 
-  return { sseDown };
+  return { sseDown, retryIn };
 }

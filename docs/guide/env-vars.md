@@ -9,7 +9,7 @@
 | `OPENAI_API_KEY` | — | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | — | [aistudio.google.com](https://aistudio.google.com/apikey) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2` | Model name for local inference |
+| `OLLAMA_MODEL` | `mistral:7b` | Model name for local inference |
 | `OLLAMA_MAX_PREDICT` | `4096` | Max token output cap |
 | `OLLAMA_TIMEOUT_MS` | `120000` | Timeout for Ollama calls |
 | `JWT_SECRET` | random (dev) | **Required in production.** 32+ char secret for signing JWTs |
@@ -17,6 +17,32 @@
 | `PORT` | `3001` | Backend server port |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_JSON` | `false` | Emit structured JSON logs |
+
+## Test Execution
+
+| Variable | Default | Description |
+|---|---|---|
+| `BROWSER_HEADLESS` | `true` | Set `false` to see the browser window during test runs |
+| `VIEWPORT_WIDTH` | `1280` | Browser viewport width (px) |
+| `VIEWPORT_HEIGHT` | `720` | Browser viewport height (px) |
+| `NAVIGATION_TIMEOUT` | `30000` | Timeout for `page.goto()` calls (ms) |
+| `PARALLEL_WORKERS` | `1` | Default number of tests to run concurrently (1–10). Override per-run from the ⚡ selector in the UI or via `parallelWorkers` in the API `dialsConfig`. Each worker uses an isolated `BrowserContext` within a shared Chromium process |
+
+## Crawler
+
+| Variable | Default | Description |
+|---|---|---|
+| `CRAWL_MAX_PAGES` | `30` | Maximum pages to visit per crawl |
+| `CRAWL_MAX_DEPTH` | `3` | Maximum link-follow depth from the start URL |
+| `CRAWL_NETWORKIDLE_TIMEOUT` | `5000` | Timeout (ms) for networkidle wait after page load |
+
+## Self-Healing
+
+| Variable | Default | Description |
+|---|---|---|
+| `HEALING_ELEMENT_TIMEOUT` | `5000` | Element finding timeout per strategy in the waterfall (ms) |
+| `HEALING_RETRY_COUNT` | `3` | Retries per interaction before giving up |
+| `HEALING_RETRY_DELAY` | `400` | Pause between retries (ms) |
 
 ## Frontend (build-time)
 

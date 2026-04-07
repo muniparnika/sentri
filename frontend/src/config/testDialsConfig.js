@@ -13,6 +13,11 @@
  *   automationHooks → options.selectorHints (expanded into options object)
  *   customModifier  → customInstructions    (renamed)
  *   preset          → profile               (renamed)
+ *   (new)           → exploreMode           ("crawl" | "state" — controls Step 1 discovery)
+ *   (new)           → exploreMaxStates      (5–100, state explorer budget)
+ *   (new)           → exploreMaxDepth       (1–10, state explorer depth)
+ *   (new)           → exploreMaxActions     (1–20, actions per state)
+ *   (new)           → exploreActionTimeout  (1000–15000ms, per-action timeout)
  */
 
 // ─── Coverage approach ─────────────────────────────────────────────────────────
@@ -145,6 +150,65 @@ export const TEST_COUNT_OPTIONS = [
   { id: "ai_decides",label: "AI decides", desc: "AI picks the right number" },
 ];
 
+// ─── Explore mode ──────────────────────────────────────────────────────────────
+// Controls how the crawler discovers pages/states before generating tests.
+// "crawl" = legacy link-following BFS, "state" = new state-based exploration
+// that executes real UI actions (click, fill, submit) and tracks transitions.
+
+export const EXPLORE_MODE_OPTIONS = [
+  {
+    id: "crawl",
+    label: "Link crawl",
+    desc: "Follow links to discover pages — fast, good for content-heavy sites",
+  },
+  {
+    id: "state",
+    label: "State exploration",
+    desc: "Execute real UI actions (click, fill, submit) to discover multi-step flows",
+  },
+];
+
+// ─── Explorer tuning (only visible when exploreMode === "state") ────────────
+// Numeric sliders/inputs that control how deep and wide the state explorer goes.
+
+export const EXPLORER_TUNING = [
+  {
+    id: "exploreMaxStates",
+    label: "Max states",
+    desc: "Maximum unique states to discover before stopping",
+    min: 5, max: 100, step: 5, defaultVal: 30,
+  },
+  {
+    id: "exploreMaxDepth",
+    label: "Max depth",
+    desc: "How many levels deep to explore from the start page",
+    min: 1, max: 10, step: 1, defaultVal: 3,
+  },
+  {
+    id: "exploreMaxActions",
+    label: "Actions per state",
+    desc: "Maximum actions to try on each discovered state",
+    min: 1, max: 20, step: 1, defaultVal: 8,
+  },
+  {
+    id: "exploreActionTimeout",
+    label: "Action timeout (ms)",
+    desc: "How long to wait for each click/fill/submit to take effect",
+    min: 1000, max: 15000, step: 1000, defaultVal: 5000,
+  },
+];
+
+// ─── Parallel execution ────────────────────────────────────────────────────────
+// Controls how many tests run concurrently during a test run.
+// 1 = sequential (legacy), up to 10 parallel browser contexts.
+
+export const PARALLEL_WORKERS_TUNING = {
+  id: "parallelWorkers",
+  label: "Parallel workers",
+  desc: "Number of tests to run simultaneously — higher values speed up large suites",
+  min: 1, max: 10, step: 1, defaultVal: 1,
+};
+
 // ─── Extra options ─────────────────────────────────────────────────────────────
 // Replaces single automationHooks boolean. Expanded into named toggles.
 
@@ -260,6 +324,12 @@ export const DEFAULT_CONFIG = {
   quality:      ["data_integrity"],
   format:       "step_by_step",
   testCount:    "ai_decides",
+  exploreMode:          "crawl",
+  exploreMaxStates:     30,
+  exploreMaxDepth:      3,
+  exploreMaxActions:    8,
+  exploreActionTimeout: 5000,
+  parallelWorkers:      1,
   options: {
     selectorHints:    false,
     preconditions:    false,

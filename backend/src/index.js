@@ -33,6 +33,7 @@ import dashboardRouter from "./routes/dashboard.js";
 import settingsRouter from "./routes/settings.js";
 import systemRouter from "./routes/system.js";
 import authRouter from "./routes/auth.js";
+import { requireAuth } from "./routes/auth.js";
 
 // Re-export SSE symbols so existing imports from "./index.js" keep working
 // during incremental migration (runLogger.js, crawler.js, testRunner.js).
@@ -58,21 +59,24 @@ initCountersFromExistingData(db);
 
 // ─── Seed helper (dev / testing only) ─────────────────────────────────────────
 if (process.env.NODE_ENV !== "production") {
-  app.patch("/api/_seed/runs/:id", (req, res) => {
+  app.patch("/api/_seed/runs/:id", requireAuth, (req, res) => {
     db.runs[req.params.id] = { ...req.body, id: req.params.id };
     res.json({ ok: true, id: req.params.id });
   });
 }
 
 // ─── Mount route modules ──────────────────────────────────────────────────────
-app.use("/api/projects", projectsRouter);
-app.use("/api", testsRouter);
-app.use("/api", runsRouter);
-app.use("/api", sseRouter);
-app.use("/api", dashboardRouter);
-app.use("/api", settingsRouter);
-app.use("/api", systemRouter);
+// Auth routes are public (login, register, OAuth callbacks)
 app.use("/api/auth", authRouter);
+
+// All other API routes require a valid JWT token
+app.use("/api/projects", requireAuth, projectsRouter);
+app.use("/api", requireAuth, testsRouter);
+app.use("/api", requireAuth, runsRouter);
+app.use("/api", requireAuth, sseRouter);
+app.use("/api", requireAuth, dashboardRouter);
+app.use("/api", requireAuth, settingsRouter);
+app.use("/api", requireAuth, systemRouter);
 
 // Health check (root-level, not under /api)
 app.get("/health", (req, res) => res.json({ ok: true }));

@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import AppLogo from "../components/AppLogo.jsx";
 import { API_BASE, parseJsonResponse } from "../utils/api.js";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
@@ -53,6 +54,7 @@ export default function Login() {
   const { login, user } = useAuth();
 
   const [mode, setMode] = useState("login");
+  usePageTitle(mode === "login" ? "Sign in" : "Create account");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -73,12 +75,23 @@ export default function Login() {
     const code = params.get("code");
     const provider = params.get("provider");
     const err = params.get("error");
-    if (err) { setError(decodeURIComponent(err)); window.history.replaceState({}, "", `${import.meta.env.BASE_URL}login`); return; }
+    if (err) {
+      const decoded = decodeURIComponent(err);
+      const friendlyErrors = {
+        access_denied: "Access denied — check that the redirect URI in Google/GitHub Cloud Console matches exactly: " + window.location.origin + "/login?provider=" + (provider || "google"),
+        invalid_client: "Invalid OAuth client ID — verify VITE_GOOGLE_CLIENT_ID in frontend/.env matches the Client ID in Google Cloud Console",
+        redirect_uri_mismatch: "Redirect URI mismatch — add this exact URI to your OAuth app: " + window.location.origin + "/login?provider=" + (provider || "google"),
+      };
+      setError(friendlyErrors[decoded] || decoded);
+      window.history.replaceState({}, "", `${import.meta.env.BASE_URL}login`);
+      return;
+    }
     if (code && provider && ["github", "google"].includes(provider)) handleOAuthCallback(provider, code);
   }, []);
 
+  const [testiPaused, setTestiPaused] = useState(false);
   useEffect(() => { if (user) navigate(from, { replace: true }); }, [user]);
-  useEffect(() => { const t = setInterval(() => setTIdx(i => (i+1) % TESTIMONIALS.length), 4000); return () => clearInterval(t); }, []);
+  useEffect(() => { if (testiPaused) return; const t = setInterval(() => setTIdx(i => (i+1) % TESTIMONIALS.length), 4000); return () => clearInterval(t); }, [testiPaused]);
 
   async function handleOAuthCallback(provider, code) {
     setOauthLoading(provider); setError("");
@@ -99,16 +112,16 @@ export default function Login() {
   }
 
   function handleGitHubLogin() {
-    if (!GITHUB_CLIENT_ID) { setError("GitHub OAuth not configured. Add VITE_GITHUB_CLIENT_ID to .env"); return; }
+    if (!GITHUB_CLIENT_ID) { setError("GitHub OAuth not configured. Add VITE_GITHUB_CLIENT_ID to frontend/.env AND GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET to backend/.env"); return; }
     const state = crypto.randomUUID(); sessionStorage.setItem("oauth_state", state);
-    const ru = encodeURIComponent(`${window.location.origin}/login?provider=github`);
+    const ru = encodeURIComponent(`${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/login?provider=github`);
     window.location.href = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${ru}&scope=user:email&state=${state}`;
   }
 
   function handleGoogleLogin() {
-    if (!GOOGLE_CLIENT_ID) { setError("Google OAuth not configured. Add VITE_GOOGLE_CLIENT_ID to .env"); return; }
+    if (!GOOGLE_CLIENT_ID) { setError("Google OAuth not configured. Add VITE_GOOGLE_CLIENT_ID to frontend/.env AND GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET to backend/.env"); return; }
     const state = crypto.randomUUID(); sessionStorage.setItem("oauth_state", state);
-    const ru = encodeURIComponent(`${window.location.origin}/login?provider=google`);
+    const ru = encodeURIComponent(`${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/login?provider=google`);
     const sc = encodeURIComponent("openid email profile");
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${ru}&response_type=code&scope=${sc}&state=${state}&access_type=offline&prompt=select_account`;
   }
@@ -167,8 +180,8 @@ export default function Login() {
         .lp-orb-1{width:300px;height:300px;top:-60px;left:-60px;background:rgba(99,102,241,0.15);animation-delay:0s}
         .lp-orb-2{width:200px;height:200px;bottom:80px;right:40px;background:rgba(139,92,246,0.12);animation-delay:3s}
         .lp-orb-3{width:150px;height:150px;top:50%;left:60%;background:rgba(59,130,246,0.1);animation-delay:5s}
-        .lp-brand{position:relative;z-index:1;animation:slideDown 0.6s cubic-bezier(0.16,1,0.3,1) both}
-        .lp-hero{position:relative;z-index:1}
+        .lp-brand{position:relative;z-index:1;animation:slideDown 0.6s cubic-bezier(0.16,1,0.3,1) both;flex-shrink:0}
+        .lp-hero{position:relative;z-index:1;flex:1;display:flex;flex-direction:column;justify-content:center}
         .lp-eyebrow{display:inline-flex;align-items:center;gap:8px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:999px;padding:4px 14px;margin-bottom:28px;animation:slideUp 0.7s cubic-bezier(0.16,1,0.3,1) 0.1s both}
         .lp-eyebrow-dot{width:6px;height:6px;border-radius:50%;background:#6366f1;animation:dotPulse 2s ease infinite}
         .lp-eyebrow span{font-size:0.72rem;font-weight:500;color:#a5b4fc;letter-spacing:0.5px;text-transform:uppercase}
@@ -244,7 +257,7 @@ export default function Login() {
         <div className="lp-left">
           <div className="lp-grid"/>
           <div className="lp-orb lp-orb-1"/><div className="lp-orb lp-orb-2"/><div className="lp-orb lp-orb-3"/>
-          <div className="lp-brand" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div className="lp-brand flex-between">
             <AppLogo size={36} variant="full" color="#f1f5f9" />
             <a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer" style={{fontSize:"0.78rem",color:"#64748b",textDecoration:"none",display:"flex",alignItems:"center",gap:5,transition:"color 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#a5b4fc"}} onMouseLeave={e=>{e.currentTarget.style.color="#64748b"}}>
               Docs
@@ -269,7 +282,13 @@ export default function Login() {
             </div>
           </div>
 
-          <div className="lp-testi">
+          <div className="lp-testi"
+            onMouseEnter={() => setTestiPaused(true)}
+            onMouseLeave={() => setTestiPaused(false)}
+            role="region"
+            aria-label="Testimonials"
+            aria-live="polite"
+          >
             <p className="lp-tquote">"{TESTIMONIALS[tIdx].quote}"</p>
             <div className="lp-tauthor">
               <div className="lp-tavatar">{TESTIMONIALS[tIdx].name.charAt(0)}</div>
@@ -320,7 +339,7 @@ export default function Login() {
               )}
               <div className="lp-field">
                 <div className="lp-lrow"><label className="lp-lbl" htmlFor="login-email">Email address</label></div>
-                <input id="login-email" type="email" className="lp-in" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)} autoComplete={mode==="login"?"username":"email"} required disabled={loading}/>
+                <input id="login-email" type="email" className="lp-in" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" required disabled={loading}/>
               </div>
               <div className="lp-field">
                 <div className="lp-lrow">
@@ -329,7 +348,7 @@ export default function Login() {
                 </div>
                 <div className="lp-iw">
                   <input id="login-pw" type={showPassword?"text":"password"} className={`lp-in pi`} placeholder={mode==="register"?"Min. 8 characters":"••••••••"} value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==="login"?"current-password":"new-password"} required disabled={loading} minLength={mode==="register"?8:undefined}/>
-                  <button type="button" className="lp-eye" onClick={()=>setShowPassword(v=>!v)} tabIndex={-1} aria-label={showPassword?"Hide password":"Show password"}>
+                  <button type="button" className="lp-eye" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>
                     {showPassword
                       ? <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
                       : <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -365,7 +384,7 @@ export default function Login() {
                 : (<>Already have an account?{" "}<button className="lp-swb" onClick={()=>{setMode("login");setError("");setSuccess("");setPassword("");setConfirmPassword("");}}>Sign in</button></>)
               }
             </p>
-            <p className="lp-tos">By continuing you agree to our <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</p>
+            <p className="lp-tos">By continuing you agree to our <a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer">Terms of Service</a> and <a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</p>
             <p className="lp-tos" style={{marginTop:8}}><a href={`${import.meta.env.BASE_URL}docs/`} target="_blank" rel="noopener noreferrer">Documentation</a></p>
           </div>
         </div>

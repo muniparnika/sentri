@@ -8,6 +8,7 @@ import {
 import { api } from "../api";
 import { fmtRelativeDate } from "../utils/formatters";
 import useProjectData from "../hooks/useProjectData";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 function SectionHeader({ icon, title, sub }) {
   return (
@@ -36,6 +37,7 @@ function InfoRow({ label, children }) {
 }
 
 export default function Context() {
+  usePageTitle("System");
   // FIX #10: useProjectData batches all project/run/test fetches in one pass (no N+1)
   const { projects, allTests, allRuns, loading } = useProjectData();
   const [config, setConfig] = React.useState(null);
@@ -60,7 +62,7 @@ export default function Context() {
   }, [projects, allRuns, allTests]);
 
   if (loading) return (
-    <div style={{ maxWidth: 880, margin: "0 auto" }}>
+    <div className="page-container" style={{ maxWidth: 880 }}>
       {[60, 200, 200, 180].map((h, i) => (
         <div key={i} className="skeleton" style={{ height: h, borderRadius: 12, marginBottom: 14 }} />
       ))}
@@ -70,12 +72,12 @@ export default function Context() {
   const hasProjects = projects.length > 0;
 
   return (
-    <div className="fade-in" style={{ maxWidth: 880, margin: "0 auto" }}>
+    <div className="fade-in page-container" style={{ maxWidth: 880 }}>
 
       {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: 4 }}>Context</h1>
-        <p style={{ fontSize: "0.82rem", color: "var(--text2)" }}>
+      <div className="mb-lg">
+        <h1 className="page-title">Context</h1>
+        <p className="page-subtitle">
           Environment configuration, AI provider status, and crawl context for your applications
         </p>
       </div>
@@ -131,10 +133,10 @@ export default function Context() {
 
         {!hasProjects ? (
           // Fix #17: proper empty state card with clear CTA
-          <div style={{ padding: "48px 32px", textAlign: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)" }}>
+          <div className="empty-state" style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)" }}>
             <Globe size={32} color="var(--text3)" style={{ marginBottom: 14 }} />
-            <div style={{ fontWeight: 600, fontSize: "1rem", marginBottom: 6 }}>No applications registered</div>
-            <div style={{ fontSize: "0.85rem", color: "var(--text2)", marginBottom: 20, maxWidth: 340, margin: "0 auto 20px" }}>
+            <div className="empty-state-title">No applications registered</div>
+            <div className="empty-state-desc">
               Add a project to see crawl context, test counts, and AI configuration for each application.
             </div>
             <button className="btn btn-primary btn-sm" onClick={() => navigate("/projects/new")}>
@@ -187,7 +189,7 @@ export default function Context() {
                       { label: "Pages Found",  value: crawl?.pagesFound ?? "—" },
                     ].map((item, i) => (
                       <div key={i}>
-                        <div style={{ fontSize: "0.68rem", color: "var(--text3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 2 }}>
+                        <div className="section-label" style={{ marginBottom: 2 }}>
                           {item.label}
                         </div>
                         <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text)" }}>{item.value}</div>

@@ -9,6 +9,7 @@ import useProjectData from "../hooks/useProjectData";
 import { fmtRelativeDate, fmtDuration } from "../utils/formatters";
 import StatusBadge from "../components/StatusBadge";
 import RunRegressionModal from "../components/RunRegressionModal.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 // ── Filter definitions (mirrors Tests.jsx icon-pill pattern) ──────────────────
 
@@ -69,6 +70,7 @@ function ProgressBar({ passed, failed, total }) {
 // ── Work Page ─────────────────────────────────────────────────────────────────
 
 export default function Work() {
+  usePageTitle("Runs");
   const { allRuns: runs, projects: allProjects, loading } = useProjectData({ fetchTests: false });
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter]     = useState("all");
@@ -93,7 +95,11 @@ export default function Work() {
   const filtered = useMemo(() => runs.filter(r => {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
     if (typeFilter   !== "all" && r.type   !== typeFilter)   return false;
-    if (search.trim() && !(r.projectName || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const haystack = `${r.id} ${r.projectName || ""} ${r.type || ""}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
     return true;
   }), [runs, statusFilter, typeFilter, search]);
 
@@ -107,7 +113,7 @@ export default function Work() {
   const anyFilterActive = statusFilter !== "all" || typeFilter !== "all";
 
   if (loading) return (
-    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+    <div className="page-container" style={{ maxWidth: 1000 }}>
       {[56, 300, 400].map((h, i) => (
         <div key={i} className="skeleton" style={{ height: h, borderRadius: 12, marginBottom: 14 }} />
       ))}
@@ -115,13 +121,13 @@ export default function Work() {
   );
 
   return (
-    <div className="fade-in" style={{ maxWidth: 1000, margin: "0 auto" }}>
+    <div className="fade-in page-container" style={{ maxWidth: 1000 }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: 3 }}>Runs</h1>
-          <p style={{ fontSize: "0.82rem", color: "var(--text2)" }}>
+          <h1 className="page-title">Runs</h1>
+          <p className="page-subtitle">
             All crawl and test run activity across your projects
           </p>
         </div>
@@ -131,7 +137,7 @@ export default function Work() {
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 20 }}>
+      <div className="stat-grid" style={{ gap: 10, marginBottom: 20 }}>
         {[
           { label: "Total Runs",  value: stats.total,     color: "var(--accent)", bg: "var(--accent-bg)" },
           { label: "Running",     value: stats.running,   color: "var(--blue)",   bg: "var(--blue-bg)"   },
@@ -170,7 +176,7 @@ export default function Work() {
               className="input"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by project…"
+              placeholder="Search by run ID, project, or type…"
               style={{ paddingLeft: 28, paddingRight: search ? 30 : 12, height: 32, fontSize: "0.82rem" }}
             />
             {search && (
@@ -291,12 +297,12 @@ export default function Work() {
 
         {/* ── Table ── */}
         {filtered.length === 0 ? (
-          <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text2)" }}>
+          <div className="empty-state" style={{ color: "var(--text2)" }}>
             {runs.length === 0 ? (
               <>
                 <Zap size={32} color="var(--text3)" style={{ marginBottom: 12 }} />
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>No runs yet</div>
-                <div style={{ fontSize: "0.82rem", marginBottom: 20 }}>
+                <div className="empty-state-title">No runs yet</div>
+                <div className="empty-state-desc">
                   Start by crawling a project to generate tests, then run them.
                 </div>
                 <button className="btn btn-primary btn-sm" onClick={() => navigate("/projects/new")}>
@@ -325,7 +331,7 @@ export default function Work() {
               {filtered.map(run => (
                 <tr key={run.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/runs/${run.id}`)}>
                   <td>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text3)" }}>
+                    <span className="mono-id">
                       {run.id.length > 8 ? run.id.slice(0, 8) + "…" : run.id}
                     </span>
                   </td>

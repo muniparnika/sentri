@@ -9,13 +9,15 @@
  * | POST   | `/api/auth/login`             | Email/password sign-in               |
  * | POST   | `/api/auth/logout`            | Token revocation (server-side)       |
  * | GET    | `/api/auth/me`                | Return current user from token       |
+ * | POST   | `/api/auth/forgot-password`   | Request a password reset token       |
+ * | POST   | `/api/auth/reset-password`    | Reset password using a valid token   |
  * | GET    | `/api/auth/github/callback`   | GitHub OAuth token exchange          |
  * | GET    | `/api/auth/google/callback`   | Google OAuth token exchange          |
  *
  * ### Security measures
  * - Passwords hashed with scrypt (64-byte key, 16-byte random salt)
  * - JWT signed with HS256, 8-hour expiry
- * - Rate limiting: 10 sign-in attempts per IP per 15 minutes
+ * - Rate limiting: separate per-endpoint buckets (login: 10, forgot/reset: 5 per IP per 15 min)
  * - Revoked tokens kept in an in-memory Map (production: use Redis)
  * - Input validation and sanitisation on every endpoint
  * - OAuth state parameter validated on the frontend to prevent CSRF
@@ -24,7 +26,12 @@
 
 import express from "express";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { getDb, saveDb } from "../db.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const router = express.Router();
 
@@ -105,44 +112,104 @@ function verifyJwt(token, secret) {
   } catch { return null; }
 }
 
-/** Auto-generated fallback for local development only — never used in production. */
-let _devFallbackSecret = null;
+/**
+ * Cached JWT secret — resolved once on first call, reused for the process lifetime.
+ * @type {string|null}
+ * @private
+ */
+let _cachedSecret = null;
 
+/**
+ * Get the JWT signing secret.
+ *
+ * Resolution order:
+ * 1. `JWT_SECRET` env var (required in production, recommended everywhere)
+ * 2. Dev/test only: auto-generate a random 256-bit secret and persist it to
+ *    `backend/data/.jwt-secret` so tokens survive server restarts. This file
+ *    is gitignored and unique per checkout.
+ *
+ * @returns {string} The secret (always ≥ 32 chars).
+ * @throws {Error} In production if `JWT_SECRET` is missing or too short.
+ */
 function getJwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (secret && secret.length >= 32) return secret;
+  if (_cachedSecret) return _cachedSecret;
+
+  const envSecret = process.env.JWT_SECRET;
+  if (envSecret && envSecret.length >= 32) {
+    _cachedSecret = envSecret;
+    return _cachedSecret;
+  }
 
   if (process.env.NODE_ENV === "production") {
     throw new Error("[auth] FATAL: JWT_SECRET is missing or too short. Set a 32+ char secret in .env for production.");
   }
 
-  // Dev-only: generate a random secret per process so tokens are never forgeable
-  // from source code alone. Tokens won't survive server restarts — acceptable in dev.
-  if (!_devFallbackSecret) {
-    _devFallbackSecret = crypto.randomBytes(48).toString("base64url");
-    console.warn("[auth] WARNING: JWT_SECRET not set — using random per-process secret (dev only). Tokens will not survive restarts.");
+  // Dev/test: auto-generate and persist a random secret so tokens survive restarts.
+  // Much safer than the old deterministic derivation from process.cwd().
+  const secretPath = path.join(__dirname, "..", "..", "data", ".jwt-secret");
+
+  try {
+    const existing = fs.readFileSync(secretPath, "utf-8").trim();
+    if (existing.length >= 32) {
+      _cachedSecret = existing;
+      console.warn("[auth] WARNING: Using auto-generated JWT secret from data/.jwt-secret. Set JWT_SECRET in .env for production.");
+      return _cachedSecret;
+    }
+  } catch { /* file doesn't exist yet */ }
+
+  // Generate a new random secret and persist it
+  const newSecret = crypto.randomBytes(32).toString("base64url");
+  try {
+    const dir = path.dirname(secretPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(secretPath, newSecret, "utf-8");
+    console.warn("[auth] Generated new JWT secret → data/.jwt-secret. Set JWT_SECRET in .env for production.");
+  } catch (err) {
+    console.warn("[auth] Could not persist JWT secret to disk:", err.message);
   }
-  return _devFallbackSecret;
+  _cachedSecret = newSecret;
+  return _cachedSecret;
 }
 
-// ─── In-memory stores (replace with DB/Redis in production) ─────────────────
+// ─── In-memory stores ────────────────────────────────────────────────────────
+// TODO: Extract to `backend/src/utils/tokenStore.js` behind an interface:
+//   { revoke(jti, exp), isRevoked(jti), setResetToken(tok, data), getResetToken(tok) }
+// Default implementation: in-memory Map (current). Production: swap to Redis
+// via REDIS_URL env var. This enables horizontal scaling (multiple instances)
+// and survives server restarts without losing revoked tokens or reset tokens.
 
 // Token revocation list (logout): { jti → expiry_timestamp }
 const revokedTokens = new Map();
 
-// Rate limiter: { ip → { count, resetAt } }
-const loginAttempts = new Map();
-const RATE_LIMIT_MAX   = 10;
+// Password reset tokens: { token → { userId, expiresAt } }
+const resetTokens = new Map();
+const RESET_TOKEN_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Rate limiters — separate buckets per endpoint category so flooding
+// one endpoint (e.g. forgot-password) doesn't lock out login.
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
 
-function checkRateLimit(ip) {
+const rateBuckets = {
+  login:         { map: new Map(), max: 10 },  // 10 login attempts per IP per 15 min
+  forgotPassword:{ map: new Map(), max: 5 },   // 5 reset requests per IP per 15 min
+  resetPassword: { map: new Map(), max: 5 },   // 5 reset attempts per IP per 15 min
+};
+
+/**
+ * Check rate limit for a specific bucket.
+ * @param {string} bucket — key in rateBuckets (e.g. "login", "forgotPassword")
+ * @param {string} ip
+ * @returns {{ allowed: boolean, retryAfterSec: number }}
+ */
+function checkRateLimit(bucket, ip) {
+  const { map, max } = rateBuckets[bucket];
   const now = Date.now();
-  const entry = loginAttempts.get(ip);
+  const entry = map.get(ip);
   if (!entry || entry.resetAt < now) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    map.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
     return { allowed: true };
   }
-  if (entry.count >= RATE_LIMIT_MAX) {
+  if (entry.count >= max) {
     const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
     return { allowed: false, retryAfterSec };
   }
@@ -150,12 +217,16 @@ function checkRateLimit(ip) {
   return { allowed: true };
 }
 
-// Purge expired revoked tokens periodically.
+// Purge expired revoked tokens and reset tokens periodically.
 // .unref() so this timer doesn't keep the process alive (e.g. during tests).
 const _purgeInterval = setInterval(() => {
   const now = Date.now() / 1000;
   for (const [jti, exp] of revokedTokens) {
     if (exp < now) revokedTokens.delete(jti);
+  }
+  const nowMs = Date.now();
+  for (const [tok, entry] of resetTokens) {
+    if (entry.expiresAt < nowMs) resetTokens.delete(tok);
   }
 }, 60 * 60 * 1000);
 _purgeInterval.unref();
@@ -163,11 +234,17 @@ _purgeInterval.unref();
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 /**
- * Express middleware that validates a Bearer JWT token.
+ * Express middleware that validates a JWT token.
+ *
+ * Checks for the token in this order:
+ * 1. `Authorization: Bearer <token>` header (standard for JSON API calls)
+ * 2. `?token=<jwt>` query parameter (fallback for SSE / EventSource which
+ *    cannot send custom headers)
+ *
  * On success, attaches the decoded payload to `req.authUser`.
  * On failure, responds with `401 Unauthorized`.
  *
- * @param {Object}   req  - Express request (reads `Authorization` header).
+ * @param {Object}   req  - Express request.
  * @param {Object}   res  - Express response.
  * @param {Function} next - Express next middleware.
  * @returns {void}
@@ -179,11 +256,19 @@ _purgeInterval.unref();
  * });
  */
 export function requireAuth(req, res, next) {
+  // 1. Try Authorization header (preferred)
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
+  let token = null;
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  }
+  // 2. Fallback to ?token= query param (for EventSource / SSE)
+  if (!token && req.query.token) {
+    token = req.query.token;
+  }
+  if (!token) {
     return res.status(401).json({ error: "Authentication required." });
   }
-  const token = authHeader.slice(7);
   const payload = verifyJwt(token, getJwtSecret());
   if (!payload) return res.status(401).json({ error: "Invalid or expired token." });
   if (payload.jti && revokedTokens.has(payload.jti)) {
@@ -281,7 +366,7 @@ router.post("/register", async (req, res) => {
  */
 router.post("/login", async (req, res) => {
   const ip = req.ip || req.headers["x-forwarded-for"] || "unknown";
-  const rate = checkRateLimit(ip);
+  const rate = checkRateLimit("login", ip);
   if (!rate.allowed) {
     res.setHeader("Retry-After", rate.retryAfterSec);
     return res.status(429).json({ error: `Too many sign-in attempts. Try again in ${Math.ceil(rate.retryAfterSec / 60)} minutes.` });
@@ -347,6 +432,138 @@ router.get("/me", requireAuth, (req, res) => {
   const user = (db.users || {})[req.authUser.sub];
   if (!user) return res.status(404).json({ error: "User not found." });
   return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null, createdAt: user.createdAt });
+});
+
+// ─── Password Reset ──────────────────────────────────────────────────────────
+
+/**
+ * Request a password reset. Generates a time-limited token.
+ * In production this would send an email; in dev the token is returned
+ * in the response and logged to console for convenience.
+ *
+ * Always returns 200 regardless of whether the email exists to prevent
+ * user enumeration.
+ *
+ * @route POST /api/auth/forgot-password
+ * @param {Object} req.body
+ * @param {string} req.body.email - Email address of the account.
+ * @returns {200} `{ message, ...(dev: resetToken, resetUrl) }`.
+ */
+router.post("/forgot-password", async (req, res) => {
+  // Rate-limit to prevent token-flooding DoS (fills memory with reset tokens)
+  const ip = req.ip || req.headers["x-forwarded-for"] || "unknown";
+  const rate = checkRateLimit("forgotPassword", ip);
+  if (!rate.allowed) {
+    res.setHeader("Retry-After", rate.retryAfterSec);
+    return res.status(429).json({ error: `Too many requests. Try again in ${Math.ceil(rate.retryAfterSec / 60)} minutes.` });
+  }
+
+  const email = sanitiseString(req.body.email, 254).toLowerCase();
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "A valid email address is required." });
+  }
+
+  const db   = getDb();
+  const user = Object.values(db.users || {}).find(u => u.email === email);
+
+  // Always return success to prevent user enumeration
+  const genericMsg = "If an account with that email exists, a password reset link has been generated.";
+
+  if (!user || !user.passwordHash) {
+    // No account or OAuth-only account — silently succeed
+    return res.json({ message: genericMsg });
+  }
+
+  // Generate a cryptographically random reset token
+  const resetToken = crypto.randomBytes(32).toString("base64url");
+  resetTokens.set(resetToken, {
+    userId: user.id,
+    expiresAt: Date.now() + RESET_TOKEN_TTL,
+  });
+
+  // In production: send email with resetUrl. For now, log + return in dev.
+  const appUrl = process.env.APP_URL || "http://localhost:3000";
+  const baseUrl = (process.env.APP_BASE_PATH || "/").replace(/\/$/, "");
+  const resetUrl = `${appUrl}${baseUrl}/forgot-password?token=${resetToken}`;
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[auth/forgot-password] Reset token for ${email}: ${resetToken}`);
+    console.log(`[auth/forgot-password] Reset URL: ${resetUrl}`);
+  }
+
+  const response = { message: genericMsg };
+  // In non-production, include the token in the response for testing
+  if (process.env.NODE_ENV !== "production") {
+    response.resetToken = resetToken;
+    response.resetUrl = resetUrl;
+  }
+
+  return res.json(response);
+});
+
+/**
+ * Reset password using a valid reset token.
+ *
+ * @route POST /api/auth/reset-password
+ * @param {Object} req.body
+ * @param {string} req.body.token       - The reset token from the email/URL.
+ * @param {string} req.body.newPassword - New password (8–128 chars).
+ * @returns {200} `{ message }` on success.
+ * @returns {400} Invalid token, expired, or validation error.
+ */
+router.post("/reset-password", async (req, res) => {
+  // Rate-limit to prevent brute-force token guessing
+  const ip = req.ip || req.headers["x-forwarded-for"] || "unknown";
+  const rate = checkRateLimit("resetPassword", ip);
+  if (!rate.allowed) {
+    res.setHeader("Retry-After", rate.retryAfterSec);
+    return res.status(429).json({ error: `Too many requests. Try again in ${Math.ceil(rate.retryAfterSec / 60)} minutes.` });
+  }
+
+  const { token, newPassword } = req.body;
+
+  if (!token || typeof token !== "string") {
+    return res.status(400).json({ error: "Reset token is required." });
+  }
+  if (typeof newPassword !== "string" || newPassword.length < 8) {
+    return res.status(400).json({ error: "New password must be at least 8 characters." });
+  }
+  if (newPassword.length > 128) {
+    return res.status(400).json({ error: "Password is too long." });
+  }
+
+  const entry = resetTokens.get(token);
+  if (!entry || entry.expiresAt < Date.now()) {
+    // Clean up expired token
+    if (entry) resetTokens.delete(token);
+    return res.status(400).json({ error: "Invalid or expired reset token. Please request a new one." });
+  }
+
+  const db   = getDb();
+  const user = (db.users || {})[entry.userId];
+  if (!user) {
+    resetTokens.delete(token);
+    return res.status(400).json({ error: "Account not found." });
+  }
+
+  // Update password
+  user.passwordHash = await hashPassword(newPassword);
+  user.updatedAt = new Date().toISOString();
+  saveDb();
+
+  // Invalidate the used token (one-time use)
+  resetTokens.delete(token);
+
+  // Also invalidate all other reset tokens for this user
+  for (const [tok, e] of resetTokens) {
+    if (e.userId === user.id) resetTokens.delete(tok);
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[auth/reset-password] Password reset for ${user.email}`);
+  }
+
+  return res.json({ message: "Password has been reset successfully. You can now sign in." });
 });
 
 // ─── GitHub OAuth ─────────────────────────────────────────────────────────────

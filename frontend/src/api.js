@@ -4,7 +4,10 @@
  *
  * Every page and component uses `api.*` methods instead of raw `fetch`.
  * Provides automatic timeout, JSON parsing with non-JSON error guard,
- * and structured error messages.
+ * authenticated requests via JWT Bearer token, and structured error messages.
+ *
+ * On 401 responses the stored token is cleared and the user is redirected
+ * to the login page so stale sessions don't silently fail.
  *
  * @example
  * import { api } from "./api.js";
@@ -24,8 +27,47 @@ const TIMEOUT_DEFAULT = 30_000;
 /** @type {number} Extended timeout for long-running operations like crawl and test runs (5 minutes). */
 const TIMEOUT_LONG    = 300_000;
 
+/** localStorage keys — must match AuthContext.jsx */
+const TOKEN_KEY = "app_auth_token";
+const USER_KEY  = "app_auth_user";
+
 /**
- * Internal fetch wrapper with timeout, JSON parsing, and error handling.
+ * Read the stored JWT token from localStorage.
+ * Returns null if no token is stored or localStorage is unavailable.
+ * @returns {string|null}
+ * @private
+ */
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+/**
+ * Handle a 401 Unauthorized response by clearing the stored session
+ * and redirecting to the login page. This ensures stale tokens don't
+ * leave the user in a broken state where every API call silently fails.
+ * @private
+ */
+function handleUnauthorized() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch { /* localStorage unavailable */ }
+  // Skip redirect if already on the login or forgot-password page to avoid
+  // an infinite redirect loop (e.g. login returns 401 for wrong credentials,
+  // or a token expires while on the forgot-password page).
+  const path = window.location.pathname;
+  if (path.endsWith("/login") || path.endsWith("/forgot-password")) return;
+  // Redirect to login — use the Vite BASE_URL so subpath deploys work
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  window.location.href = `${base}/login`;
+}
+
+/**
+ * Internal fetch wrapper with timeout, JSON parsing, auth, and error handling.
+ *
+ * Automatically injects the `Authorization: Bearer <token>` header when a
+ * JWT token is available in localStorage. On 401 responses, clears the
+ * session and redirects to `/login`.
  *
  * @param   {string}  method           - HTTP method (`GET`, `POST`, `PATCH`, `DELETE`).
  * @param   {string}  path             - API path relative to `/api` (e.g. `"/projects"`).
@@ -38,11 +80,16 @@ const TIMEOUT_LONG    = 300_000;
 async function req(method, path, body, timeout = TIMEOUT_DEFAULT) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+
+  const headers = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   let res;
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
@@ -52,6 +99,12 @@ async function req(method, path, body, timeout = TIMEOUT_DEFAULT) {
     throw err;
   }
   clearTimeout(timer);
+
+  // Handle expired / revoked tokens globally
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Session expired. Please sign in again.");
+  }
 
   if (!res.ok) {
     const err = await parseJsonResponse(res).catch(() => ({ error: res.statusText }));
@@ -83,8 +136,12 @@ export const api = {
    * @returns {Promise<{runId: string}>}
    */
   crawl:         (id, body) => req("POST", `/projects/${id}/crawl`, body || undefined, TIMEOUT_LONG),
-  /** @param {string} id - Execute all approved tests for a project. */
-  runTests:      (id)    => req("POST", `/projects/${id}/run`,   undefined, TIMEOUT_LONG),
+  /**
+   * Execute all approved tests for a project.
+   * @param {string} id   - Project ID.
+   * @param {Object} [body] - Optional `{ dialsConfig }` for parallel workers etc.
+   */
+  runTests:      (id, body) => req("POST", `/projects/${id}/run`, body || undefined, TIMEOUT_LONG),
   /** @param {string} testId - Execute a single test. */
   runSingleTest: (testId)=> req("POST", `/tests/${testId}/run`,  undefined, TIMEOUT_LONG),
 
@@ -168,12 +225,28 @@ export const api = {
   testConnection: (url) => req("POST", "/test-connection", { url }),
 
   // ── Export (returns download URLs, not JSON) ────────────────────────────────
-  /** @param {string} projectId @param {string} [status] @returns {string} Download URL. */
-  exportJUnitUrl:    (projectId, status) => `${BASE}/projects/${projectId}/tests/export/junit${status ? `?status=${status}` : ""}`,
-  /** @param {string} projectId @param {string} [status] @returns {string} Download URL. */
-  exportXrayUrl:     (projectId, status) => `${BASE}/projects/${projectId}/tests/export/xray${status ? `?status=${status}` : ""}`,
-  /** @param {string} projectId @param {string} [status] @returns {string} Download URL. */
-  exportTestRailUrl: (projectId, status) => `${BASE}/projects/${projectId}/tests/export/testrail${status ? `?status=${status}` : ""}`,
+  // These return plain URL strings used as <a href> downloads. Since the browser
+  // can't send Authorization headers on <a> clicks, we append ?token= as a query
+  // param — the backend requireAuth middleware accepts this as a fallback (same
+  // pattern as SSE EventSource in useRunSSE.js).
+  /** @param {string} projectId @param {string} [status] @returns {string} Download URL with auth token. */
+  exportZephyrUrl:   (projectId, status) => {
+    const tk = getToken();
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (tk) params.set("token", tk);
+    const qs = params.toString();
+    return `${BASE}/projects/${projectId}/tests/export/zephyr${qs ? `?${qs}` : ""}`;
+  },
+  /** @param {string} projectId @param {string} [status] @returns {string} Download URL with auth token. */
+  exportTestRailUrl: (projectId, status) => {
+    const tk = getToken();
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (tk) params.set("token", tk);
+    const qs = params.toString();
+    return `${BASE}/projects/${projectId}/tests/export/testrail${qs ? `?${qs}` : ""}`;
+  },
   /** @param {string} projectId @returns {Promise<Object>} Traceability matrix. */
   getTraceability:   (projectId)         => req("GET", `/projects/${projectId}/tests/traceability`),
 

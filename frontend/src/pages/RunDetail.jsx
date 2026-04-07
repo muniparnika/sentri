@@ -17,6 +17,7 @@ import CrawlView from "../components/CrawlView";
 import GenerateView from "../components/GenerateView";
 import TestRunView from "../components/TestRunView";
 import AgentTag from "../components/AgentTag.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ export default function RunDetail() {
   const [initialStatus, setInitialStatus] = useState(undefined);
   const [frames, setFrames] = useState([]);
   const [llmTokens, setLlmTokens] = useState("");
+  usePageTitle(run ? `Run ${runId.slice(0, 6).toUpperCase()}` : "Run Detail");
   const [aborting, setAborting] = useState(false);
 
   // Cap the streamed token buffer so long-running generation jobs don't
@@ -84,7 +86,7 @@ export default function RunDetail() {
   // SSE — receives live updates while the run is active.
   // Pass run?.status as initialStatus so the hook can skip SSE entirely
   // for already-completed/failed runs (avoids spurious "Run complete" notifications).
-  const { sseDown } = useRunSSE(runId, useCallback((event) => {
+  const { sseDown, retryIn } = useRunSSE(runId, useCallback((event) => {
     if (event.type === "snapshot") {
       setRun(event.run);
     } else if (event.type === "result") {
@@ -107,10 +109,8 @@ export default function RunDetail() {
     } else if (event.type === "llm_token") {
       setLlmTokens((prev) => {
         const next = prev + event.token;
-        // Keep the most recent LLM_TOKEN_LIMIT chars; prepend a truncation notice
-        // so the user knows older output was trimmed, not lost.
         if (next.length > LLM_TOKEN_LIMIT) {
-          return "[…output truncated…]\n" + next.slice(next.length - LLM_TOKEN_LIMIT);
+          return "⚠ Older output truncated (>" + Math.round(LLM_TOKEN_LIMIT / 1000) + "k chars) — showing most recent output\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" + next.slice(next.length - LLM_TOKEN_LIMIT);
         }
         return next;
       });
@@ -181,7 +181,7 @@ export default function RunDetail() {
   return (
     <div
       className="fade-in"
-      style={{ maxWidth: 1200, margin: "0 auto", padding: "0 16px 40px" }}
+      style={{ maxWidth: 1200, margin: "0 auto", padding: "0 16px 40px", overflowX: "hidden" }}
     >
       {/* ── Breadcrumb ─────────────────────────────────────────────────── */}
       <div
@@ -228,9 +228,14 @@ export default function RunDetail() {
             {isCrawl ? "Crawl & Generate" : isGenerate ? "AI Generate" : "Test Run"}
           </h1>
 
-          {run.status === "completed" && (
+          {run.status === "completed" && !run.rateLimitError && (
             <span className="badge badge-green">
               <CheckCircle2 size={10} /> Completed
+            </span>
+          )}
+          {run.status === "completed" && run.rateLimitError && (
+            <span className="badge badge-amber" style={{ background: "var(--amber-bg)", color: "#92400e", border: "1px solid #fcd34d" }}>
+              ⚠ Rate Limited
             </span>
           )}
           {isRunning && (
@@ -349,7 +354,18 @@ export default function RunDetail() {
         </div>
       )}
 
-      {/* ── SSE fallback banner — shown when polling instead of streaming ── */}
+      {/* ── SSE reconnection / fallback banner ── */}
+      {isRunning && retryIn != null && !sseDown && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 14px", marginBottom: 12,
+          background: "var(--blue-bg)", border: "1px solid #bfdbfe",
+          borderRadius: 8, fontSize: "0.76rem", color: "var(--blue)",
+        }}>
+          <RefreshCw size={12} style={{ flexShrink: 0 }} />
+          Connection lost — reconnecting in {retryIn}s…
+        </div>
+      )}
       {sseDown && isRunning && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8,
@@ -358,7 +374,40 @@ export default function RunDetail() {
           borderRadius: 8, fontSize: "0.76rem", color: "var(--amber)",
         }}>
           <RefreshCw size={12} style={{ animation: "spin 2s linear infinite", flexShrink: 0 }} />
-          Live updates unavailable — refreshing every 5 s
+          Live updates unavailable — refreshing every 5s. <button onClick={fetchRun} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--amber)", fontWeight: 600, textDecoration: "underline", padding: 0, fontSize: "0.76rem" }}>Refresh now</button>
+        </div>
+      )}
+
+      {/* ── Run-level error / warning banners ─────────────────────────── */}
+      {!isRunning && run.rateLimitError && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 10,
+          padding: "12px 16px", marginBottom: 16,
+          background: "var(--amber-bg)", border: "1px solid #fcd34d",
+          borderRadius: 10, fontSize: "0.82rem", color: "#92400e", lineHeight: 1.5,
+        }}>
+          <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 3 }}>AI Rate Limit Reached</div>
+            <div>{run.rateLimitError}</div>
+            <div style={{ marginTop: 4, fontSize: "0.78rem", color: "#78350f" }}>
+              Switch to a different AI provider in Settings, or wait for the rate limit to reset and retry.
+            </div>
+          </div>
+        </div>
+      )}
+      {!isRunning && run.status === "failed" && run.error && !run.rateLimitError && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 10,
+          padding: "12px 16px", marginBottom: 16,
+          background: "var(--red-bg)", border: "1px solid #fca5a5",
+          borderRadius: 10, fontSize: "0.82rem", color: "var(--red)", lineHeight: 1.5,
+        }}>
+          <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>❌</span>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 3 }}>Run Failed</div>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", wordBreak: "break-word" }}>{run.error}</div>
+          </div>
         </div>
       )}
 

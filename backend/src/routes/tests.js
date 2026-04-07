@@ -11,14 +11,13 @@
  * | `PATCH`  | `/api/tests/:testId`                          | Edit test (steps, name, code, etc.) |
  * | `POST`   | `/api/projects/:id/tests`                     | Create a manual test (Draft)        |
  * | `DELETE` | `/api/projects/:id/tests/:testId`             | Delete a test                       |
- * | `POST`   | `/api/projects/:id/tests/generate`            | AI-generate test from description   |
+ * | `POST`   | `/api/projects/:id/tests/generate`            | AI-generate test(s) from description|
  * | `POST`   | `/api/tests/:testId/run`                      | Run a single test                   |
  * | `PATCH`  | `/api/projects/:id/tests/:testId/approve`     | Approve (Draft → Approved)          |
  * | `PATCH`  | `/api/projects/:id/tests/:testId/reject`      | Reject                              |
  * | `PATCH`  | `/api/projects/:id/tests/:testId/restore`     | Restore to Draft                    |
  * | `POST`   | `/api/projects/:id/tests/bulk`                | Bulk approve/reject/restore/delete  |
- * | `GET`    | `/api/projects/:id/tests/export/junit`        | JUnit XML export                    |
- * | `GET`    | `/api/projects/:id/tests/export/xray`         | Xray JSON export                    |
+ * | `GET`    | `/api/projects/:id/tests/export/zephyr`       | Zephyr Scale CSV export             |
  * | `GET`    | `/api/projects/:id/tests/export/testrail`     | TestRail CSV export                 |
  * | `GET`    | `/api/projects/:id/tests/traceability`        | Traceability matrix                 |
  */
@@ -31,9 +30,10 @@ import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
 import { hasProvider } from "../aiProvider.js";
 import { resolveDialsPrompt, resolveDialsConfig } from "../testDials.js";
-import { generateSingleTest } from "../crawler.js";
+import { generateFromUserDescription } from "../crawler.js";
 import { runTests } from "../testRunner.js"; // thin orchestrator — delegates to runner/ modules
-import { buildJUnitXml, buildXrayJson, buildTestRailCsv } from "../utils/exportFormats.js";
+import { buildZephyrCsv, buildTestRailCsv } from "../utils/exportFormats.js";
+import { validateTestPayload, validateTestUpdate, validateBulkAction } from "../utils/validate.js";
 
 const router = Router();
 
@@ -59,6 +59,9 @@ router.get("/tests/:testId", (req, res) => {
 
 // PATCH /api/tests/:testId — persist user-edited steps (and optionally other fields)
 router.patch("/tests/:testId", async (req, res) => {
+  const validationErr = validateTestUpdate(req.body);
+  if (validationErr) return res.status(400).json({ error: validationErr });
+
   const db = getDb();
   const test = db.tests[req.params.testId];
   if (!test) return res.status(404).json({ error: "not found" });
@@ -159,12 +162,14 @@ Return ONLY valid JSON with no markdown fences:
 
 // ── Manual test creation ──────────────────────────────────────────────────────
 router.post("/projects/:id/tests", (req, res) => {
+  const validationErr = validateTestPayload(req.body);
+  if (validationErr) return res.status(400).json({ error: validationErr });
+
   const db = getDb();
   const project = db.projects[req.params.id];
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const { name, description, steps, playwrightCode, priority, type } = req.body;
-  if (!name || !name.trim()) return res.status(400).json({ error: "name is required" });
 
   const testId = generateTestId(db);
   const test = {
@@ -258,9 +263,10 @@ router.post("/projects/:id/tests/generate", async (req, res) => {
     .trim();
   const dialsPrompt = resolveDialsPrompt(dialsConfig);
   const validatedGenDials = resolveDialsConfig(dialsConfig);
-  // Default to "one" for the generate endpoint (user-requested tests)
-  // to preserve the original contract of generating exactly 1 test.
-  // The crawl endpoint defaults to "ai_decides" which generates 5-8 tests per page.
+  // Default to "one" for the description-based generate endpoint so users
+  // who don't touch Test Dials get 1 focused test (original behaviour).
+  // When the user explicitly selects a testCount dial, that value is used instead.
+  // The crawl endpoint defaults to "ai_decides" which generates multiple tests per page.
   // Use strict equality — "ai_decides" is truthy so `|| "one"` would never trigger.
   const rawTestCount = validatedGenDials?.testCount;
   const testCount = (rawTestCount && rawTestCount !== "ai_decides") ? rawTestCount : "one";
@@ -306,7 +312,7 @@ saveDb();
   res.status(202).json({ runId });
 
   runWithAbort(runId, run,
-    (signal) => generateSingleTest(project, run, db, {
+    (signal) => generateFromUserDescription(project, run, db, {
       name: cleanName,
       description: cleanDescription,
       dialsPrompt,
@@ -431,10 +437,11 @@ router.patch("/projects/:id/tests/:testId/restore", (req, res) => {
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
 router.post("/projects/:id/tests/bulk", (req, res) => {
+  const validationErr = validateBulkAction(req.body);
+  if (validationErr) return res.status(400).json({ error: validationErr });
+
   const db = getDb();
   const { testIds, action } = req.body;
-  if (!testIds || !Array.isArray(testIds) || !["approve", "reject", "restore", "delete"].includes(action))
-    return res.status(400).json({ error: "testIds[] and valid action required" });
 
   if (action === "delete") {
     const deleted = [];
@@ -479,25 +486,8 @@ router.post("/projects/:id/tests/bulk", (req, res) => {
 
 // ─── Export endpoints — enterprise test management integration ────────────────
 
-// GET /api/projects/:id/tests/export/junit — JUnit XML for CI pipelines
-router.get("/projects/:id/tests/export/junit", (req, res) => {
-  const db = getDb();
-  const project = db.projects[req.params.id];
-  if (!project) return res.status(404).json({ error: "project not found" });
-
-  const tests = Object.values(db.tests).filter(t => t.projectId === req.params.id);
-  // Optional filter: ?status=approved to export only approved tests
-  const status = req.query.status;
-  const filtered = status ? tests.filter(t => t.reviewStatus === status) : tests;
-
-  const xml = buildJUnitXml(filtered, { suiteName: project.name, projectUrl: project.url });
-  res.setHeader("Content-Type", "application/xml");
-  res.setHeader("Content-Disposition", `attachment; filename="sentri-${project.name.replace(/[^a-z0-9]+/gi, "-")}-tests.xml"`);
-  res.send(xml);
-});
-
-// GET /api/projects/:id/tests/export/xray — Xray JSON for Jira import
-router.get("/projects/:id/tests/export/xray", (req, res) => {
+// GET /api/projects/:id/tests/export/zephyr — Zephyr Scale CSV for test management import
+router.get("/projects/:id/tests/export/zephyr", (req, res) => {
   const db = getDb();
   const project = db.projects[req.params.id];
   if (!project) return res.status(404).json({ error: "project not found" });
@@ -506,12 +496,10 @@ router.get("/projects/:id/tests/export/xray", (req, res) => {
   const status = req.query.status;
   const filtered = status ? tests.filter(t => t.reviewStatus === status) : tests;
 
-  // Extract project key from linked issues or use project name as fallback
-  const projectKey = filtered.find(t => t.linkedIssueKey)?.linkedIssueKey?.split("-")[0] || "PROJ";
-  const json = buildXrayJson(filtered, { projectKey });
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Content-Disposition", `attachment; filename="sentri-${project.name.replace(/[^a-z0-9]+/gi, "-")}-xray.json"`);
-  res.send(json);
+  const csv = buildZephyrCsv(filtered);
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="sentri-${project.name.replace(/[^a-z0-9]+/gi, "-")}-zephyr.csv"`);
+  res.send(csv);
 });
 
 // GET /api/projects/:id/tests/export/testrail — TestRail CSV for bulk import

@@ -7,12 +7,14 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import CrawlDialsPanel from "../components/CrawlDialsPanel.jsx";
-import { loadSavedConfig } from "../utils/testDialsStorage.js";
+import { loadSavedConfig, countActiveDials } from "../utils/testDialsStorage.js";
+import { EXPLORE_MODE_OPTIONS, PARALLEL_WORKERS_TUNING } from "../config/testDialsConfig.js";
 import AgentTag from "../components/AgentTag.jsx";
 import ModalShell from "../components/ModalShell.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
 import { StatusBadge, ReviewBadge, ScenarioBadges } from "../components/TestBadges.jsx";
+import usePageTitle from "../hooks/usePageTitle.js";
 
 function ConfBar({ score }) {
   if (score == null) return <span style={{ color: "var(--text3)", fontSize: "0.73rem" }}>—</span>;
@@ -70,8 +72,10 @@ export default function ProjectDetail() {
   const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   const [crawlDialsCfg, setCrawlDialsCfg] = useState(() => loadSavedConfig());
+  const [showDialsPopover, setShowDialsPopover] = useState(false);
   const [tab, setTab]                     = useState("review");
   const [reviewFilter, setReviewFilter]   = useState("draft");
+  const [categoryFilter, setCategoryFilter] = useState("all"); // "all" | "ui" | "api"
   const [search, setSearch]               = useState("");
   const [selected, setSelected]           = useState(new Set());
   const [reviewPage, setReviewPage]         = useState(1);  // Fix #21
@@ -79,6 +83,7 @@ export default function ProjectDetail() {
   const [toast, setToast]                 = useState({ msg: "", type: "info", visible: false, showLink: false, runId: null });
   const [showNewBadges, setShowNewBadges] = useState(true);
   const [now, setNow] = useState(Date.now);
+  usePageTitle(project?.name ? `${project.name} — Project` : "Project");
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [traceability, setTraceability]     = useState(null);
   const [traceLoading, setTraceLoading]     = useState(false);
@@ -125,6 +130,12 @@ export default function ProjectDetail() {
     try {
       const [p, t, r] = await Promise.all([api.getProject(id), api.getTests(id), api.getRuns(id)]);
       setProject(p); setTests(t); setRuns(r);
+      // Clamp reviewPage so it doesn't point past the last page after
+      // a review action removes tests from the current filter view.
+      setReviewPage(prev => {
+        const total = Math.max(1, Math.ceil(t.length / PAGE_SIZE));
+        return prev > total ? total : prev;
+      });
     } catch (err) {
       console.error("ProjectDetail refresh error:", err);
       // Don't wipe existing state on transient errors — only set project to null
@@ -152,6 +163,13 @@ export default function ProjectDetail() {
   async function doCrawl() {
     setActionLoading("crawl");
     try {
+      // Pre-flight: check if an AI provider is configured before starting
+      const config = await api.getConfig().catch(() => null);
+      if (!config?.hasProvider) {
+        showToast("No AI provider configured — go to Settings to add an API key or enable Ollama.", "error");
+        setActionLoading(null);
+        return;
+      }
       // Send structured config to the backend — it validates and builds the prompt server-side
       const { runId } = await api.crawl(id, crawlDialsCfg ? { dialsConfig: crawlDialsCfg } : undefined);
       setActiveRun(runId);
@@ -164,10 +182,13 @@ export default function ProjectDetail() {
   async function doRun() {
     setActionLoading("run");
     try {
-      const { runId } = await api.runTests(id);
+      // Pass dials config so parallelWorkers reaches the backend
+      const { runId } = await api.runTests(id, crawlDialsCfg ? { dialsConfig: crawlDialsCfg } : undefined);
       setActiveRun(runId);
       setActiveRunId(runId);
-      showToast("Regression run started", "info", runId);
+      const pw = crawlDialsCfg?.parallelWorkers;
+      const modeHint = pw > 1 ? ` (${pw}x parallel)` : "";
+      showToast(`Regression run started${modeHint}`, "info", runId);
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -245,16 +266,23 @@ export default function ProjectDetail() {
   const draftTests    = tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft");
   const approvedTests = tests.filter(t => t.reviewStatus === "approved");
   const rejectedTests = tests.filter(t => t.reviewStatus === "rejected");
+  const isApiTest     = t => t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
+  const apiTests      = tests.filter(isApiTest);
+  const uiTests       = tests.filter(t => !isApiTest(t));
 
   const filteredByReview = tests.filter(t => {
     const statusOk =
       reviewFilter === "all"   ? true :
       reviewFilter === "draft" ? (!t.reviewStatus || t.reviewStatus === "draft") :
                                   t.reviewStatus === reviewFilter;
+    const categoryOk =
+      categoryFilter === "all" ? true :
+      categoryFilter === "api" ? isApiTest(t) :
+      categoryFilter === "ui"  ? !isApiTest(t) : true;
     const searchOk = !search ||
       t.name?.toLowerCase().includes(search.toLowerCase()) ||
       t.sourceUrl?.toLowerCase().includes(search.toLowerCase());
-    return statusOk && searchOk;
+    return statusOk && categoryOk && searchOk;
   }).sort((a, b) => {
     // Newest first — so tests from the latest generation run appear at the top
     const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -302,26 +330,113 @@ export default function ProjectDetail() {
             </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end" }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {/* ── Row 1: Mode selector + Crawl button + Run button ── */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {/* Explore mode segmented control — always visible */}
+              <div style={{
+                display: "flex", borderRadius: "var(--radius)", overflow: "hidden",
+                border: "1px solid var(--border)", flexShrink: 0,
+              }}>
+                {EXPLORE_MODE_OPTIONS.map(opt => {
+                  const active = (crawlDialsCfg?.exploreMode || "crawl") === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => setCrawlDialsCfg(prev => ({ ...prev, exploreMode: opt.id }))}
+                      style={{
+                        padding: "5px 12px", border: "none", cursor: "pointer",
+                        fontSize: "0.78rem", fontWeight: active ? 600 : 400,
+                        background: active ? "var(--accent-bg)" : "var(--surface)",
+                        color: active ? "var(--accent)" : "var(--text2)",
+                        transition: "all 0.12s",
+                        borderRight: opt.id === "crawl" ? "1px solid var(--border)" : "none",
+                      }}
+                      title={opt.desc}
+                    >
+                      {opt.id === "crawl" ? "🔗" : "⚡"} {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button className="btn btn-ghost btn-sm" onClick={doCrawl} disabled={!!actionLoading}>
                 {actionLoading === "crawl" ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
-                {tests.length > 0 ? "Re-Crawl" : "Crawl & Generate Tests"}
+                {tests.length > 0 ? "Re-Crawl" : "Crawl & Generate"}
               </button>
+              {/* Parallel workers compact selector */}
+              <div style={{
+                display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
+                padding: "3px 8px", borderRadius: "var(--radius)",
+                border: "1px solid var(--border)", background: "var(--surface)",
+                fontSize: "0.72rem", color: "var(--text2)",
+              }} title={PARALLEL_WORKERS_TUNING.desc}>
+                <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>⚡</span>
+                <select
+                  value={crawlDialsCfg?.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}
+                  onChange={e => setCrawlDialsCfg(prev => ({ ...prev, parallelWorkers: parseInt(e.target.value, 10) }))}
+                  style={{
+                    background: "transparent", border: "none", color: "var(--accent)",
+                    fontWeight: 700, fontSize: "0.78rem", cursor: "pointer",
+                    fontFamily: "var(--font-mono)", padding: 0, outline: "none",
+                  }}
+                >
+                  {Array.from({ length: PARALLEL_WORKERS_TUNING.max }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>{n}x</option>
+                  ))}
+                </select>
+              </div>
               <button className="btn btn-primary btn-sm" onClick={doRun}
                 disabled={!!actionLoading || approvedTests.length === 0}
                 title={approvedTests.length === 0 ? "Approve tests first to run regression" : undefined}>
                 {actionLoading === "run" ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
-                Run Regression ({approvedTests.length})
+                Run ({approvedTests.length})
               </button>
+            </div>
+
+            {/* ── Row 2: Dials popover + Export dropdown ── */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* Test Dials popover trigger */}
+              <div style={{ position: "relative" }}>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => setShowDialsPopover(v => !v)}
+                  style={{
+                    gap: 5,
+                    background: showDialsPopover ? "var(--accent-bg)" : undefined,
+                    borderColor: showDialsPopover ? "var(--accent)" : undefined,
+                  }}
+                >
+                  ⚙ Dials
+                  <span className="active-count-pill" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>
+                    {countActiveDials(crawlDialsCfg)}
+                  </span>
+                  <ChevronDown size={10} style={{ transform: showDialsPopover ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                {showDialsPopover && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setShowDialsPopover(false)} />
+                    <div style={{
+                      position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 100,
+                      width: 420, maxHeight: "70vh", overflowY: "auto",
+                      background: "var(--surface)", border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-lg)", boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+                      padding: 16,
+                    }}>
+                      <CrawlDialsPanel value={crawlDialsCfg} onChange={setCrawlDialsCfg} />
+                    </div>
+                  </>
+                )}
+              </div>
+
               {/* Export dropdown */}
               {tests.length > 0 && (
                 <div style={{ position: "relative" }}>
                   <button
-                    className="btn btn-ghost btn-sm"
+                    className="btn btn-ghost btn-xs"
                     onClick={() => setShowExportMenu(v => !v)}
                     style={{ gap: 4 }}
                   >
-                    <Download size={13} /> Export <ChevronDown size={11} />
+                    <Download size={11} /> Export <ChevronDown size={10} />
                   </button>
                   {showExportMenu && (
                     <>
@@ -336,22 +451,13 @@ export default function ProjectDetail() {
                           Export all {tests.length} tests
                         </div>
                         {[
-                          { label: "JUnit XML",     desc: "CI pipelines (Jenkins, GitHub Actions)", url: api.exportJUnitUrl(id) },
-                          { label: "Xray JSON",     desc: "Jira Xray test management",              url: api.exportXrayUrl(id) },
-                          { label: "TestRail CSV",   desc: "TestRail bulk import",                   url: api.exportTestRailUrl(id) },
+                          { label: "Zephyr Scale CSV", desc: "Zephyr Scale / Zephyr Squad import",    url: api.exportZephyrUrl(id) },
+                          { label: "TestRail CSV",     desc: "TestRail bulk import",                   url: api.exportTestRailUrl(id) },
                         ].map(fmt => (
-                          <a
-                            key={fmt.label}
-                            href={fmt.url}
-                            download
-                            onClick={() => setShowExportMenu(false)}
-                            style={{
-                              display: "block", padding: "8px 12px", borderRadius: 6,
-                              textDecoration: "none", color: "var(--text)",
-                            }}
+                          <a key={fmt.label} href={fmt.url} download onClick={() => setShowExportMenu(false)}
+                            style={{ display: "block", padding: "8px 12px", borderRadius: 6, textDecoration: "none", color: "var(--text)" }}
                             onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
-                            onMouseLeave={e => e.currentTarget.style.background = "none"}
-                          >
+                            onMouseLeave={e => e.currentTarget.style.background = "none"}>
                             <div style={{ fontSize: "0.84rem", fontWeight: 500 }}>{fmt.label}</div>
                             <div style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: 1 }}>{fmt.desc}</div>
                           </a>
@@ -363,22 +469,13 @@ export default function ProjectDetail() {
                               Approved only ({approvedTests.length})
                             </div>
                             {[
-                              { label: "JUnit XML (approved)",   url: api.exportJUnitUrl(id, "approved") },
-                              { label: "Xray JSON (approved)",   url: api.exportXrayUrl(id, "approved") },
+                              { label: "Zephyr CSV (approved)", url: api.exportZephyrUrl(id, "approved") },
                               { label: "TestRail CSV (approved)", url: api.exportTestRailUrl(id, "approved") },
                             ].map(fmt => (
-                              <a
-                                key={fmt.label}
-                                href={fmt.url}
-                                download
-                                onClick={() => setShowExportMenu(false)}
-                                style={{
-                                  display: "block", padding: "7px 12px", borderRadius: 6,
-                                  textDecoration: "none", color: "var(--text)", fontSize: "0.82rem",
-                                }}
+                              <a key={fmt.label} href={fmt.url} download onClick={() => setShowExportMenu(false)}
+                                style={{ display: "block", padding: "7px 12px", borderRadius: 6, textDecoration: "none", color: "var(--text)", fontSize: "0.82rem" }}
                                 onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
-                                onMouseLeave={e => e.currentTarget.style.background = "none"}
-                              >
+                                onMouseLeave={e => e.currentTarget.style.background = "none"}>
                                 {fmt.label}
                               </a>
                             ))}
@@ -389,9 +486,6 @@ export default function ProjectDetail() {
                   )}
                 </div>
               )}
-            </div>
-            <div style={{ width: "100%", minWidth: 300, maxWidth: 440 }}>
-              <CrawlDialsPanel onChange={setCrawlDialsCfg} />
             </div>
           </div>
         </div>
@@ -404,22 +498,29 @@ export default function ProjectDetail() {
               { label: "Rejected", val: rejectedTests.length, color: "var(--red)"   },
               { label: "Passing",  val: passed,               color: "var(--green)" },
               { label: "Failing",  val: failed,               color: "var(--red)"   },
+              ...(apiTests.length > 0 ? [
+                { label: "UI Tests",  val: uiTests.length,  color: "#7c3aed" },
+                { label: "API Tests", val: apiTests.length,  color: "#2563eb" },
+              ] : []),
             ].map((s, i) => (
               <div key={i}>
                 <div style={{ fontSize: "1.4rem", fontWeight: 700, color: s.color }}>{s.val}</div>
                 <div style={{ fontSize: "0.73rem", color: "var(--text3)", marginTop: 2 }}>{s.label}</div>
               </div>
             ))}
-            {approvedTests.length > 0 && (
-              <div style={{ marginLeft: "auto", alignSelf: "center" }}>
-                <div className="progress-bar progress-bar-green" style={{ width: 140 }}>
-                  <div className="progress-bar-fill" style={{ width: `${Math.round(passed / approvedTests.length * 100)}%` }} />
+            {approvedTests.length > 0 && (() => {
+              const pct = Math.round((passed / approvedTests.length) * 100);
+              return (
+                <div style={{ marginLeft: "auto", alignSelf: "center" }}>
+                  <div className="progress-bar progress-bar-green" style={{ width: 140 }}>
+                    <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div style={{ fontSize: "0.73rem", color: "var(--text3)", marginTop: 4, textAlign: "right" }}>
+                    {pct}% passing
+                  </div>
                 </div>
-                <div style={{ fontSize: "0.73rem", color: "var(--text3)", marginTop: 4, textAlign: "right" }}>
-                  {Math.round(passed / approvedTests.length * 100)}% passing
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>
@@ -536,6 +637,25 @@ export default function ProjectDetail() {
                     cursor: "pointer", transition: "all 0.12s",
                   }}>{label}</button>
                 ))}
+
+                {/* Category filter (UI / API) — only show when API tests exist */}
+                {apiTests.length > 0 && (
+                  <>
+                    <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
+                    {[
+                      ["ui",  `UI (${uiTests.length})`,   "#7c3aed"],
+                      ["api", `🌐 API (${apiTests.length})`, "#2563eb"],
+                    ].map(([key, label, color]) => (
+                      <button key={key} onClick={() => { setCategoryFilter(categoryFilter === key ? "all" : key); setSelected(new Set()); setReviewPage(1); }} style={{
+                        padding: "5px 12px", borderRadius: "99px", fontSize: "0.78rem", fontWeight: 600,
+                        border: `1px solid ${categoryFilter === key ? color : "var(--border)"}`,
+                        background: categoryFilter === key ? `${color}14` : "transparent",
+                        color: categoryFilter === key ? color : "var(--text2)",
+                        cursor: "pointer", transition: "all 0.12s",
+                      }}>{label}</button>
+                    ))}
+                  </>
+                )}
                 <div style={{ flex: 1 }} />
                 <div style={{ position: "relative" }}>
                   <Search size={12} color="var(--text3)" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
