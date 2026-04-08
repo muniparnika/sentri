@@ -18,21 +18,7 @@ import {
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import HealingTimeline from "./HealingTimeline.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtMs(ms) {
-  if (!ms && ms !== 0) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function fmtBytes(b) {
-  if (!b && b !== 0) return "—";
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { fmtMs, fmtBytes } from "../utils/formatters.js";
 
 // ─── Infer per-step status from the overall test result ──────────────────────
 //
@@ -403,14 +389,20 @@ export default function StepResultsView({ result, run, onBack }) {
 
   const isRunning = run?.status === "running";
   const hasVideo = !!(result?.videoPath);
+  const isApi = !!result?.isApiTest;
 
-  const tabs = [
-    ...(hasVideo ? [{ id: "video", label: "🎬 Recording" }] : []),
-    { id: "screenshot", label: "📸 Screenshot" },
-    { id: "network",    label: "🌐 Network" },
-    { id: "console",    label: "📜 Console" },
-    { id: "dom",        label: "🧩 DOM" },
-  ];
+  const tabs = isApi
+    ? [
+        { id: "screenshot", label: "🔌 Result" },
+        { id: "network",    label: "🌐 Network" },
+      ]
+    : [
+        ...(hasVideo ? [{ id: "video", label: "🎬 Recording" }] : []),
+        { id: "screenshot", label: "📸 Screenshot" },
+        { id: "network",    label: "🌐 Network" },
+        { id: "console",    label: "📜 Console" },
+        { id: "dom",        label: "🧩 DOM" },
+      ];
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -809,10 +801,12 @@ export default function StepResultsView({ result, run, onBack }) {
                   justifyContent: "center",
                 }}
               >
-                <Globe size={11} color="var(--text3)" />
+                {isApi
+                  ? <span style={{ fontSize: 11 }}>🔌</span>
+                  : <Globe size={11} color="var(--text3)" />}
               </div>
               <span style={{ fontWeight: 700, fontSize: "0.82rem" }}>
-                Browser View
+                {isApi ? "API Response" : "Browser View"}
               </span>
             </div>
 
@@ -882,43 +876,175 @@ export default function StepResultsView({ result, run, onBack }) {
               </BrowserChrome>
             )}
 
-            {/* 📸 SCREENSHOT — shown in browser chrome */}
+            {/* 📸 SCREENSHOT / 🔌 API RESULT */}
             {activeTab === "screenshot" && (
-              <BrowserChrome
-                url={currentUrl}
-                isLoading={
-                  stepStatuses[activeStepIdx] === "running"
-                }
-              >
-                {result?.screenshot ? (
-                  <OverlayCanvas
-                    base64={result.screenshot}
-                    boxes={result.boundingBoxes || []}
-                    status={result.status}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      padding: "60px 40px",
-                      textAlign: "center",
-                      background: "#fafafa",
-                      color: "#94a3b8",
-                    }}
-                  >
-                    <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>
-                      📸
-                    </div>
-                    <div style={{ fontWeight: 600, marginBottom: 6, color: "#64748b" }}>
-                      No screenshot captured
-                    </div>
-                    <div style={{ fontSize: "0.76rem", lineHeight: 1.6 }}>
-                      {isRunning
-                        ? "Screenshot will appear when this step completes."
-                        : "Screenshot was not recorded for this test case."}
-                    </div>
+              isApi ? (
+                <div style={{
+                  borderRadius: 10, overflow: "hidden",
+                  border: "1px solid var(--border)",
+                }}>
+                  <div style={{
+                    padding: "10px 14px", background: "var(--bg2)",
+                    borderBottom: "1px solid var(--border)",
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <span style={{ fontSize: 14 }}>🔌</span>
+                    <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--text)" }}>API Test Result</span>
                   </div>
-                )}
-              </BrowserChrome>
+                  {/* Status banner */}
+                  <div style={{
+                    padding: "24px 20px", textAlign: "center",
+                    background: result?.status === "passed" ? "var(--green-bg)" : result?.status === "failed" ? "var(--red-bg)" : "var(--bg2)",
+                  }}>
+                    <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.6 }}>
+                      {result?.status === "passed" ? "✓" : result?.status === "failed" ? "✗" : "⏳"}
+                    </div>
+                    <div style={{
+                      fontWeight: 700, fontSize: "0.88rem", marginBottom: 4,
+                      color: result?.status === "passed" ? "var(--green)" : result?.status === "failed" ? "var(--red)" : "var(--text2)",
+                    }}>
+                      {result?.status === "passed" ? "API Test Passed" : result?.status === "failed" ? "API Test Failed" : "Pending"}
+                    </div>
+                    {result?.durationMs != null && (
+                      <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>{fmtMs(result.durationMs)}</div>
+                    )}
+                  </div>
+
+                  {/* Full request/response detail for each API call */}
+                  {result?.network?.length > 0 && (
+                    <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                        API Calls ({result.network.length})
+                      </div>
+                      {result.network.map((n, i) => (
+                        <div key={i} style={{
+                          borderRadius: 8, overflow: "hidden",
+                          border: "1px solid var(--border)",
+                          marginBottom: i < result.network.length - 1 ? 10 : 0,
+                        }}>
+                          {/* Request header bar */}
+                          <div style={{
+                            padding: "8px 12px", background: "var(--bg2)",
+                            borderBottom: "1px solid var(--border)",
+                            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                          }}>
+                            <span style={{
+                              padding: "2px 7px", borderRadius: 4, fontSize: "0.65rem", fontWeight: 700,
+                              color: n.method === "GET" ? "var(--green)" : "var(--blue)",
+                              background: n.method === "GET" ? "var(--green-bg)" : "var(--blue-bg)",
+                            }}>{n.method}</span>
+                            <span style={{
+                              fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text)",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+                            }} title={n.url}>{n.url}</span>
+                            <span style={{
+                              fontWeight: 700, fontSize: "0.75rem",
+                              color: !n.status || n.status === 0 ? "var(--red)" : n.status < 300 ? "var(--green)" : n.status < 400 ? "var(--amber)" : "var(--red)",
+                            }}>{n.status || "—"}</span>
+                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>{fmtMs(n.duration)}</span>
+                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>{fmtBytes(n.size)}</span>
+                          </div>
+
+                          {/* Request headers + body */}
+                          {(n.requestHeaders || n.requestBody) && (
+                            <div style={{ borderBottom: "1px solid var(--border)" }}>
+                              <div style={{ padding: "5px 12px", fontSize: "0.65rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", background: "var(--bg2)" }}>
+                                Request
+                              </div>
+                              {n.requestHeaders && (
+                                <div style={{ padding: "6px 12px", borderBottom: n.requestBody ? "1px solid var(--border)" : "none" }}>
+                                  <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Headers</div>
+                                  <pre style={{
+                                    margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
+                                    color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
+                                  }}>{typeof n.requestHeaders === "string" ? n.requestHeaders : JSON.stringify(n.requestHeaders, null, 2)}</pre>
+                                </div>
+                              )}
+                              {n.requestBody && (
+                                <div style={{ padding: "6px 12px" }}>
+                                  <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Body</div>
+                                  <pre style={{
+                                    margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
+                                    color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
+                                  }}>{n.requestBody}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Response headers + body */}
+                          <div>
+                            <div style={{ padding: "5px 12px", fontSize: "0.65rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
+                              Response
+                            </div>
+                            {n.responseHeaders && (
+                              <div style={{ padding: "6px 12px", borderBottom: "1px solid var(--border)" }}>
+                                <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Headers</div>
+                                <pre style={{
+                                  margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
+                                  color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
+                                }}>{typeof n.responseHeaders === "string" ? n.responseHeaders : JSON.stringify(n.responseHeaders, null, 2)}</pre>
+                              </div>
+                            )}
+                            <div style={{ padding: "6px 12px" }}>
+                              <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Body</div>
+                              {n.responseBody ? (
+                                <pre style={{
+                                  margin: 0, padding: "8px 10px",
+                                  background: "#0d1117", borderRadius: 6,
+                                  fontFamily: "var(--font-mono)", fontSize: "0.7rem",
+                                  color: "#94a3b8", whiteSpace: "pre-wrap", wordBreak: "break-all",
+                                  lineHeight: 1.6, maxHeight: 300, overflowY: "auto",
+                                }}>{(() => {
+                                  try { return JSON.stringify(JSON.parse(n.responseBody), null, 2); } catch { return n.responseBody; }
+                                })()}</pre>
+                              ) : (
+                                <span style={{ fontSize: "0.72rem", color: "var(--text3)", fontStyle: "italic" }}>No body captured</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <BrowserChrome
+                  url={currentUrl}
+                  isLoading={
+                    stepStatuses[activeStepIdx] === "running"
+                  }
+                >
+                  {result?.screenshot ? (
+                    <OverlayCanvas
+                      base64={result.screenshot}
+                      boxes={result.boundingBoxes || []}
+                      status={result.status}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        padding: "60px 40px",
+                        textAlign: "center",
+                        background: "#fafafa",
+                        color: "#94a3b8",
+                      }}
+                    >
+                      <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>
+                        📸
+                      </div>
+                      <div style={{ fontWeight: 600, marginBottom: 6, color: "#64748b" }}>
+                        No screenshot captured
+                      </div>
+                      <div style={{ fontSize: "0.76rem", lineHeight: 1.6 }}>
+                        {isRunning
+                          ? "Screenshot will appear when this step completes."
+                          : "Screenshot was not recorded for this test case."}
+                      </div>
+                    </div>
+                  )}
+                </BrowserChrome>
+              )
             )}
 
             {/* 🌐 NETWORK */}
@@ -1002,14 +1128,16 @@ export default function StepResultsView({ result, run, onBack }) {
                               padding: "7px 10px",
                               fontWeight: 600,
                               color:
-                                n.status < 300
+                                !n.status || n.status === 0
+                                  ? "var(--red)"
+                                  : n.status < 300
                                   ? "var(--green)"
                                   : n.status < 400
                                   ? "var(--amber)"
                                   : "var(--red)",
                             }}
                           >
-                            {n.status ?? "—"}
+                            {n.status || "—"}
                           </td>
                           <td
                             style={{

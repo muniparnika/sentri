@@ -28,7 +28,7 @@
  * - {@link runTests} — Execute an array of approved tests against a project.
  */
 
-import { extractTestBody } from "./runner/codeParsing.js";
+import { extractTestBody, isApiTest } from "./runner/codeParsing.js";
 import { executeTest } from "./runner/executeTest.js";
 import { runFeedbackLoop } from "./runner/feedbackIntegration.js";
 import { TRACES_DIR, DEFAULT_PARALLEL_WORKERS, launchBrowser } from "./runner/config.js";
@@ -83,41 +83,62 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
   // Resolve concurrency: per-run override → env default → 1 (sequential)
   const workers = Math.max(1, Math.min(10, parallelWorkers || DEFAULT_PARALLEL_WORKERS));
 
-  let browser;
-  try {
-    browser = await launchBrowser();
-  } catch (launchErr) {
-    run.status = "failed";
-    run.error = `Browser launch failed: ${launchErr.message}`;
-    run.finishedAt = new Date().toISOString();
-    logError(run, `Browser launch failed: ${launchErr.message}`);
-    throw launchErr;
+  // Classify each test once upfront and cache the result on the test object.
+  // This avoids re-parsing the code body via isApiTest() multiple times per
+  // test (previously called 4× each: allApiOnly, apiCount, logging, executeTest).
+  // executeTest reads test._isApi instead of re-calling isApiTest().
+  for (const t of tests) {
+    t._isApi = !!(t.playwrightCode && isApiTest(t.playwrightCode));
+    // Persist the classification on the test object so the frontend can read
+    // test.isApiTest directly without reimplementing the detection heuristic.
+    if (db.tests[t.id]) {
+      db.tests[t.id].isApiTest = t._isApi;
+    }
   }
 
-  // Shared tracing context (separate from per-test video contexts)
-  let traceContext;
-  try {
-    traceContext = await browser.newContext({
-      userAgent: "Mozilla/5.0 (compatible; AutonomousQA/1.0)",
-      viewport: { width: 1280, height: 720 },
-    });
-    await traceContext.tracing.start({ screenshots: true, snapshots: true, sources: false });
-  } catch (ctxErr) {
-    await browser.close().catch(() => {});
-    run.status = "failed";
-    run.error = `Trace context setup failed: ${ctxErr.message}`;
-    run.finishedAt = new Date().toISOString();
-    logError(run, `Trace context setup failed: ${ctxErr.message}`);
-    throw ctxErr;
+  // If every test is API-only, skip the entire browser launch + trace context
+  // to save ~100-200MB of RAM.
+  const allApiOnly = tests.every(t => t._isApi);
+
+  let browser = null;
+  let traceContext = null;
+
+  if (!allApiOnly) {
+    try {
+      browser = await launchBrowser();
+    } catch (launchErr) {
+      run.status = "failed";
+      run.error = `Browser launch failed: ${launchErr.message}`;
+      run.finishedAt = new Date().toISOString();
+      logError(run, `Browser launch failed: ${launchErr.message}`);
+      throw launchErr;
+    }
+
+    // Shared tracing context (separate from per-test video contexts)
+    try {
+      traceContext = await browser.newContext({
+        userAgent: "Mozilla/5.0 (compatible; AutonomousQA/1.0)",
+        viewport: { width: 1280, height: 720 },
+      });
+      await traceContext.tracing.start({ screenshots: true, snapshots: true, sources: false });
+    } catch (ctxErr) {
+      await browser.close().catch(() => {});
+      run.status = "failed";
+      run.error = `Trace context setup failed: ${ctxErr.message}`;
+      run.finishedAt = new Date().toISOString();
+      logError(run, `Trace context setup failed: ${ctxErr.message}`);
+      throw ctxErr;
+    }
   }
 
+  const apiCount = tests.filter(t => t._isApi).length;
   const modeLabel = workers > 1 ? `${workers} parallel workers` : "sequential";
   log(run, `🚀 Starting test run: ${tests.length} tests (${modeLabel})`);
   log(run, `⚙️ Run config:`);
   log(run, `Execution mode: ${workers > 1 ? `⚡ Parallel (${workers} workers)` : "▶ Sequential (1 worker)"}`);
-  log(run, `Tests queued: ${tests.length}`);
+  log(run, `Tests queued: ${tests.length}${apiCount > 0 ? ` (${apiCount} API, ${tests.length - apiCount} browser)` : ""}`);
   log(run, `Project URL: ${project.url}`);
-  log(run, `Browser: Chromium (headless)`);
+  log(run, allApiOnly ? `Browser: ⏭️ Skipped (all tests are API-only)` : `Browser: Chromium (headless)`);
 
   const runStart = Date.now();
   const allVideoSegments = [];
@@ -168,7 +189,8 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
 
       const hasCode = !!(test.playwrightCode && extractTestBody(test.playwrightCode));
       const workerTag = workers > 1 ? ` [w${(i % workers) + 1}]` : "";
-      log(run, `▶ [${i + 1}/${tests.length}]${workerTag} ${test.name} ${hasCode ? "(executing generated code)" : "(fallback smoke test)"}`);
+      const typeTag = test._isApi ? "🌐 API" : hasCode ? "executing generated code" : "fallback smoke test";
+      log(run, `▶ [${i + 1}/${tests.length}]${workerTag} ${test.name} (${typeTag})`);
 
       try {
         const result = await executeTest(test, browser, runId, i, runStart, db);
@@ -186,18 +208,23 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
       }
     }, signal);
   } finally {
-    // Always clean up browser resources — even if the loop threw unexpectedly
-    try {
-      await traceContext.tracing.stop({ path: tracePath });
-      run.tracePath = `/artifacts/traces/${runId}.zip`;
-      log(run, `📊 Trace saved`);
-    } catch (e) {
-      logWarn(run, `Trace save failed: ${e.message}`);
+    // Always clean up browser resources — even if the loop threw unexpectedly.
+    // browser/traceContext are null when all tests are API-only.
+    if (traceContext) {
+      try {
+        await traceContext.tracing.stop({ path: tracePath });
+        run.tracePath = `/artifacts/traces/${runId}.zip`;
+        log(run, `📊 Trace saved`);
+      } catch (e) {
+        logWarn(run, `Trace save failed: ${e.message}`);
+      }
+      await traceContext.close().catch(() => {});
     }
-    await traceContext.close().catch(() => {});
-    await browser.close().catch((err) => {
-      console.warn("[testRunner] browser.close() failed:", err.message);
-    });
+    if (browser) {
+      await browser.close().catch((err) => {
+        console.warn("[testRunner] browser.close() failed:", err.message);
+      });
+    }
   }
 
   if (allVideoSegments.length > 0) {

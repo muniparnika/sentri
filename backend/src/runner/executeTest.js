@@ -19,12 +19,12 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
 import { getHealingHistoryForTest } from "../selfHealing.js";
-import { extractTestBody } from "./codeParsing.js";
-import { runGeneratedCode, getExpect } from "./codeExecutor.js";
+import { extractTestBody, isApiTest } from "./codeParsing.js";
+import { runGeneratedCode, runApiTestCode, getExpect } from "./codeExecutor.js";
 import { startScreencast } from "./screencast.js";
 import { captureDomSnapshot, captureScreenshot, captureBoundingBoxes } from "./pageCapture.js";
 import { persistHealingEvents } from "./healingPersistence.js";
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, NAVIGATION_TIMEOUT, VIDEOS_DIR } from "./config.js";
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, NAVIGATION_TIMEOUT, API_TEST_TIMEOUT, VIDEOS_DIR } from "./config.js";
 
 /**
  * Attach network & console listeners to a page.
@@ -112,6 +112,22 @@ function formatTestError(err) {
  * result object suitable for pushing into run.results.
  */
 export async function executeTest(test, browser, runId, stepIndex, runStart, db) {
+  // ── API-only test path: no browser context needed ──────────────────────
+  // Use the cached _isApi flag set by testRunner.js (avoids re-parsing).
+  // Fall back to isApiTest() for callers that bypass the runner (e.g. tests).
+  const isApi = test._isApi ?? (test.playwrightCode && isApiTest(test.playwrightCode));
+  if (isApi) {
+    return executeApiTest(test, runId, stepIndex, runStart);
+  }
+
+  // ── Browser-based test path — browser must be available ────────────────
+  if (!browser) {
+    throw new Error(
+      `Browser test "${test.name}" requires a browser instance but none was launched. ` +
+      `This can happen if the test was misclassified as API-only during batch setup.`
+    );
+  }
+
   const testVideoDir = path.join(VIDEOS_DIR, runId, `step${stepIndex}`);
   if (!fs.existsSync(testVideoDir)) fs.mkdirSync(testVideoDir, { recursive: true });
 
@@ -240,6 +256,73 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, db)
     } catch (videoErr) {
       console.warn(`[executeTest] Video move failed for step ${stepIndex}:`, videoErr.message);
     }
+  }
+
+  return result;
+}
+
+/**
+ * executeApiTest(test, runId, stepIndex, runStart) → result object
+ *
+ * Runs an API-only test (one that uses `request.newContext()`) without
+ * spinning up a browser page. Skips screenshots, video, DOM snapshots,
+ * and screencast — none of which apply to API tests.
+ */
+async function executeApiTest(test, runId, stepIndex, runStart) {
+  const result = {
+    testId: test.id,
+    testName: test.name,
+    steps: test.steps || [],
+    status: "passed",
+    durationMs: 0,
+    error: null,
+    screenshot: null,
+    screenshotPath: null,
+    videoPath: null,
+    runTimestamp: 0,
+    network: [],
+    consoleLogs: [],
+    domSnapshot: null,
+    boundingBoxes: [],
+    url: test.sourceUrl || "",
+    isApiTest: true,
+  };
+
+  const start = Date.now();
+  result.startedAt = start;
+
+  // AbortController lets us forcibly dispose Playwright request contexts
+  // inside runApiTestCode when the timeout fires, preventing lingering
+  // HTTP connections from leaking in the background.
+  const ac = new AbortController();
+  let timeoutHandle;
+
+  try {
+    const expect = await getExpect();
+    const apiPromise = runApiTestCode(test.playwrightCode, expect, { signal: ac.signal });
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        ac.abort(new Error(`API test timed out after ${API_TEST_TIMEOUT}ms`));
+        reject(new Error(`API test timed out after ${API_TEST_TIMEOUT}ms`));
+      }, API_TEST_TIMEOUT);
+    });
+    // Swallow the losing promise's rejection to prevent unhandled rejection
+    // crashes in Node.js v15+. When the timeout wins, apiPromise continues
+    // running until the abort signal disposes its contexts — its eventual
+    // rejection must be caught here so it doesn't crash the process.
+    apiPromise.catch(() => {});
+    const apiResult = await Promise.race([apiPromise, timeoutPromise]);
+    // Populate network logs from the instrumented API request context
+    result.network = apiResult.apiLogs || [];
+  } catch (err) {
+    result.status = "failed";
+    result.error = formatTestError(err);
+    // Capture any API logs collected before the failure
+    result.network = err.__apiLogs || [];
+  } finally {
+    clearTimeout(timeoutHandle);
+    result.durationMs = Date.now() - start;
+    result.runTimestamp = start - runStart;
   }
 
   return result;

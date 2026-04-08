@@ -8,6 +8,8 @@
  *   extractTestBody(code)        — pull the async arrow-fn body from a test()
  *   patchNetworkIdle(code)       — rewrite networkidle → domcontentloaded
  *   stripPlaywrightImports(code) — remove import/require of @playwright/test
+ *   repairBrokenStringLiterals(code) — collapse accidental newlines inside quoted strings
+ *   isApiTest(code)              — detect API-only tests (request.newContext)
  */
 
 /**
@@ -83,5 +85,144 @@ export function stripPlaywrightImports(code) {
     .split("\n")
     .filter(line => !line.match(/import\s*\{.*\}\s*from\s*['"]@playwright\/test['"]/))
     .filter(line => !line.match(/require\s*\(\s*['"]@playwright\/test['"]\s*\)/))
+    .join("\n");
+}
+
+/**
+ * repairBrokenStringLiterals(code)
+ *
+ * AI output occasionally breaks CSS/XPath selectors across lines inside
+ * single/double-quoted literals, creating invalid JavaScript:
+ *   page.$('button[name=btnI]
+ *     [type=submit]')
+ *
+ * JavaScript does not allow raw newlines in single/double quotes, so parsing
+ * fails with "Invalid or unexpected token". This repair pass replaces newline
+ * characters that occur while inside a single/double-quoted string with a
+ * space, preserving content while restoring valid syntax.
+ */
+export function repairBrokenStringLiterals(code) {
+  if (!code || typeof code !== "string") return code;
+  let out = "";
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let escaped = false;
+
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    const next = code[i + 1];
+
+    // ── Comment tracking (only when not inside string literals) ────────────
+    if (!inSingle && !inDouble && !inTemplate) {
+      if (!inLineComment && !inBlockComment && ch === "/" && next === "/") {
+        inLineComment = true;
+        out += ch;
+        continue;
+      }
+      if (!inLineComment && !inBlockComment && ch === "/" && next === "*") {
+        inBlockComment = true;
+        out += ch;
+        continue;
+      }
+    }
+
+    if (inLineComment) {
+      out += ch;
+      if (ch === "\n") inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      out += ch;
+      if (ch === "*" && next === "/") {
+        out += "/";
+        i++;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (!inDouble && !inTemplate && ch === "'") {
+      inSingle = !inSingle;
+      out += ch;
+      continue;
+    }
+    if (!inSingle && !inTemplate && ch === "\"") {
+      inDouble = !inDouble;
+      out += ch;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === "`") {
+      inTemplate = !inTemplate;
+      out += ch;
+      continue;
+    }
+
+    if ((ch === "\n" || ch === "\r") && (inSingle || inDouble)) {
+      out += " ";
+      continue;
+    }
+
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * isApiTest(playwrightCode)
+ *
+ * Returns true when the generated code is an API-only test that uses
+ * `request.newContext()` (Playwright's APIRequestContext) rather than
+ * browser-based page interactions.
+ *
+ * API tests:
+ *   - Do NOT need a browser page or page.goto()
+ *   - Need a real Playwright `request` fixture instead of the undefined stub
+ *   - Should skip browser-specific artifacts (screenshots, DOM snapshots, video)
+ */
+export function isApiTest(playwrightCode) {
+  if (!playwrightCode) return false;
+  const body = extractTestBody(playwrightCode);
+  if (!body) return false;
+  // Detect request.newContext() or destructured { request } fixture usage
+  // without any page.goto / page.click / page.locator interactions
+  const usesRequestContext = /request\s*\.\s*newContext\s*\(/.test(body)
+    || /request\s*\.\s*(get|post|put|patch|delete|head|fetch)\s*\(/.test(body);
+  // Real page interactions — page.goto(), page.click(), page.fill(), etc.
+  // These definitively indicate a browser test.
+  // Note: expect(page).toHaveURL() is a common AI hallucination in API tests
+  // and is NOT counted here. Instead, those lines are stripped by
+  // stripHallucinatedPageAssertions() before execution.
+  const usesPage = /page\s*\.\s*(goto|click|locator|getByRole|getByText|getByLabel|getByPlaceholder|fill|type|check|uncheck|selectOption|waitForSelector|waitForLoadState)\s*\(/.test(body);
+  return usesRequestContext && !usesPage;
+}
+
+/**
+ * stripHallucinatedPageAssertions(code)
+ *
+ * Removes `expect(page).toHaveURL(...)` and similar page assertions that the
+ * AI sometimes hallucinates at the end of API-only tests. These lines would
+ * crash at runtime because `page` is undefined in the API execution context.
+ *
+ * Only called for code that has already been classified as an API test by
+ * isApiTest(), so we know there are no real page interactions.
+ */
+export function stripHallucinatedPageAssertions(code) {
+  return code
+    .split("\n")
+    .filter(line => !/^\s*await\s+expect\s*\(\s*page\s*\)/.test(line))
     .join("\n");
 }

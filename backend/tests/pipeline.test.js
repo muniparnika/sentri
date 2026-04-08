@@ -296,9 +296,24 @@ test("classifies timeout correctly", () => {
   assert.equal(category, "TIMEOUT");
 });
 
-test("classifies assertion failure correctly", () => {
+test("classifies toHaveURL assertion as URL_MISMATCH (high-priority auto-fix)", () => {
   const category = classifyFailure("expect(received).toHaveURL(expected) received: '/login' expected: '/dashboard'");
+  assert.equal(category, "URL_MISMATCH");
+});
+
+test("classifies generic assertion failure as ASSERTION_FAIL", () => {
+  const category = classifyFailure("expect(received).toContainText(expected) received: 'Hello' expected: 'World'");
   assert.equal(category, "ASSERTION_FAIL");
+});
+
+test("classifies explicit URL mismatch wording as URL_MISMATCH", () => {
+  const category = classifyFailure("URL mismatch: redirected to unexpected URL after login");
+  assert.equal(category, "URL_MISMATCH");
+});
+
+test("classifies page.url mismatch errors as URL_MISMATCH", () => {
+  const category = classifyFailure("page.url() did not match expected host");
+  assert.equal(category, "URL_MISMATCH");
 });
 
 test("detects flaky test (passes and fails)", () => {

@@ -8,7 +8,7 @@
  *   ASSERTION_FAIL    — assertion value mismatch
  *   NAVIGATION_FAIL   — page didn't load or wrong URL
  *   TIMEOUT           — element wait exceeded timeout
- *   URL_MISMATCH      — toHaveURL assertion failed (redirect/CAPTCHA)
+ *   URL_MISMATCH      — toHaveURL assertion failed, URL redirect, or page.url() mismatch
  *   UNKNOWN           — unclassified failure
  *
  * Quality analytics (P3):
@@ -32,9 +32,11 @@ const FAILURE_PATTERNS = {
     /strict mode violation/i,
   ],
   URL_MISMATCH: [
-    /toHaveURL.*received/i,
-    /expected.*toHaveURL.*received/i,
+    /url mismatch/i,
+    /redirected to unexpected url/i,
     /page\.url\(\).*not.*match/i,
+    /expect\(received\)\.toHaveURL\(expected\)/i,
+    /toHaveURL.*received/i,
   ],
   NAVIGATION_FAIL: [
     /net::ERR/i,
