@@ -30,6 +30,7 @@ const TIMEOUT_LONG    = 300_000;
 /** localStorage keys — must match AuthContext.jsx */
 const TOKEN_KEY = "app_auth_token";
 const USER_KEY  = "app_auth_user";
+const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) ? import.meta.env.BASE_URL : "/";
 
 /**
  * Read the stored JWT token from localStorage.
@@ -58,7 +59,7 @@ function handleUnauthorized() {
   const path = window.location.pathname;
   if (path.endsWith("/login") || path.endsWith("/forgot-password")) return;
   // Redirect to login — use the Vite BASE_URL so subpath deploys work
-  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  const base = BASE_URL.replace(/\/$/, "");
   window.location.href = `${base}/login`;
 }
 
@@ -259,4 +260,54 @@ export const api = {
   clearActivities: () => req("DELETE", "/data/activities"),
   /** @returns {Promise<{cleared: number}>} Clear self-healing history. */
   clearHealing:    () => req("DELETE", "/data/healing"),
+
+  /**
+   * Stream a chat message through the configured AI provider via SSE.
+   *
+   * @param   {Array<{role: string, content: string}>} messages - Full conversation history.
+   * @param   {function(string):void}  onToken  - Called with each streamed token.
+   * @param   {function(string):void}  onError  - Called if the stream returns an error event.
+   * @param   {AbortSignal}            [signal] - Optional abort signal to cancel the stream.
+   * @returns {Promise<void>}
+   */
+  chat: async (messages, onToken, onError, signal) => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ messages }),
+      signal,
+    });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error("Session expired. Please sign in again.");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Chat request failed (${res.status})`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop(); // keep incomplete line in buffer
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") return;
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed.error) { onError?.(parsed.error); return; }
+          if (parsed.token) onToken(parsed.token);
+        } catch { /* malformed SSE line — skip */ }
+      }
+    }
+  },
 };
