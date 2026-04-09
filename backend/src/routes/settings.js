@@ -14,7 +14,7 @@
 
 import { Router } from "express";
 import { logActivity } from "../utils/activityLogger.js";
-import { hasProvider, setRuntimeKey, setRuntimeOllama, checkOllamaConnection, getProviderMeta, getConfiguredKeys } from "../aiProvider.js";
+import { hasProvider, setRuntimeKey, setRuntimeOllama, setActiveProvider, checkOllamaConnection, getProviderMeta, getConfiguredKeys, getProvider, getSupportedProviders } from "../aiProvider.js";
 
 const router = Router();
 
@@ -27,12 +27,7 @@ router.get("/config", (req, res) => {
     model: meta?.model || null,
     color: meta?.color || null,
     hasProvider: hasProvider(),
-    supportedProviders: [
-      { id: "anthropic", name: "Claude Sonnet",    model: "claude-sonnet-4-20250514", docsUrl: "https://console.anthropic.com/settings/keys" },
-      { id: "openai",    name: "GPT-4o-mini",      model: "gpt-4o-mini",              docsUrl: "https://platform.openai.com/api-keys" },
-      { id: "google",    name: "Gemini 2.5 Flash", model: "gemini-2.5-flash",         docsUrl: "https://aistudio.google.com/apikey" },
-      { id: "local",     name: "Ollama (local)",   model: "mistral:7b",                 docsUrl: "https://ollama.ai" },
-    ],
+    supportedProviders: getSupportedProviders(),
   });
 });
 
@@ -48,6 +43,24 @@ router.post("/settings", (req, res) => {
 
   if (!provider || !validProviders.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
+  }
+
+  // ── Quick-switch: frontend sends "__use_existing__" to activate a provider
+  // that already has a saved key without re-entering it. Just set the
+  // active-provider override — no key is written or validated.
+  if (apiKey === "__use_existing__" && provider !== "local") {
+    const configured = getConfiguredKeys();
+    if (!configured[provider]) {
+      return res.status(400).json({ error: `No saved key for "${provider}". Add a key in Settings first.` });
+    }
+    setActiveProvider(provider);
+    logActivity({ type: "settings.update", detail: `Switched active provider to ${getProviderMeta()?.name || provider}` });
+    return res.json({
+      ok: true,
+      provider,
+      providerName: getProviderMeta()?.name || provider,
+      message: `Switched to ${provider}.`,
+    });
   }
 
   if (provider === "local") {
@@ -69,6 +82,7 @@ router.post("/settings", (req, res) => {
       }
     }
     setRuntimeOllama({ baseUrl: (baseUrl || "").trim(), model: (model || "").trim(), disabled: false });
+    setActiveProvider("local");
     logActivity({ type: "settings.update", detail: "Ollama (local) provider configured" });
     return res.json({
       ok: true,
@@ -83,6 +97,8 @@ router.post("/settings", (req, res) => {
   }
 
   setRuntimeKey(provider, apiKey.trim());
+  // Pin this provider as the active one after saving a new key
+  setActiveProvider(provider);
 
   logActivity({
     type: "settings.update",
@@ -105,11 +121,17 @@ router.delete("/settings/:provider", (req, res) => {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
 
+  // Capture the active provider BEFORE removing the key/config, because
+  // getProvider() checks the runtimeActiveProvider override first.
+  const wasActive = getProvider();
+
   if (provider === "local") {
     setRuntimeOllama({ baseUrl: "", model: "", disabled: true });
   } else {
     setRuntimeKey(provider, "");
   }
+  // Only clear the active-provider override if it was pointing to the deleted provider
+  if (wasActive === provider) setActiveProvider(null);
 
   logActivity({
     type: "settings.update",
