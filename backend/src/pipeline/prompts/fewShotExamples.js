@@ -10,6 +10,9 @@
  *   - Specific, non-vague step descriptions
  *   - Strong assertions (toBeVisible on real text, toContainText)
  *   - Self-healing helpers (safeClick, safeFill, safeExpect)
+ *   - ALL test data inlined as string literals — NEVER as variables
+ *   - count assertions written inline inside expect() — no locator variables
+ *   - No toHaveURL() after search/navigation actions
  *   - preconditions and testData fields
  *   - Correct type/scenario/priority usage
  */
@@ -37,14 +40,21 @@ export const LOGIN_POSITIVE_EXAMPLE = {
   playwrightCode: `import { test, expect } from '@playwright/test';
 
 test('Successful login with valid credentials shows dashboard', async ({ page }) => {
+  // Step 1: User opens the login page and sees the heading 'Sign In'
   await page.goto('https://app.example.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
   await safeExpect(page, expect, 'Sign In', 'heading');
+
+  // Step 2: User enters credentials — values are inlined as string literals
   await safeFill(page, 'Email', 'jane@test.com');
   await safeFill(page, 'Password', 'Secure123!');
+
+  // Step 3: User clicks the 'Sign In' button
   await safeClick(page, 'Sign In');
 
+  // Step 4: The dashboard loads and shows 'Welcome back, Jane'
   await safeExpect(page, expect, 'Welcome back, Jane');
+
+  // Step 5: The navigation bar shows a 'My Account' link
   await safeExpect(page, expect, 'My Account', 'link');
 });`,
 };
@@ -69,15 +79,72 @@ export const FORM_VALIDATION_NEGATIVE_EXAMPLE = {
   playwrightCode: `import { test, expect } from '@playwright/test';
 
 test('Empty required fields show validation errors on submit', async ({ page }) => {
+  // Step 1: User opens the contact page and sees the heading 'Contact Us'
   await page.goto('https://app.example.com/contact', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
   await safeExpect(page, expect, 'Contact Us', 'heading');
+
+  // Step 2: User leaves all fields empty and clicks 'Send Message'
   await safeClick(page, 'Send Message');
 
+  // Step 3: Validation error 'Name is required' appears
   await safeExpect(page, expect, 'Name is required');
+
+  // Step 4: Validation error 'Email is required' appears
   await safeExpect(page, expect, 'Email is required');
-  // Confirm we're still on the contact page (form did not submit)
+
+  // Step 5: The form does NOT submit — user remains on the same page
   await safeExpect(page, expect, 'Contact Us', 'heading');
+});`,
+};
+
+// ── Positive functional test — search flow ───────────────────────────────────
+// THIS EXAMPLE EXPLICITLY DEMONSTRATES THE THREE MOST COMMON MISTAKES:
+//   MISTAKE 1 — using a variable instead of a literal:
+//     BAD:  const searchTerm = 'laptop'; await safeFill(page, 'Search', searchTerm);
+//     GOOD: await safeFill(page, 'Search', 'laptop');  ← literal, always works
+//   MISTAKE 2 — assigning a locator to a variable before expect():
+//     BAD:  const results = page.locator('.product-title'); await expect(results).toHaveCount(0);
+//     GOOD: await expect(page.locator('.product-title')).not.toHaveCount(0);  ← inline
+//   MISTAKE 3 — using toHaveURL() after search/navigation:
+//     BAD:  await expect(page).toHaveURL('https://shop.example.com');  ← fails on query params
+//     GOOD: assert visible page CONTENT instead of the URL
+
+export const SEARCH_POSITIVE_EXAMPLE = {
+  name: "Search for 'laptop' returns relevant product listings",
+  description: "Verifies that entering a search query shows matching results with product titles visible",
+  preconditions: "",
+  priority: "high",
+  type: "functional",
+  scenario: "positive",
+  testData: {
+    searchQuery: "laptop",
+  },
+  steps: [
+    "User opens the homepage and sees the search bar",
+    "User types 'laptop' into the search bar and clicks the Search button",
+    "Search results page loads showing product listings",
+    "At least one result is visible and its title contains the word 'laptop'",
+  ],
+  playwrightCode: `import { test, expect } from '@playwright/test';
+
+test('Search for laptop returns relevant product listings', async ({ page }) => {
+  // Step 1: User opens the homepage and sees the search bar
+  await page.goto('https://shop.example.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+  // Step 2: User types 'laptop' into the search bar and clicks Search
+  // CORRECT: 'laptop' is a string literal — not a variable
+  await safeFill(page, 'Search', 'laptop');
+  await safeClick(page, 'Search');
+
+  // Step 3: Search results page loads showing product listings
+  await page.waitForSelector('.product-title', { timeout: 15000 });
+  // CORRECT: locator written inline inside expect() — no variable declaration
+  await expect(page.locator('.product-title')).not.toHaveCount(0);
+
+  // Step 4: At least one result is visible and contains 'laptop'
+  await expect(page.locator('.product-title').first()).toContainText('laptop', { ignoreCase: true });
+  // CORRECT: assert visible content, NOT toHaveURL() — URL will have query params like ?q=laptop&ref=...
+  await safeExpect(page, expect, 'results for');
 });`,
 };
 
@@ -85,13 +152,23 @@ test('Empty required fields show validation errors on submit', async ({ page }) 
 
 export function buildFewShotBlock() {
   return `
-EXAMPLES — here are two gold-standard tests showing the expected output quality:
+EXAMPLES — study all three gold-standard tests. Example 3 (search flow) is the most important.
 
-Example 1 (positive functional test):
+Example 1 (positive — login):
 ${JSON.stringify(LOGIN_POSITIVE_EXAMPLE, null, 2)}
 
-Example 2 (negative functional test):
+Example 2 (negative — form validation):
 ${JSON.stringify(FORM_VALIDATION_NEGATIVE_EXAMPLE, null, 2)}
 
-Your generated tests must match this level of specificity in steps, assertions, and test data.`.trim();
+Example 3 (positive — SEARCH FLOW — read carefully before generating any search/filter test):
+${JSON.stringify(SEARCH_POSITIVE_EXAMPLE, null, 2)}
+
+CRITICAL RULES demonstrated by the examples above — violating any of these makes the test broken:
+1. ALL values in testData ('laptop', 'jane@test.com', 'Secure123!') are written as string literals directly in playwrightCode. NEVER declare a variable like "const searchTerm = 'laptop'" — searchTerm will be undefined at runtime and throw a ReferenceError.
+2. Count/locator assertions: page.locator() is written INLINE inside expect() — never assigned to a const/let first.
+3. Search/filter tests: assert on visible CONTENT (result titles, headings, counts). NEVER use toHaveURL() with a literal URL string after a search or navigation — the URL will always contain query params that make an exact match fail.
+4. No unused variable declarations. If you assign page.locator() to a variable, use it immediately on the very next line.
+5. STEP COMMENTS: Every step in the "steps" array MUST have a corresponding "// Step N:" comment in playwrightCode marking where that step's code begins. Do NOT leave any step without implementation code.
+
+Your generated tests must follow all five rules above.`.trim();
 }

@@ -19,6 +19,8 @@
 
 import { generateText, parseJSON } from "../aiProvider.js";
 import { throwIfAborted } from "../utils/abortHelper.js";
+import * as testRepo from "../database/repositories/testRepo.js";
+import * as runRepo from "../database/repositories/runRepo.js";
 
 // ── Failure classification ────────────────────────────────────────────────────
 
@@ -87,16 +89,17 @@ export function detectFlakiness(testHistory) {
 }
 
 /**
- * detectFlakyTests(db, projectId) → Map<testId, flakyInfo>
+ * detectFlakyTests(projectId) → Map<testId, flakyInfo>
  *
  * Scans all run results for a project and identifies tests that have both
  * passed and failed across different runs.
  */
-export function detectFlakyTests(db, projectId) {
+export function detectFlakyTests(projectId) {
   const testResults = new Map(); // testId → { passes, fails }
+  const allRuns = runRepo.getByProjectId(projectId);
 
-  for (const run of Object.values(db.runs || {})) {
-    if (run.projectId !== projectId || !run.results) continue;
+  for (const run of allRuns) {
+    if (!run.results) continue;
     for (const result of run.results) {
       if (!testResults.has(result.testId)) {
         testResults.set(result.testId, { passes: 0, fails: 0 });
@@ -110,7 +113,7 @@ export function detectFlakyTests(db, projectId) {
   const flakyTests = new Map();
   for (const [testId, { passes, fails }] of testResults) {
     if (passes > 0 && fails > 0) {
-      const test = db.tests[testId];
+      const test = testRepo.getById(testId);
       const total = passes + fails;
       flakyTests.set(testId, {
         testId,
@@ -353,19 +356,20 @@ export async function regenerateFailingTest(improvement, signal) {
 }
 
 /**
- * applyFeedbackLoop(run, db, { signal } = {}) → summary
+ * applyFeedbackLoop(run, { signal } = {}) → summary
  *
  * Full feedback loop: analyzes results, regenerates failing tests.
  * Called after a test run completes.
  * Accepts an optional AbortSignal so long-running AI calls can be cancelled.
  */
-export async function applyFeedbackLoop(run, db, { signal } = {}) {
+export async function applyFeedbackLoop(run, { signal } = {}) {
   if (!run.results?.length) return { improved: 0, skipped: 0, analytics: null };
 
   // Build lookup maps
   const testMap = {};
   for (const testId of (run.tests || [])) {
-    if (db.tests[testId]) testMap[testId] = db.tests[testId];
+    const t = testRepo.getById(testId);
+    if (t) testMap[testId] = t;
   }
 
   const snapshotsByUrl = {};
@@ -382,7 +386,7 @@ export async function applyFeedbackLoop(run, db, { signal } = {}) {
   // Detect flaky tests across all runs for this project
   const projectId = run.projectId;
   if (projectId) {
-    const flakyTests = detectFlakyTests(db, projectId);
+    const flakyTests = detectFlakyTests(projectId);
     analytics.flakyTests = Array.from(flakyTests.values());
     stats.flaky = flakyTests.size;
   }
@@ -396,15 +400,16 @@ export async function applyFeedbackLoop(run, db, { signal } = {}) {
     if (signal?.aborted) break; // Respect abort signal between AI calls
     const regenerated = await regenerateFailingTest(improvement, signal);
     if (regenerated) {
-      db.tests[improvement.testId] = {
-        ...db.tests[improvement.testId],
-        ...regenerated,
-        // Route regenerated tests back through human review instead of
-        // auto-approving. This preserves the "nothing executes until a
-        // human approves" principle and prevents silently introducing
-        // flawed tests into the approved pool.
-        reviewStatus: "draft",
-      };
+      // Route regenerated tests back through human review instead of
+      // auto-approving. This preserves the "nothing executes until a
+      // human approves" principle and prevents silently introducing
+      // flawed tests into the approved pool.
+      // Strip non-column properties before persisting. regenerateFailingTest()
+      // adds underscore-prefixed metadata (_regenerated, _regenerationReason,
+      // _originalCode) and the original test may carry _quality, _assertionEnhanced,
+      // _generatedFrom — none of which are columns in the tests table.
+      const { id: _id, _regenerated, _regenerationReason, _originalCode, _quality, _assertionEnhanced, _generatedFrom, ...fields } = regenerated;
+      testRepo.update(improvement.testId, { ...fields, reviewStatus: "draft" });
       improved++;
     }
   }

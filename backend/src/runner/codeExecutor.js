@@ -1,12 +1,32 @@
 /**
- * codeExecutor.js — Dynamic execution of AI-generated Playwright test bodies
+ * codeExecutor.js — Sandboxed execution of AI-generated Playwright test bodies
  *
  * Responsibilities:
  *   1. Parse, clean, and patch the AI-generated code (via codeParsing.js)
  *   2. Inject self-healing runtime helpers (via selfHealing.js)
- *   3. Wrap the code in a new Function() and execute it against a live page
+ *   3. Execute the code in a **vm sandbox** with a restricted global context
  *   4. Lazy-load Playwright's `expect` at runtime
  *   5. Provide a real Playwright `request` fixture for API tests
+ *
+ * ### Security model
+ * AI-generated code runs inside a vm context that sets `process: undefined`
+ * in the global scope. However, any injected host object (page, expect,
+ * Buffer, etc.) exposes the host's Function constructor via
+ * `.constructor.constructor`, which can be used to escape the sandbox:
+ *
+ *   `page.constructor.constructor('return process')()`
+ *
+ * Node.js docs explicitly warn: "The vm module is not a security mechanism.
+ * Do not use it to run untrusted code."
+ *
+ * We block `process.exit()`, `process.kill()`, and `process.abort()` so
+ * escaped code cannot crash the server. We do NOT strip `process.env` because
+ * doing so breaks concurrent Express handlers (JWT verification, AI provider
+ * calls, SQLite operations) that read env vars between await points during
+ * async test execution.
+ *
+ * For true env isolation (preventing sandbox-escaped code from reading API
+ * keys), use worker_threads with `env: {}` — see NEXT_STEPS.md S1-02.
  *
  * Exports:
  *   runGeneratedCode(page, context, playwrightCode, expect, healingHints)
@@ -14,9 +34,173 @@
  *   getExpect()
  */
 
+import vm from "vm";
 import { extractTestBody, patchNetworkIdle, stripPlaywrightImports, stripHallucinatedPageAssertions, repairBrokenStringLiterals } from "./codeParsing.js";
 import { getSelfHealingHelperCode, applyHealingTransforms } from "../selfHealing.js";
 import playwright from "playwright";
+
+// ─── Sandbox helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Build a vm context for executing AI-generated Playwright code.
+ *
+ * Injects only the objects the test needs (page, context, expect, etc.)
+ * plus Node.js globals that vm.createContext() doesn't provide automatically.
+ * Dangerous globals (process, require, global, etc.) are explicitly blocked.
+ *
+ * NOTE: Any injected host object can be used to reach the host's Function
+ * constructor via `.constructor.constructor`. The env-stripping in
+ * runWithStrippedEnv() is the actual security boundary, not this context.
+ *
+ * @param {Object} exposed — caller-provided objects to inject
+ * @returns {Object} A vm context object
+ */
+function buildSandboxContext(exposed) {
+  const safeConsole = Object.freeze({
+    log:   (...args) => console.log(...args),
+    warn:  (...args) => console.warn(...args),
+    error: (...args) => console.error(...args),
+    info:  (...args) => console.info(...args),
+  });
+
+  return vm.createContext({
+    // ── Caller-provided objects (Playwright page, context, expect, etc.) ────
+    ...exposed,
+
+    // ── Wrapped host functions (arrow functions hide host Function ctor) ────
+    console:        safeConsole,
+    setTimeout:     (...args) => setTimeout(...args),
+    clearTimeout:   (...args) => clearTimeout(...args),
+    setInterval:    (...args) => setInterval(...args),
+    clearInterval:  (...args) => clearInterval(...args),
+
+    // ── Node.js globals NOT provided by vm.createContext() ────────────────
+    // vm.createContext() provides ECMAScript built-ins (Error, Promise,
+    // Array, Object, Date, RegExp, Map, Set, etc.) as sandbox-local copies.
+    // Node.js-specific globals must be injected explicitly.
+    URL,
+    URLSearchParams,
+    TextEncoder,
+    TextDecoder,
+    DOMException,
+    Buffer,
+    NaN,
+    Infinity,
+    undefined,
+    isNaN:              (...args) => isNaN(...args),
+    isFinite:           (...args) => isFinite(...args),
+    parseInt:           (...args) => parseInt(...args),
+    parseFloat:         (...args) => parseFloat(...args),
+    encodeURIComponent: (...args) => encodeURIComponent(...args),
+    decodeURIComponent: (...args) => decodeURIComponent(...args),
+    encodeURI:          (...args) => encodeURI(...args),
+    decodeURI:          (...args) => decodeURI(...args),
+    atob:               typeof atob === "function" ? (...args) => atob(...args) : undefined,
+    btoa:               typeof btoa === "function" ? (...args) => btoa(...args) : undefined,
+    structuredClone:    typeof structuredClone === "function" ? (...args) => structuredClone(...args) : undefined,
+
+    // ── Explicitly blocked ─────────────────────────────────────────────────
+    process:        undefined,
+    require:        undefined,
+    module:         undefined,
+    exports:        undefined,
+    __filename:     undefined,
+    __dirname:      undefined,
+    global:         undefined,
+    globalThis:     undefined,
+    fetch:          undefined,
+    XMLHttpRequest: undefined,
+    WebSocket:      undefined,
+    Deno:           undefined,
+    Bun:            undefined,
+  });
+}
+
+// ─── Process guard (concurrency-safe) ─────────────────────────────────────────
+// Blocks process.exit / process.kill / process.abort while sandboxed code runs.
+// Uses reference counting so parallel workers all stay protected — the first
+// entering test installs the guards, the last exiting test removes them.
+//
+// NOTE: We intentionally do NOT strip or replace process.env. The previous
+// implementation replaced process.env with {} during async sandbox execution,
+// which broke concurrent Express handlers that read env vars between await
+// points (JWT verification, AI provider calls, SQLite config, etc.). Since
+// Node.js is single-threaded but test execution is async, the event loop
+// processes other tasks (including HTTP requests) while page actions await,
+// and those tasks would find process.env empty.
+//
+// The vm sandbox already sets `process: undefined` in its context. The only
+// way to reach the host process is via .constructor.constructor('return process')().
+// For true env isolation, use worker_threads with `env: {}` (see NEXT_STEPS.md
+// S1-02). The current approach blocks destructive operations (exit/kill/abort)
+// without breaking the server.
+
+let _envGuardCount = 0;
+let _savedExit = null;
+let _savedKill = null;
+let _savedAbort = null;
+
+/**
+ * Execute a function with destructive process methods blocked.
+ *
+ * Blocks `process.exit()`, `process.kill()`, and `process.abort()` so that
+ * sandbox-escaped code cannot crash the server. The vm sandbox already hides
+ * `process` from the global scope; these guards are a defense-in-depth layer
+ * for the `.constructor.constructor('return process')()` escape path.
+ *
+ * NOTE: `process.env` is NOT stripped — doing so breaks concurrent server
+ * operations (Express handlers, JWT verification, AI calls) that run on the
+ * same event loop between await points. For env isolation, use worker_threads
+ * with `env: {}`.
+ *
+ * Concurrency-safe: uses a reference counter so parallel workers (poolMap in
+ * testRunner.js) all run with guards installed. The first entering test
+ * installs them, the last exiting test restores the originals.
+ *
+ * @param {Function} fn — async function to execute with process guards
+ * @returns {Promise<*>} return value of fn
+ */
+async function runWithStrippedEnv(fn) {
+  if (_envGuardCount === 0) {
+    _savedExit = process.exit;
+    _savedKill = process.kill;
+    _savedAbort = process.abort;
+    process.exit = () => { throw new Error("process.exit() is blocked"); };
+    process.kill = () => { throw new Error("process.kill() is blocked"); };
+    process.abort = () => { throw new Error("process.abort() is blocked"); };
+  }
+  _envGuardCount++;
+  try {
+    return await fn();
+  } finally {
+    _envGuardCount--;
+    if (_envGuardCount === 0) {
+      process.exit = _savedExit;
+      process.kill = _savedKill;
+      process.abort = _savedAbort;
+      _savedExit = null;
+      _savedKill = null;
+      _savedAbort = null;
+    }
+  }
+}
+
+/**
+ * Compile and execute code inside a vm sandbox with env stripping.
+ *
+ * @param {string}   code     — The full async IIFE source to execute
+ * @param {Object}   exposed  — Objects to inject into the sandbox context
+ * @param {string}   [filename] — Virtual filename for stack traces
+ * @returns {Promise<*>} The return value of the executed code
+ */
+async function runInSandbox(code, exposed, filename = "generated-test.js") {
+  const ctx = buildSandboxContext(exposed);
+  const fn = vm.compileFunction(code, [], {
+    parsingContext: ctx,
+    filename,
+  });
+  return await runWithStrippedEnv(() => fn());
+}
 
 /**
  * runGeneratedCode(page, context, playwrightCode, expect, healingHints)
@@ -41,8 +225,9 @@ export async function runGeneratedCode(page, context, playwrightCode, expect, he
   );
   const helpers = getSelfHealingHelperCode(healingHints);
 
-  // eslint-disable-next-line no-new-func
-  const fn = new Function("page", "context", "expect", `
+  // Build the code string that will run inside the vm sandbox.
+  // The sandbox context provides page, context, expect as globals.
+  const code = `
     return (async () => {
       ${helpers}
       // Stubs for Playwright fixtures that some LLMs hallucinate in the function
@@ -65,10 +250,10 @@ export async function runGeneratedCode(page, context, playwrightCode, expect, he
       }
       return { __healingEvents };
     })();
-  `);
+  `;
 
   try {
-    const result = await fn(page, context, expect);
+    const result = await runInSandbox(code, { page, context, expect }, "browser-test.js");
     return { passed: true, healingEvents: result?.__healingEvents || [] };
   } catch (err) {
     err.__healingEvents = err.__healingEvents || [];
@@ -104,12 +289,11 @@ export async function runApiTestCode(playwrightCode, expect, { signal } = {}) {
     )
   );
 
-  // Compile the function BEFORE creating the request context so that a
-  // SyntaxError in the AI-generated code doesn't leak the HTTP context.
-  // new Function() only parses — it doesn't execute — so it doesn't need
-  // the request object yet.
-  // eslint-disable-next-line no-new-func
-  const fn = new Function("request", "expect", "__apiLogs", `
+  // Build the code string. We validate syntax eagerly (before creating the
+  // request context) by compiling once with a throwaway context. If the AI
+  // generated invalid JS, this throws SyntaxError without leaking an HTTP
+  // context. The actual execution happens later with the real request object.
+  const apiCode = `
     return (async () => {
       // API tests don't use page/context — provide stubs to prevent ReferenceError
       const page = undefined;
@@ -127,7 +311,10 @@ export async function runApiTestCode(playwrightCode, expect, { signal } = {}) {
       }
       return { passed: true };
     })();
-  `);
+  `;
+
+  // Eagerly validate syntax — throws SyntaxError before we allocate HTTP resources.
+  vm.compileFunction(apiCode, [], { parsingContext: buildSandboxContext({}) });
 
   // Now that we know the code is syntactically valid, create the context.
   const apiLogs = [];
@@ -221,7 +408,7 @@ export async function runApiTestCode(playwrightCode, expect, { signal } = {}) {
   }
 
   try {
-    await fn(request, expect, apiLogs);
+    await runInSandbox(apiCode, { request, expect, __apiLogs: apiLogs }, "api-test.js");
     return { passed: true, apiLogs };
   } catch (err) {
     err.__apiLogs = apiLogs;

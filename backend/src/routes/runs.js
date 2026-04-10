@@ -13,7 +13,9 @@
  */
 
 import { Router } from "express";
-import { getDb, saveDb } from "../db.js";
+import * as projectRepo from "../database/repositories/projectRepo.js";
+import * as runRepo from "../database/repositories/runRepo.js";
+import * as testRepo from "../database/repositories/testRepo.js";
 import { generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort, runAbortControllers } from "../utils/runWithAbort.js";
@@ -28,12 +30,9 @@ const router = Router();
 // ─── Crawl & Generate Tests ───────────────────────────────────────────────────
 
 router.post("/projects/:id/crawl", async (req, res) => {
-  const db = getDb();
-  const project = db.projects[req.params.id];
+  const project = projectRepo.getById(req.params.id);
   if (!project) return res.status(404).json({ error: "not found" });
-  const existingRun = Object.values(db.runs).find(
-    (r) => r.projectId === project.id && r.status === "running" && (r.type === "crawl" || r.type === "test_run" || r.type === "generate")
-  );
+  const existingRun = runRepo.findActiveByProjectId(project.id);
   if (existingRun) {
     return res.status(409).json({
       error: `A run is already in progress (${existingRun.id}). Please wait for it to finish or abort it first.`,
@@ -53,7 +52,7 @@ router.post("/projects/:id/crawl", async (req, res) => {
   };
   const parallelWorkers = validatedDials?.parallelWorkers ?? 1;
 
-  const runId = generateRunId(db);
+  const runId = generateRunId();
   const run = {
     id: runId,
     projectId: project.id,
@@ -64,8 +63,7 @@ router.post("/projects/:id/crawl", async (req, res) => {
     tests: [],
     pagesFound: 0,
   };
-  db.runs[runId] = run;
-  saveDb(); // flush immediately so a nodemon restart doesn't lose this run
+  runRepo.create(run);
 
   logActivity({
     type: "crawl.start", projectId: project.id, projectName: project.name,
@@ -73,7 +71,7 @@ router.post("/projects/:id/crawl", async (req, res) => {
   });
 
   runWithAbort(runId, run,
-    (signal) => crawlAndGenerateTests(project, run, db, { dialsPrompt, testCount, explorerMode, explorerTuning, signal }),
+    (signal) => crawlAndGenerateTests(project, run, { dialsPrompt, testCount, explorerMode, explorerTuning, signal }),
     {
       onSuccess: () => logActivity({
         type: "crawl.complete", projectId: project.id, projectName: project.name,
@@ -92,19 +90,16 @@ router.post("/projects/:id/crawl", async (req, res) => {
 // ─── Run Tests ────────────────────────────────────────────────────────────────
 
 router.post("/projects/:id/run", async (req, res) => {
-  const db = getDb();
-  const project = db.projects[req.params.id];
+  const project = projectRepo.getById(req.params.id);
   if (!project) return res.status(404).json({ error: "not found" });
-  const existingRun = Object.values(db.runs).find(
-    (r) => r.projectId === project.id && r.status === "running" && (r.type === "crawl" || r.type === "test_run" || r.type === "generate")
-  );
+  const existingRun = runRepo.findActiveByProjectId(project.id);
   if (existingRun) {
     return res.status(409).json({
       error: `A run is already in progress (${existingRun.id}). Please wait for it to finish or abort it first.`,
     });
   }
 
-  const allTests = Object.values(db.tests).filter((t) => t.projectId === project.id);
+  const allTests = testRepo.getByProjectId(project.id);
   const tests = allTests.filter((t) => t.reviewStatus === "approved");
   if (!allTests.length) return res.status(400).json({ error: "no tests found, crawl first" });
   if (!tests.length) return res.status(400).json({ error: "no approved tests — review generated tests and approve them before running regression" });
@@ -114,7 +109,7 @@ router.post("/projects/:id/run", async (req, res) => {
   const validatedRunDials = resolveDialsConfig(dialsConfig);
   const parallelWorkers = validatedRunDials?.parallelWorkers ?? 1;
 
-  const runId = generateRunId(db);
+  const runId = generateRunId();
   const run = {
     id: runId,
     projectId: project.id,
@@ -129,8 +124,7 @@ router.post("/projects/:id/run", async (req, res) => {
     parallelWorkers,
     testQueue: tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
   };
-  db.runs[runId] = run;
-  saveDb(); // flush immediately so a nodemon restart doesn't lose this run
+  runRepo.create(run);
 
   logActivity({
     type: "test_run.start", projectId: project.id, projectName: project.name,
@@ -138,7 +132,7 @@ router.post("/projects/:id/run", async (req, res) => {
   });
 
   runWithAbort(runId, run,
-    (signal) => runTests(project, tests, run, db, { parallelWorkers, signal }),
+    (signal) => runTests(project, tests, run, { parallelWorkers, signal }),
     {
       onSuccess: () => logActivity({
         type: "test_run.complete", projectId: project.id, projectName: project.name,
@@ -157,16 +151,12 @@ router.post("/projects/:id/run", async (req, res) => {
 // ─── Run listing ──────────────────────────────────────────────────────────────
 
 router.get("/projects/:id/runs", (req, res) => {
-  const db = getDb();
-  const runs = Object.values(db.runs)
-    .filter((r) => r.projectId === req.params.id)
-    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+  const runs = runRepo.getByProjectId(req.params.id);
   res.json(runs);
 });
 
 router.get("/runs/:runId", (req, res) => {
-  const db = getDb();
-  const run = db.runs[req.params.runId];
+  const run = runRepo.getById(req.params.runId);
   if (!run) return res.status(404).json({ error: "not found" });
   res.json(run);
 });
@@ -174,25 +164,35 @@ router.get("/runs/:runId", (req, res) => {
 // ─── Abort a running task ─────────────────────────────────────────────────────
 
 router.post("/runs/:runId/abort", (req, res) => {
-  const db = getDb();
-  const run = db.runs[req.params.runId];
+  const run = runRepo.getById(req.params.runId);
   if (!run) return res.status(404).json({ error: "not found" });
   if (run.status !== "running") {
     return res.status(409).json({ error: "Run is not in progress" });
   }
 
-  const controller = runAbortControllers.get(req.params.runId);
-  if (controller) {
-    controller.abort();
+  const entry = runAbortControllers.get(req.params.runId);
+  if (entry) {
+    // Mutate the in-memory run object that the pipeline holds so that
+    // finalizeRunIfNotAborted() and runRepo.save(run) see "aborted" and
+    // don't overwrite it with "running" or "completed".
+    const liveRun = entry.run;
+    liveRun.status = "aborted";
+    liveRun.finishedAt = new Date().toISOString();
+    liveRun.duration = liveRun.startedAt ? Date.now() - new Date(liveRun.startedAt).getTime() : null;
+    liveRun.error = "Aborted by user";
+
+    entry.controller.abort();
     runAbortControllers.delete(req.params.runId);
   }
 
-  run.status = "aborted";
-  run.finishedAt = new Date().toISOString();
-  run.duration = run.startedAt ? Date.now() - new Date(run.startedAt).getTime() : null;
-  run.error = "Aborted by user";
+  runRepo.update(req.params.runId, {
+    status: "aborted",
+    finishedAt: new Date().toISOString(),
+    duration: run.startedAt ? Date.now() - new Date(run.startedAt).getTime() : null,
+    error: "Aborted by user",
+  });
 
-  const project = db.projects[run.projectId];
+  const project = projectRepo.getById(run.projectId);
   logActivity({
     type: `${run.type === "test_run" || run.type === "run" ? "test_run" : run.type}.abort`,
     projectId: run.projectId,
@@ -201,8 +201,17 @@ router.post("/runs/:runId/abort", (req, res) => {
     status: "aborted",
   });
 
-  emitRunEvent(req.params.runId, "done", { status: "aborted" });
-  saveDb(); // flush immediately — without this, a restart within the 30s window loses the abort
+  // Use the live in-memory run (if available) for pass/fail counts — it has
+  // the latest results from processResult() calls that may not yet be flushed
+  // to SQLite. Fall back to the SQLite snapshot for runs without a live ref.
+  const countsSource = entry?.run || run;
+  emitRunEvent(req.params.runId, "done", {
+    status: "aborted",
+    passed: countsSource.passed ?? undefined,
+    failed: countsSource.failed ?? undefined,
+    total: countsSource.total ?? undefined,
+    testsGenerated: countsSource.testsGenerated ?? undefined,
+  });
 
   res.json({ ok: true });
 });

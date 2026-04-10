@@ -12,7 +12,7 @@
  *   - healingPersistence.js             — write healing events to DB
  *
  * Exports:
- *   executeTest(test, browser, runId, stepIndex, runStart, db)
+ *   executeTest(test, browser, runId, stepIndex, runStart)
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -26,6 +26,61 @@ import { captureDomSnapshot, captureScreenshot, captureBoundingBoxes } from "./p
 import { persistHealingEvents } from "./healingPersistence.js";
 import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, NAVIGATION_TIMEOUT, API_TEST_TIMEOUT, BROWSER_TEST_TIMEOUT, VIDEOS_DIR } from "./config.js";
 import { formatLogLine } from "../utils/logFormatter.js";
+
+// ─── Non-visual action detection (S3-06) ──────────────────────────────────────
+// When a test's last meaningful action is non-visual (assertion, wait, evaluate),
+// we skip the post-test screenshot / DOM snapshot / bounding-box capture. These
+// artifacts are redundant for non-visual endings and each capture adds 50-200ms
+// of overhead per test.
+
+/**
+ * Patterns that match non-visual Playwright actions at the end of a test body.
+ * If the last non-blank, non-comment line matches any of these, we skip
+ * screenshot capture on success since the page hasn't visually changed.
+ */
+const NON_VISUAL_PATTERNS = [
+  /\bexpect\s*\(/,                        // any assertion: expect(...)
+  /\bsafeExpect\s*\(/,                    // self-healing assertion
+  /\.toBeVisible\s*\(/,                   // visibility assertion
+  /\.toHaveURL\s*\(/,                     // URL assertion
+  /\.toHaveTitle\s*\(/,                   // title assertion
+  /\.toContainText\s*\(/,                 // text assertion
+  /\.toHaveText\s*\(/,                    // exact text assertion
+  /\.toHaveValue\s*\(/,                   // input value assertion
+  /\.toBeEnabled\s*\(/,                   // enabled state assertion
+  /\.toBeDisabled\s*\(/,                  // disabled state assertion
+  /\.toBeChecked\s*\(/,                   // checkbox assertion
+  /\.toHaveCount\s*\(/,                   // element count assertion
+  /\bpage\.waitForTimeout\s*\(/,          // explicit wait
+  /\bpage\.waitForSelector\s*\(/,         // selector wait
+  /\bpage\.waitForLoadState\s*\(/,        // load state wait
+  /\bpage\.waitForURL\s*\(/,              // URL wait
+  /\bawait\s+sleep\s*\(/,                // custom sleep helper
+  /\bconsole\.\w+\s*\(/,                 // console logging
+];
+
+/**
+ * Returns true when the test body's last meaningful line is a non-visual action
+ * (assertion, wait, evaluate) — meaning the page hasn't visually changed since
+ * the last interaction and a screenshot would be redundant.
+ *
+ * @param {string|null} playwrightCode - The raw AI-generated code.
+ * @returns {boolean}
+ */
+function endsWithNonVisualAction(playwrightCode) {
+  if (!playwrightCode) return false;
+  const body = extractTestBody(playwrightCode);
+  if (!body) return false;
+
+  // Walk backwards to find the last non-blank, non-comment line
+  const lines = body.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || trimmed.startsWith("//") || trimmed === "}" || trimmed === "});") continue;
+    return NON_VISUAL_PATTERNS.some(re => re.test(trimmed));
+  }
+  return false;
+}
 
 /**
  * Attach network & console listeners to a page.
@@ -112,7 +167,7 @@ function formatTestError(err) {
  * Runs a single test case inside a fresh browser context and returns a
  * result object suitable for pushing into run.results.
  */
-export async function executeTest(test, browser, runId, stepIndex, runStart, db) {
+export async function executeTest(test, browser, runId, stepIndex, runStart) {
   // ── API-only test path: no browser context needed ──────────────────────
   // Use the cached _isApi flag set by testRunner.js (avoids re-parsing).
   // Fall back to isApiTest() for callers that bypass the runner (e.g. tests).
@@ -201,9 +256,9 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, db)
           await page.waitForTimeout(800);
         }
 
-        const healingHints = getHealingHistoryForTest(db, test.id);
+        const healingHints = getHealingHistoryForTest(test.id);
         const codeResult = await runGeneratedCode(page, context, test.playwrightCode, expect, healingHints);
-        persistHealingEvents(db, test.id, codeResult.healingEvents);
+        persistHealingEvents(test.id, codeResult.healingEvents);
 
       } else {
         // ── FALLBACK: No parseable code — run a basic smoke test ───────────
@@ -217,14 +272,22 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, db)
         if (!url.startsWith("http")) throw new Error("Invalid URL after navigation");
       }
 
-      // Capture artifacts on success
-      result.domSnapshot = await captureDomSnapshot(page);
+      // Capture artifacts on success.
+      // Skip screenshot / DOM snapshot / bounding boxes when the test ends
+      // with a non-visual action (assertion, wait, evaluate) — the page
+      // hasn't visually changed so these artifacts are redundant. This saves
+      // ~50-200ms per test. Failure screenshots are always captured regardless.
+      const skipVisualArtifacts = endsWithNonVisualAction(test.playwrightCode);
 
-      const shot = await captureScreenshot(page, runId, stepIndex);
-      result.screenshot = shot.base64;
-      result.screenshotPath = shot.artifactPath;
+      if (!skipVisualArtifacts) {
+        result.domSnapshot = await captureDomSnapshot(page);
 
-      result.boundingBoxes = await captureBoundingBoxes(page);
+        const shot = await captureScreenshot(page, runId, stepIndex);
+        result.screenshot = shot.base64;
+        result.screenshotPath = shot.artifactPath;
+
+        result.boundingBoxes = await captureBoundingBoxes(page);
+      }
     })();
 
     // Swallow the losing promise to prevent unhandled rejection
@@ -236,7 +299,7 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, db)
     result.error = formatTestError(err);
 
     // Persist healing events from the failed run
-    persistHealingEvents(db, test.id, err.__healingEvents);
+    persistHealingEvents(test.id, err.__healingEvents);
 
     // Screenshot the failure state
     try {

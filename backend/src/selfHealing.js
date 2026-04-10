@@ -28,86 +28,72 @@
 // Key format: "<testId>::<action>::<label>"
 // Value: { strategyIndex: number, succeededAt: string, failCount: number }
 
+import * as healingRepo from "./database/repositories/healingRepo.js";
+
 /**
- * Record a successful healing result in the DB.
+ * Record a successful healing result.
  *
- * @param {Object} db             - The database object from {@link module:db.getDb}.
  * @param {string} testId         - Test ID (e.g. `"TC-1"`).
  * @param {string} action         - Action type (`"click"`, `"fill"`, `"expect"`).
  * @param {string} label          - Element label/text used in the action.
  * @param {number} strategyIndex  - Index of the winning strategy in the waterfall.
  */
-export function recordHealing(db, testId, action, label, strategyIndex) {
-  if (!db?.healingHistory) return;
+export function recordHealing(testId, action, label, strategyIndex) {
   if (!testId || !action || typeof label !== "string") return;
-  // Guard against corrupt strategy indices — only store valid non-negative integers.
-  // A negative or non-integer value would poison the hint map and cause future runs
-  // to try a nonexistent strategy index in findElement.
   const idx = Number.isInteger(strategyIndex) && strategyIndex >= 0 ? strategyIndex : -1;
-  if (idx < 0) return; // Nothing useful to record — don't overwrite a good entry with garbage
+  if (idx < 0) return;
   const key = `${testId}::${action}::${label}`;
-  db.healingHistory[key] = {
+  const existing = healingRepo.get(key);
+  healingRepo.set(key, {
     strategyIndex: idx,
     succeededAt: new Date().toISOString(),
-    failCount: (db.healingHistory[key]?.failCount || 0),
-  };
+    failCount: existing?.failCount || 0,
+  });
 }
 
 /**
  * Record a failed healing attempt (all strategies exhausted).
  *
- * @param {Object} db      - The database object.
  * @param {string} testId  - Test ID.
  * @param {string} action  - Action type.
  * @param {string} label   - Element label/text.
  */
-export function recordHealingFailure(db, testId, action, label) {
-  if (!db?.healingHistory) return;
+export function recordHealingFailure(testId, action, label) {
   if (!testId || !action || typeof label !== "string") return;
   const key = `${testId}::${action}::${label}`;
-  const existing = db.healingHistory[key] || { strategyIndex: -1, succeededAt: null, failCount: 0 };
+  const existing = healingRepo.get(key) || { strategyIndex: -1, succeededAt: null, failCount: 0 };
   existing.failCount++;
-  db.healingHistory[key] = existing;
+  healingRepo.set(key, existing);
 }
 
 /**
  * Get the previously-successful strategy index for an action+label, or -1.
  *
- * @param {Object} db      - The database object.
  * @param {string} testId  - Test ID.
  * @param {string} action  - Action type.
  * @param {string} label   - Element label/text.
  * @returns {number}         Strategy index (0-based), or `-1` if no history.
  */
-export function getHealingHint(db, testId, action, label) {
-  if (!db?.healingHistory) return -1;
+export function getHealingHint(testId, action, label) {
   if (!testId || !action || typeof label !== "string") return -1;
   const key = `${testId}::${action}::${label}`;
-  return db.healingHistory[key]?.strategyIndex ?? -1;
+  const entry = healingRepo.get(key);
+  return entry?.strategyIndex ?? -1;
 }
 
 /**
  * Serialise healing history for a test so it can be injected into runtime code.
  *
- * @param {Object} db      - The database object.
  * @param {string} testId  - Test ID.
  * @returns {Object<string, number>} Map of `"action::label"` → winning strategy index.
  */
-export function getHealingHistoryForTest(db, testId) {
-  if (!db?.healingHistory) return {};
-  const prefix = `${testId}::`;
+export function getHealingHistoryForTest(testId) {
+  const entries = healingRepo.getByTestId(testId);
   const result = {};
-  for (const [key, val] of Object.entries(db.healingHistory)) {
-    if (key.startsWith(prefix)) {
-      // Skip entries with strategyIndex -1 (failed attempts written by
-      // recordHealingFailure). Emitting them into the runtime hints map
-      // causes findElement to evaluate `hintIdx >= 0` as false, which is
-      // harmless but wasteful. More importantly, a corrupt non-integer
-      // value would cause unpredictable behaviour in the strategy lookup.
-      const idx = val.strategyIndex;
-      if (!Number.isInteger(idx) || idx < 0) continue;
-      result[key.slice(prefix.length)] = idx;
-    }
+  for (const [shortKey, val] of Object.entries(entries)) {
+    const idx = val.strategyIndex;
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    result[shortKey] = idx;
   }
   return result;
 }
@@ -734,6 +720,15 @@ VISIBILITY ASSERTIONS — use safeExpect instead of raw locators:
   ✓ await safeExpect(page, expect, text)           — assert any element is visible
   ✓ await safeExpect(page, expect, text, 'button') — scoped to a role
 
+COUNT / VALUE ASSERTIONS — use page.locator() scoped to a semantic selector:
+  ✓ await expect(page.locator(...)).toHaveCount(5);
+  ✓ await expect(page.locator(...)).toHaveValue('expected');
+  ✓ await expect(page.locator(...)).not.toHaveCount(0);
+    BAD:  const items = page.locator(...); await expect(items).toHaveCount(5);
+    GOOD: await expect(page.locator(...)).toHaveCount(5);
+  ✗ NEVER assert a hard-coded count on a generic container that may change (e.g. toHaveCount(5) on search results).
+    Instead verify AT LEAST one result is visible: await expect(page.locator(...)).not.toHaveCount(0);
+
 OTHER ASSERTIONS — these are fine as-is (do not wrap them):
   ✓ await expect(page).toHaveURL(...)
   ✓ await expect(page).toHaveTitle(...)
@@ -799,4 +794,9 @@ FORBIDDEN — never use these (they bypass self-healing and will break on select
   ✗ expect(page.getByTestId(...)).toBeVisible()
   ✗ expect(page.getByAltText(...)).toBeVisible()
   ✗ expect(page.locator(...)).toBeVisible()  ← use safeExpect with the text/label instead
+
+  Variable-based locator declarations (always inline inside expect()):
+  ✗ const searchInput = page.locator(...);   ← declare AND use in one line, or use safeFill/safeClick
+  ✗ const results = page.locator(...);  ← inline: expect(page.locator(...)).toHaveCount(N)
+  ✗ const searchButton = page.locator(...);     ← use safeClick(page, text) instead
 `.trim();

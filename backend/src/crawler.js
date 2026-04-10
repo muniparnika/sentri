@@ -40,9 +40,11 @@ import { persistGeneratedTests, buildPipelineStats } from "./pipeline/testPersis
 import { emitRunEvent, log, logWarn, logSuccess } from "./utils/runLogger.js";
 import { classifyError } from "./utils/errorClassifier.js";
 import { structuredLog } from "./utils/logFormatter.js";
+import * as runRepo from "./database/repositories/runRepo.js";
 
 function setStep(run, step) {
   run.currentStep = step;
+  runRepo.update(run.id, { currentStep: step });
   emitRunEvent(run.id, "snapshot", { run });
 }
 
@@ -111,7 +113,7 @@ async function filterAndClassify(snapshots, snapshotsByUrl, project, run, signal
  *   Step 7: Validate     — Reject malformed / placeholder tests
  *   Step 8: Done
  */
-export async function generateFromUserDescription(project, run, db, { name, description, dialsPrompt = "", testCount = "ai_decides", signal }) {
+export async function generateFromUserDescription(project, run, { name, description, dialsPrompt = "", testCount = "ai_decides", signal }) {
   const runStart = Date.now();
   structuredLog("generate.start", { runId: run.id, projectId: project.id, mode: "description", name });
   log(run, `✦ Starting test generation from description for "${name}"`);
@@ -149,10 +151,10 @@ export async function generateFromUserDescription(project, run, db, { name, desc
 
   // ── Steps 5-7: Dedup → Enhance → Validate (shared pipeline) ────────────
   const { validatedTests, enhancedTests, rejected, removed, enhancedCount, dedupStats } =
-    await runPostGenerationPipeline(rawTests, project, db, run, { signal });
+    await runPostGenerationPipeline(rawTests, project, run, { signal });
 
   // ── Step 8: Store & Done ────────────────────────────────────────────────
-  const createdTestIds = persistGeneratedTests(validatedTests, project, db, run, {
+  const createdTestIds = persistGeneratedTests(validatedTests, project, run, {
     name, description, sourceUrl: project.url, pageTitle: project.name,
   });
 
@@ -167,7 +169,7 @@ export async function generateFromUserDescription(project, run, db, { name, desc
     log(run, `Raw: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length} | Rejected: ${rejected}`);
     logSuccess(run, `Done! ${run.tests.length} test(s) generated from description for "${name}".`);
     structuredLog("generate.complete", { runId: run.id, projectId: project.id, tests: run.tests.length, durationMs: run.duration });
-    emitRunEvent(run.id, "done", { status: "completed" });
+    emitRunEvent(run.id, "done", { status: "completed", testsGenerated: run.tests.length });
   });
 
   return createdTestIds;
@@ -179,7 +181,6 @@ export async function generateFromUserDescription(project, run, db, { name, desc
  *
  * @param {Object} project                - The project `{ id, name, url, credentials? }`.
  * @param {Object} run                    - The run record (mutated in place with results).
- * @param {Object} db                     - The database object from {@link module:db.getDb}.
  * @param {Object} [options]
  * @param {string} [options.dialsPrompt]   - Pre-built prompt fragment from Test Dials config.
  * @param {string} [options.testCount]     - Test count hint (`"one"` | `"small"` | `"medium"` | `"large"` | `"ai_decides"`).
@@ -188,7 +189,7 @@ export async function generateFromUserDescription(project, run, db, { name, desc
  * @param {AbortSignal} [options.signal]   - Abort signal for cancellation.
  * @returns {Promise<void>}
  */
-export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = "", testCount = "ai_decides", explorerMode, explorerTuning, signal } = {}) {
+export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", testCount = "ai_decides", explorerMode, explorerTuning, signal } = {}) {
   const runStart = Date.now();
   const mode = (explorerMode || "crawl").toLowerCase();
 
@@ -324,10 +325,10 @@ export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = ""
 
   // ── Steps 5-7: Dedup → Enhance → Validate (shared pipeline) ────────────
   const { validatedTests, enhancedTests, rejected, removed, enhancedCount, dedupStats } =
-    await runPostGenerationPipeline(rawTests, project, db, run, { snapshotsByUrl, classifiedPagesByUrl, signal });
+    await runPostGenerationPipeline(rawTests, project, run, { snapshotsByUrl, classifiedPagesByUrl, signal });
 
   // ── Step 8: Store & Done ────────────────────────────────────────────────
-  persistGeneratedTests(validatedTests, project, db, run);
+  persistGeneratedTests(validatedTests, project, run);
 
   run.snapshots = filteredSnapshots;
   run.pages = filteredSnapshots.map(s => ({ url: s.url, title: s.title || s.url, status: "crawled" }));
@@ -357,6 +358,6 @@ export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = ""
       pages: snapshots.length, tests: run.tests.length, durationMs: run.duration,
       apiEndpoints: apiEndpoints.length,
     });
-    emitRunEvent(run.id, "done", { status: "completed" });
+    emitRunEvent(run.id, "done", { status: "completed", testsGenerated: run.tests.length });
   });
 }

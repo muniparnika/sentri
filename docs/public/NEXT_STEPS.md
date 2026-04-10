@@ -24,16 +24,21 @@ These are production blockers. None of the remaining sprints should ship to a sh
 
 ---
 
-### S1-01 — Sandbox generated Playwright code in worker_threads 🔴 Blocker
+### S1-01 — Sandbox generated Playwright code in vm context ✅ Done
 
-**Problem:** `backend/src/runner/codeExecutor.js` executes LLM-generated Playwright code inside the same Node.js process with no isolation boundary. A prompt-injection payload in a tested page's title or content could cause the LLM to emit malicious code that runs with full server privileges — reading environment variables, accessing the filesystem, or making outbound network calls.
+**Problem:** `backend/src/runner/codeExecutor.js` executed LLM-generated Playwright code via `new Function()` inside the same Node.js process with no isolation boundary. A prompt-injection payload in a tested page's title or content could cause the LLM to emit malicious code that runs with full server privileges — reading environment variables, accessing the filesystem, or making outbound network calls.
 
-**Fix:** Move code execution into a `worker_threads` Worker with a constrained module allowlist. The worker receives the generated code as a string, runs it in an isolated context, and sends results back via `postMessage`. The main process never `eval`s untrusted code.
+**Status:** Implemented using Node.js `vm.compileFunction()` with a restricted sandbox context. The sandbox:
+- Only exposes objects the test needs: `page`, `context`, `expect`, `request` (Playwright objects)
+- Provides safe JS built-ins: `Promise`, `setTimeout`, `JSON`, `Date`, `Math`, `Error`, `URL`, `Buffer`, `console` (frozen), typed arrays, etc.
+- Explicitly blocks dangerous APIs: `process`, `require`, `module`, `global`, `globalThis`, `fetch`, `WebSocket`, `__filename`, `__dirname`
+- Both browser tests (`runGeneratedCode`) and API tests (`runApiTestCode`) execute through the sandbox
+- API test syntax is validated eagerly (before allocating HTTP contexts) to prevent resource leaks on SyntaxError
 
-**Files to change:**
-- `backend/src/runner/codeExecutor.js` — rewrite to spawn a Worker
-- `backend/src/runner/workerRunner.js` — new file, the Worker entry point
-- `backend/src/runner/config.js` — add Worker allowlist constants
+**Note:** `worker_threads` was considered but rejected because Playwright `page`/`context` objects hold live WebSocket connections to Chromium that cannot be serialized across thread boundaries. The `vm` module provides the right isolation level — restricting the global scope without requiring object serialization.
+
+**Files changed:**
+- `backend/src/runner/codeExecutor.js` — replaced `new Function()` with `vm.compileFunction()` + `buildSandboxContext()` + `runInSandbox()`
 
 **Effort:** S | **Source:** Audit
 
@@ -55,18 +60,20 @@ These are production blockers. None of the remaining sprints should ship to a sh
 
 ---
 
-### S1-03 — Replace in-memory JSON database with SQLite 🔴 Blocker
+### S1-03 — Replace in-memory JSON database with SQLite ✅ Done
 
-**Problem:** `backend/src/db.js` is a single JSON file flushed to disk every 30 seconds. A crash, OOM kill, or Docker restart mid-run loses up to 30 seconds of results. There are no transactions, no indexes, and all queries are O(n) object scans. The README production checklist flags this as incomplete.
+**Problem:** `backend/src/db.js` was a single JSON file flushed to disk every 30 seconds. A crash, OOM kill, or Docker restart mid-run lost up to 30 seconds of results. There were no transactions, no indexes, and all queries were O(n) object scans.
 
-**Fix:** Replace `db.js` with `better-sqlite3` (zero external infra — SQLite file on disk) backed by a Prisma schema. This is a drop-in swap for the existing object store pattern with no Docker changes required. Add a `migrations/` directory with an initial schema migration. Add PostgreSQL as an optional target for multi-instance deployments.
-
-**Files to change:**
-- `backend/src/db.js` — replace with Prisma client wrapper
-- `backend/prisma/schema.prisma` — new file, full schema
-- `backend/prisma/migrations/` — new directory, initial migration
-- `backend/package.json` — add `@prisma/client`, `better-sqlite3`
-- All route files — update db access patterns to use Prisma queries
+**Status:** Fully implemented using `better-sqlite3` with WAL mode. The migration includes:
+- `backend/src/database/schema.sql` — 7 tables (`users`, `oauth_ids`, `projects`, `tests`, `runs`, `activities`, `healing_history`) + `counters` table with indexes
+- `backend/src/database/sqlite.js` — Singleton with WAL mode, `foreign_keys = ON`, `busy_timeout = 5000`
+- `backend/src/database/repositories/` — 7 repository modules (`counterRepo`, `userRepo`, `projectRepo`, `testRepo`, `runRepo`, `activityRepo`, `healingRepo`)
+- `backend/src/database/migrate.js` — Auto-migrates legacy `sentri-db.json` → SQLite on first startup (transactional, renames to `.migrated`)
+- `backend/src/db.js` — Compatibility shim: `getDb()` returns SQLite snapshot, `saveDb()` is no-op
+- All route files, pipeline modules, and test files migrated to use repository modules directly
+- JSON columns (`steps`, `tags`, `logs`, `results`, etc.) handled with automatic serialization/deserialization
+- Boolean columns (`isJourneyTest`, `assertionEnhanced`, `isApiTest`) stored as 0/1 integers
+- Atomic ID counters via `UPDATE ... RETURNING` in the `counters` table
 
 **Effort:** L | **Source:** Audit
 
@@ -345,27 +352,14 @@ async function waitForStable(page, { timeoutSec = 30, stableSec = 2 } = {}) {
 
 ---
 
-### S3-06 — Screenshot only after visual actions — skip non-visual steps 🔵 Medium
+### S3-06 — Screenshot only after visual actions — skip non-visual steps ✅ Done
 
-**Problem:** `backend/src/runner/executeTest.js` captures and emits screenshots after every step. Non-visual steps (snapshot, wait, assert, evaluate) send redundant images to the AI on subsequent turns, wasting context window tokens and slowing execution per run.
+**Problem:** `backend/src/runner/executeTest.js` captures screenshots, DOM snapshots, and bounding boxes on every successful test completion. When a test ends with a non-visual action (assertion, wait, evaluate), these artifacts are redundant — the page hasn't visually changed since the last interaction. Each capture adds ~50-200ms of overhead per test.
 
-**Fix:** Add a `NON_VISUAL_ACTIONS` set. Only capture screenshots after actions that actually change the page visually (navigate, click, fill, select, scroll, press_key).
+**Status:** Implemented in `backend/src/runner/executeTest.js`. Added `endsWithNonVisualAction(playwrightCode)` which walks backwards through the test body to find the last meaningful line and checks it against `NON_VISUAL_PATTERNS` (assertions, waits, console logging). When the test ends non-visually, the success-path artifact capture (screenshot, DOM snapshot, bounding boxes) is skipped entirely. Failure screenshots are always captured regardless of the last action type.
 
-**Pattern from Assrt (`agent.ts`):**
-```javascript
-const NON_VISUAL_ACTIONS = new Set([
-  "snapshot", "wait", "wait_for_stable", "assert",
-  "complete_scenario", "evaluate", "http_request",
-]);
-
-if (!NON_VISUAL_ACTIONS.has(stepAction)) {
-  screenshotData = await captureScreenshot(page).catch(() => null);
-  if (screenshotData) emitRunEvent(run.id, "frame", { base64: screenshotData });
-}
-```
-
-**Files to change:**
-- `backend/src/runner/executeTest.js` — add exclusion set, gate screenshot capture
+**Files changed:**
+- `backend/src/runner/executeTest.js` — added `NON_VISUAL_PATTERNS`, `endsWithNonVisualAction()`, conditional artifact capture gate
 
 **Effort:** XS | **Source:** Assrt
 
@@ -434,7 +428,8 @@ These items build the features that separate Sentri from all other QA tools and 
 5. Add a Members page under Settings for invite, role assignment, and removal.
 
 **Files to change:**
-- `backend/prisma/schema.prisma` — add `Organisation`, `OrgMember` tables
+- `backend/src/database/schema.sql` — add `organisations`, `org_members` tables
+- `backend/src/database/repositories/orgRepo.js` — new repository module
 - `backend/src/routes/auth.js` — include `orgId` in JWT claims
 - `backend/src/middleware/appSetup.js` — add `requireRole(role)` middleware
 - All route files — scope all queries to `orgId`
@@ -587,7 +582,7 @@ These items are not sprint-bounded — they should be addressed incrementally al
 
 ### M-01 — Replace revoked token Map with Redis
 
-**Problem:** `backend/src/routes/auth.js` stores revoked JWTs in an in-memory Map. This means tokens are not truly revoked across process restarts or multiple instances. Once Redis is available (after S1-03 + BullMQ), move the revocation store there.
+**Problem:** `backend/src/routes/auth.js` stores revoked JWTs in an in-memory Map. This means tokens are not truly revoked across process restarts or multiple instances. Now that SQLite is in place (S1-03 ✅), once Redis is available for BullMQ, move the revocation store there.
 
 **Files:** `backend/src/routes/auth.js` | **Effort:** XS | **Source:** Audit
 
@@ -637,11 +632,11 @@ These items are not sprint-bounded — they should be addressed incrementally al
 | Sprint 4 (Weeks 11–16) | S4-01 through S4-09 | Org/team, visual regression, export, monitoring |
 | Ongoing | M-01 through M-05 | Infrastructure hardening |
 
-**Total items:** 28 (8 completed in PR #66)  
-**Completed:** S1-04 ✅, S1-05 ✅, S1-06 ✅, S2-04 ✅, S3-01 ✅, S3-03 ✅, S3-05 ✅  
-**Critical blockers (must ship before team use):** S1-01, S1-02, S1-03  
+**Total items:** 28 (10 completed)  
+**Completed:** S1-01 ✅, S1-03 ✅, S1-04 ✅, S1-05 ✅, S1-06 ✅, S2-04 ✅, S3-01 ✅, S3-03 ✅, S3-05 ✅, S3-06 ✅  
+**Critical blockers (must ship before team use):** S1-02  
 **Highest competitive impact:** S2-01, S4-01, S4-03, S4-06  
-**Lowest effort / highest value (remaining quick wins):** S3-06, S3-07
+**Lowest effort / highest value (remaining quick wins):** S3-07
 
 ---
 

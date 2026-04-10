@@ -318,18 +318,26 @@ export default function TestDetail() {
               <button className="btn btn-ghost btn-sm" onClick={startEditing}>
                 <Edit2 size={14} /> Edit Test
               </button>
-              {test.lastResult === "failed" && test.playwrightCode && !showFixPanel && (
-                <button
-                  className="btn btn-sm"
-                  style={{
-                    background: "var(--accent-bg)", color: "var(--accent)",
-                    border: "1px solid rgba(91,110,245,0.3)", fontWeight: 600,
-                  }}
-                  onClick={() => setShowFixPanel(true)}
-                >
-                  <Wand2 size={14} /> Fix with AI
-                </button>
-              )}
+              {/* Show "Fix with AI" when the test's lastResult is "failed" OR
+                  when the most recent run result for this test is "failed" (covers
+                  the case where the page was loaded before lastResult was flushed
+                  to SQLite, e.g. navigating from a just-finished run). */}
+              {(() => {
+                const latestRunResult = runs[0]?.results?.find(r => r.testId === testId);
+                const isFailed = test.lastResult === "failed" || latestRunResult?.status === "failed";
+                return isFailed && test.playwrightCode && !showFixPanel ? (
+                  <button
+                    className="btn btn-sm"
+                    style={{
+                      background: "var(--accent-bg)", color: "var(--accent)",
+                      border: "1px solid rgba(91,110,245,0.3)", fontWeight: 600,
+                    }}
+                    onClick={() => setShowFixPanel(true)}
+                  >
+                    <Wand2 size={14} /> Fix with AI
+                  </button>
+                ) : null;
+              })()}
               <button
                 className="btn btn-primary btn-sm"
                 onClick={handleRunTest}
@@ -558,7 +566,7 @@ export default function TestDetail() {
             ) : stepsView === "source" && test.playwrightCode ? (
               /* ── SOURCE view: numbered steps each with their code block ── */
               (() => {
-                const stepChunks = splitCodeBySteps(test.playwrightCode, (test.steps || []).length);
+                const stepChunks = splitCodeBySteps(test.playwrightCode, (test.steps || []).length, test.steps);
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                     {/* Diff panel — shown above source when "Show changes" is active */}

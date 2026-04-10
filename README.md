@@ -111,11 +111,13 @@ Open [http://localhost:80](http://localhost:80)
 **Backend:**
 ```bash
 cd backend
-npm install
+npm install                 # Installs deps including better-sqlite3 (native module — prebuilt binaries for most platforms)
 npx playwright install chromium
 cp .env.example .env        # Add at least one AI provider key
-npm run dev                 # Starts on :3001
+npm run dev                 # Starts on :3001, creates data/sentri.db automatically
 ```
+
+> **Database:** SQLite (`data/sentri.db`) is created automatically on first startup — no manual setup needed. If upgrading from a previous version that used `sentri-db.json`, data is auto-migrated on first run.
 
 **Frontend:**
 ```bash
@@ -246,7 +248,7 @@ See the [full deployment guide](https://rameshbabuprudhvi.github.io/sentri/docs/
 | **SPA Routing** | ✅ GitHub Pages `404.html` redirect |
 | **Parallel Execution** | ✅ 1–10 concurrent browser contexts per run (`PARALLEL_WORKERS` env or UI selector) |
 | **API Test Generation** | ✅ HAR capture during crawl → auto-generated Playwright `request` API contract tests |
-| **Database** | ⬜ Replace in-memory `db.js` with PostgreSQL + Prisma ORM |
+| **Database** | ✅ SQLite (better-sqlite3) with WAL mode — auto-migrates from legacy JSON on first startup |
 | **Job Queue** | ⬜ Add BullMQ + Redis for background crawl/run jobs |
 | **File Storage** | ⬜ Store videos/screenshots to S3/R2 instead of local disk |
 | **CORS** | ⬜ Restrict origins in `backend/src/middleware/appSetup.js` |

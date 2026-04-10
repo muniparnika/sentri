@@ -1,0 +1,3 @@
+-- This file has been replaced by versioned migrations in database/migrations/.
+-- See migrationRunner.js for the migration system.
+-- The initial schema is in migrations/001_initial_schema.sql.

@@ -9,17 +9,26 @@
  */
 
 import { Router } from "express";
-import { getDb } from "../db.js";
+import * as projectRepo from "../database/repositories/projectRepo.js";
+import * as testRepo from "../database/repositories/testRepo.js";
+import * as runRepo from "../database/repositories/runRepo.js";
+import * as activityRepo from "../database/repositories/activityRepo.js";
+import * as healingRepo from "../database/repositories/healingRepo.js";
 import { classifyFailure } from "../pipeline/feedbackLoop.js";
 
 const router = Router();
 
 router.get("/dashboard", (req, res) => {
-  const db = getDb();
-  const projects = Object.values(db.projects);
-  const runs = Object.values(db.runs);
-  const tests = Object.values(db.tests);
-  const activities = Object.values(db.activities);
+  const projects = projectRepo.getAll();
+  // Use lean queries — dashboard only needs scalar fields + results for failure analysis.
+  // Skipping logs, testQueue, generateInput, promptAudit, videoSegments saves ~10-50×
+  // in JSON parse time compared to runRepo.getAll().
+  const runs = runRepo.getAllWithResults();
+  const tests = testRepo.getAll();
+  // Only fetch activity types needed for dashboard counters (not all activities)
+  const generationActivities = activityRepo.getByTypes(["test.create", "test.generate"]);
+  const projectsById = {};
+  for (const p of projects) projectsById[p.id] = p;
 
   // ── Pass rate (last 10 completed test runs) ─────────────────────────────
   const completedTestRuns = runs
@@ -48,7 +57,7 @@ router.get("/dashboard", (req, res) => {
     .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
     .slice(0, 8)
     .map((r) => {
-      const p = db.projects[r.projectId];
+      const p = projectsById[r.projectId];
       return { id: r.id, projectId: r.projectId, projectName: p?.name || null, type: r.type, status: r.status, startedAt: r.startedAt, passed: r.passed, failed: r.failed, total: r.total };
     });
 
@@ -68,8 +77,7 @@ router.get("/dashboard", (req, res) => {
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()).toISOString();
   let testsCreatedToday = 0, testsCreatedThisWeek = 0, testsGeneratedTotal = 0;
-  for (const a of activities) {
-    if (a.type !== "test.create" && a.type !== "test.generate") continue;
+  for (const a of generationActivities) {
     // Skip "running" status entries to avoid double-counting start + completion
     if (a.status === "running") continue;
     testsGeneratedTotal++;
@@ -80,8 +88,8 @@ router.get("/dashboard", (req, res) => {
   // ── Tests auto-fixed (feedback loop + self-healing) ─────────────────────
   let testsAutoFixed = 0;
   for (const r of runs) { if (r.feedbackLoop?.improved) testsAutoFixed += r.feedbackLoop.improved; }
-  const healingEntries = Object.keys(db.healingHistory || {}).length;
-  const healingSuccesses = Object.values(db.healingHistory || {}).filter((h) => h.strategyIndex >= 0 && h.succeededAt).length;
+  const healingEntries = healingRepo.count();
+  const healingSuccesses = healingRepo.countSuccesses();
 
   // ── Average run duration (completed test runs) ──────────────────────────
   const durations = completedTestRuns.filter((r) => r.duration > 0).map((r) => r.duration);
@@ -119,8 +127,7 @@ router.get("/dashboard", (req, res) => {
     const key = d.toISOString().slice(0, 10);
     weekBuckets[key] = 0;
   }
-  for (const a of activities) {
-    if (a.type !== "test.create" && a.type !== "test.generate") continue;
+  for (const a of generationActivities) {
     if (a.status === "running") continue; // skip start entries (same as above)
     if (a.createdAt < growthStart.toISOString()) continue;
     const aTime = new Date(a.createdAt).getTime();
@@ -168,6 +175,7 @@ router.get("/dashboard", (req, res) => {
     totalProjects: projects.length,
     totalTests: tests.length,
     totalRuns: runs.length,
+    totalActivities: activityRepo.count(),
     passRate,
     history,
     recentRuns,

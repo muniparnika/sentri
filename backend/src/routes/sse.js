@@ -13,7 +13,8 @@
  */
 
 import { Router } from "express";
-import { getDb } from "../db.js";
+import * as runRepo from "../database/repositories/runRepo.js";
+import * as projectRepo from "../database/repositories/projectRepo.js";
 
 const router = Router();
 
@@ -52,13 +53,12 @@ export function emitRunEvent(runId, type, payload = {}) {
 // accepts both Authorization header and ?token= query param. The query param
 // fallback exists because EventSource cannot send custom headers.
 router.get("/runs/:runId/events", (req, res) => {
-  const db = getDb();
   const { runId } = req.params;
-  const run = db.runs[runId];
+  const run = runRepo.getById(runId);
   if (!run) return res.status(404).json({ error: "not found" });
 
   // Verify the run's project exists (future: check user ownership here)
-  const project = db.projects[run.projectId];
+  const project = projectRepo.getById(run.projectId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -75,7 +75,16 @@ router.get("/runs/:runId/events", (req, res) => {
   // arrive after the run finished — including when the connection dropped
   // during the feedback loop (ECONNRESET) and the client reconnects post-completion.
   if (run.status !== "running") {
-    res.write(`data: ${JSON.stringify({ type: "done", status: run.status })}\n\n`);
+    // testsGenerated is not a DB column — derive from the persisted tests array
+    const testsGenerated = run.testsGenerated ?? (Array.isArray(run.tests) ? run.tests.length : undefined);
+    res.write(`data: ${JSON.stringify({
+      type: "done",
+      status: run.status,
+      ...(run.passed != null && { passed: run.passed }),
+      ...(run.failed != null && { failed: run.failed }),
+      ...(run.total != null && { total: run.total }),
+      ...(testsGenerated != null && { testsGenerated }),
+    })}\n\n`);
     return res.end();
   }
 

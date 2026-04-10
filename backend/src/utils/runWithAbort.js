@@ -7,22 +7,25 @@
  *
  * ### Exports
  * - {@link runWithAbort} — Execute an async function with abort support.
- * - {@link runAbortControllers} — `Map<runId, AbortController>` registry.
+ * - {@link runAbortControllers} — `Map<runId, { controller: AbortController, run: Object }>` registry.
  */
 
 import { emitRunEvent } from "../routes/sse.js";
 import { logActivity } from "./activityLogger.js";
-import { saveDb } from "../db.js";
+import * as runRepo from "../database/repositories/runRepo.js";
 import { classifyError } from "./errorClassifier.js";
 import { formatLogLine } from "./logFormatter.js";
 
 // ─── Abort registry: runId → AbortController ──────────────────────────────────
 // Allows in-progress crawl / generate / test_run operations to be cancelled.
+// Maps runId → { controller: AbortController, run: Object }
+// Storing the run reference lets the abort endpoint mutate the same
+// in-memory object the pipeline holds, preventing status overwrites.
 export const runAbortControllers = new Map();
 
 export function runWithAbort(runId, run, asyncFn, { onSuccess, onFailActivity }) {
   const abortController = new AbortController();
-  runAbortControllers.set(runId, abortController);
+  runAbortControllers.set(runId, { controller: abortController, run });
 
   asyncFn(abortController.signal)
     .then((result) => {
@@ -30,14 +33,19 @@ export function runWithAbort(runId, run, asyncFn, { onSuccess, onFailActivity })
       if (run.status !== "aborted") {
         onSuccess?.(result);
       }
-      // Persist completed run (results, pass/fail counts, duration, feedback
-      // loop improvements). Without this, a crash before the 30s periodic
-      // flush restores the run as "interrupted" with all results gone.
-      saveDb();
+      // Persist completed run to SQLite (results, pass/fail counts, duration,
+      // feedback loop improvements).
+      runRepo.save(run);
     })
     .catch((err) => {
       runAbortControllers.delete(runId);
-      if (err.name === "AbortError" || run.status === "aborted") return;
+      if (err.name === "AbortError" || run.status === "aborted") {
+        // Flush any results accumulated before the abort so they aren't lost.
+        // The abort endpoint already set status="aborted" via runRepo.update(),
+        // but the in-memory run object may have results/logs not yet persisted.
+        runRepo.save(run);
+        return;
+      }
       const runType = run.type === "crawl" ? "crawl" : "run";
       const classified = classifyError(err, runType);
       console.error(formatLogLine("error", runId, `[${runType}] ${err.message}`));
@@ -47,6 +55,6 @@ export function runWithAbort(runId, run, asyncFn, { onSuccess, onFailActivity })
       run.finishedAt = new Date().toISOString();
       logActivity({ ...onFailActivity(err), status: "failed" });
       emitRunEvent(runId, "done", { status: "failed" });
-      saveDb(); // persist failed status so it isn't misreported as "interrupted"
+      runRepo.save(run); // persist failed status to SQLite
     });
 }
