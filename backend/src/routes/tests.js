@@ -36,6 +36,7 @@ import { runTests } from "../testRunner.js"; // thin orchestrator — delegates 
 import { buildZephyrCsv, buildTestRailCsv } from "../utils/exportFormats.js";
 import { validateTestPayload, validateTestUpdate, validateBulkAction } from "../utils/validate.js";
 import { isApiTest } from "../runner/codeParsing.js";
+import { formatLogLine } from "../utils/logFormatter.js";
 
 const router = Router();
 
@@ -143,7 +144,7 @@ Return ONLY valid JSON with no markdown fences:
         codeRegeneratedNow = true;
       }
     } catch (err) {
-      console.error("[PATCH test] code regeneration failed:", err.message);
+      console.error(formatLogLine("error", null, `[PATCH test] code regeneration failed: ${err.message}`));
     }
   }
 
@@ -484,6 +485,16 @@ router.post("/projects/:id/tests/bulk", (req, res) => {
   });
   if (updated.length) {
     const project = db.projects[req.params.id];
+    // Per-test audit trail — log each individual decision so the activity
+    // feed shows exactly which tests were approved/rejected/restored and when.
+    for (const test of updated) {
+      logActivity({
+        type: `test.${action}`, projectId: req.params.id, projectName: project?.name || null,
+        testId: test.id, testName: test.name,
+        detail: `Test ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "restored to draft"} (bulk) — "${test.name}"`,
+      });
+    }
+    // Also keep the batch-level summary for the timeline overview
     logActivity({
       type: `test.bulk_${action}`, projectId: req.params.id, projectName: project?.name || null,
       detail: `Bulk ${action} — ${updated.length} test${updated.length !== 1 ? "s" : ""}`,

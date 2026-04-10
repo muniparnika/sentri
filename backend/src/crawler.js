@@ -39,6 +39,7 @@ import { runPostGenerationPipeline } from "./pipeline/pipelineOrchestrator.js";
 import { persistGeneratedTests, buildPipelineStats } from "./pipeline/testPersistence.js";
 import { emitRunEvent, log, logWarn, logSuccess } from "./utils/runLogger.js";
 import { classifyError } from "./utils/errorClassifier.js";
+import { structuredLog } from "./utils/logFormatter.js";
 
 function setStep(run, step) {
   run.currentStep = step;
@@ -59,6 +60,7 @@ function setStep(run, step) {
 async function filterAndClassify(snapshots, snapshotsByUrl, project, run, signal) {
   // ── Step 2: Element filtering ───────────────────────────────────────────
   setStep(run, 2);
+  structuredLog("pipeline.filter", { runId: run.id, pages: snapshots.length });
   log(run, `🔍 Filtering elements (removing noise)...`);
   const filteredSnapshots = snapshots.map(snap => {
     const filtered = filterElements(snap.elements);
@@ -71,6 +73,7 @@ async function filterAndClassify(snapshots, snapshotsByUrl, project, run, signal
 
   // ── Step 3: Intent classification ───────────────────────────────────────
   setStep(run, 3);
+  structuredLog("pipeline.classify", { runId: run.id, pages: filteredSnapshots.length });
   log(run, `🧠 Classifying page intents...`);
   const classifiedPages = [];
   for (const snap of filteredSnapshots) {
@@ -110,6 +113,7 @@ async function filterAndClassify(snapshots, snapshotsByUrl, project, run, signal
  */
 export async function generateFromUserDescription(project, run, db, { name, description, dialsPrompt = "", testCount = "ai_decides", signal }) {
   const runStart = Date.now();
+  structuredLog("generate.start", { runId: run.id, projectId: project.id, mode: "description", name });
   log(run, `✦ Starting test generation from description for "${name}"`);
   log(run, `🤖 AI provider: ${getProviderName()}`);
   log(run, `⚙️ Run config:`);
@@ -162,6 +166,7 @@ export async function generateFromUserDescription(project, run, db, { name, desc
     log(run, `\n📊 Pipeline Summary:`);
     log(run, `Raw: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length} | Rejected: ${rejected}`);
     logSuccess(run, `Done! ${run.tests.length} test(s) generated from description for "${name}".`);
+    structuredLog("generate.complete", { runId: run.id, projectId: project.id, tests: run.tests.length, durationMs: run.duration });
     emitRunEvent(run.id, "done", { status: "completed" });
   });
 
@@ -188,6 +193,7 @@ export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = ""
   const mode = (explorerMode || "crawl").toLowerCase();
 
   // ── Step 1: Smart crawl or state exploration ─────────────────────────────
+  structuredLog("crawl.start", { runId: run.id, projectId: project.id, mode, url: project.url });
   log(run, `🕷️  Starting ${mode === "state" ? "state exploration" : "smart crawl"} of ${project.url}`);
   log(run, `🤖 AI provider: ${getProviderName()}`);
   log(run, `⚙️ Run config:`);
@@ -277,6 +283,7 @@ export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = ""
 
   // ── Step 4: AI test generation ──────────────────────────────────────────
   setStep(run, 4);
+  structuredLog("pipeline.generate", { runId: run.id, pages: classifiedPages.length, journeys: journeys.length });
   log(run, `🤖 Generating intent-driven tests...`);
   const genResult = await generateAllTests(classifiedPages, journeys, snapshotsByUrl, (msg) => log(run, msg), { dialsPrompt, testCount, signal });
   const rawTests = genResult.tests;
@@ -345,6 +352,11 @@ export async function crawlAndGenerateTests(project, run, db, { dialsPrompt = ""
     } else {
       logSuccess(run, `Done! ${run.tests.length} high-quality tests generated.`);
     }
+    structuredLog("crawl.complete", {
+      runId: run.id, projectId: project.id, mode,
+      pages: snapshots.length, tests: run.tests.length, durationMs: run.duration,
+      apiEndpoints: apiEndpoints.length,
+    });
     emitRunEvent(run.id, "done", { status: "completed" });
   });
 }

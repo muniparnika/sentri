@@ -35,6 +35,7 @@ import { TRACES_DIR, DEFAULT_PARALLEL_WORKERS, launchBrowser } from "./runner/co
 import { finalizeRunIfNotAborted, isRunAborted } from "./utils/abortHelper.js";
 import { emitRunEvent, log, logWarn, logError, logSuccess } from "./utils/runLogger.js";
 import { classifyError } from "./utils/errorClassifier.js";
+import { structuredLog, formatLogLine } from "./utils/logFormatter.js";
 
 // ── Concurrency helper ────────────────────────────────────────────────────────
 // Lightweight promise pool — no external dependencies. Runs `fn` for each item
@@ -104,6 +105,8 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
   let browser = null;
   let traceContext = null;
 
+  structuredLog("run.start", { runId, projectId: project.id, tests: tests.length, workers, allApiOnly });
+
   if (!allApiOnly) {
     try {
       browser = await launchBrowser();
@@ -114,8 +117,10 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
       run.errorCategory = classified.category;
       run.finishedAt = new Date().toISOString();
       logError(run, classified.message);
+      structuredLog("browser.launch_failed", { runId, error: classified.message });
       throw launchErr;
     }
+    structuredLog("browser.launched", { runId });
 
     // Shared tracing context (separate from per-test video contexts)
     try {
@@ -195,15 +200,18 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
       const hasCode = !!(test.playwrightCode && extractTestBody(test.playwrightCode));
       const workerTag = workers > 1 ? ` [w${(i % workers) + 1}]` : "";
       const typeTag = test._isApi ? "🌐 API" : hasCode ? "executing generated code" : "fallback smoke test";
+      structuredLog("test.start", { runId, testId: test.id, index: i + 1, total: tests.length, isApi: !!test._isApi });
       log(run, `▶ [${i + 1}/${tests.length}]${workerTag} ${test.name} (${typeTag})`);
 
       try {
         const result = await executeTest(test, browser, runId, i, runStart, db);
+        structuredLog("test.result", { runId, testId: test.id, status: result.status, durationMs: result.durationMs });
         processResult(test, result);
       } catch (err) {
         // Build a synthetic result and route through processResult so SSE
         // `result` and `snapshot` events are emitted — otherwise the
         // frontend progress bar stalls during parallel execution.
+        structuredLog("test.crash", { runId, testId: test.id, error: err.message?.slice(0, 200) });
         const errorResult = {
           testId: test.id, testName: test.name,
           status: "failed", error: err.message,
@@ -227,7 +235,7 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
     }
     if (browser) {
       await browser.close().catch((err) => {
-        console.warn("[testRunner] browser.close() failed:", err.message);
+        console.warn(formatLogLine("warn", null, `[testRunner] browser.close() failed: ${err.message}`));
       });
     }
   }
@@ -246,6 +254,7 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
   //      would cut off the client while the feedback loop is still active.
   // The status is set to "completed" only after the feedback loop finishes.
   const elapsed = ((Date.now() - runStart) / 1000).toFixed(1);
+  structuredLog("run.execution_done", { runId, passed: run.passed, failed: run.failed, total: run.total, elapsedSec: parseFloat(elapsed) });
   log(run, `📋 Test execution done: ${run.passed} passed, ${run.failed} failed out of ${run.total} in ${elapsed}s${workers > 1 ? ` (${workers}x parallel)` : ""} — starting post-run analysis…`);
 
   // Broadcast a final snapshot so the frontend sees the complete pass/fail
@@ -271,6 +280,11 @@ export async function runTests(project, tests, run, db, { parallelWorkers, signa
     run.finishedAt = new Date().toISOString();
     run.duration = Date.now() - runStart;
     logSuccess(run, `Run complete: ${run.passed} passed, ${run.failed} failed out of ${run.total}`);
+    structuredLog("run.complete", {
+      runId, projectId: project.id,
+      passed: run.passed, failed: run.failed, total: run.total,
+      durationMs: run.duration,
+    });
   });
 
   // Emit "done" only now — after the feedback loop — so the frontend's

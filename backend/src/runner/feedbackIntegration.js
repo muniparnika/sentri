@@ -13,6 +13,7 @@
 import { applyFeedbackLoop, analyzeRunResults } from "../pipeline/feedbackLoop.js";
 import { isRunAborted } from "../utils/abortHelper.js";
 import { log, logWarn, logSuccess } from "../utils/runLogger.js";
+import { structuredLog } from "../utils/logFormatter.js";
 
 /**
  * runFeedbackLoop(run, tests, db, signal)
@@ -35,6 +36,7 @@ export async function runFeedbackLoop(run, tests, db, signal) {
     const { hasProvider } = await import("../aiProvider.js");
     if (!hasProvider()) return;
 
+    structuredLog("feedback.start", { runId: run.id, failures: run.failed });
     log(run, `🔄 Feedback loop: analyzing ${run.failed} failure(s)...`);
 
     // Build testMap from the actual tests array (not run.tests which is
@@ -62,6 +64,7 @@ export async function runFeedbackLoop(run, tests, db, signal) {
     }
 
     const feedback = await applyFeedbackLoop(run, db, { signal });
+    structuredLog("feedback.complete", { runId: run.id, improved: feedback.improved, skipped: feedback.skipped, failures: run.failed });
     if (feedback.improved > 0) {
       logSuccess(run, `Auto-regenerated ${feedback.improved} failing test(s) (${feedback.skipped} skipped)`);
       log(run, `💡 Regenerated tests will use improved selectors on next run`);
@@ -70,6 +73,7 @@ export async function runFeedbackLoop(run, tests, db, signal) {
       log(run, `ℹ️  No tests auto-regenerated (${feedback.skipped} low-priority failures skipped)`);
     }
   } catch (err) {
+    structuredLog("feedback.error", { runId: run.id, error: err.message?.slice(0, 200) });
     logWarn(run, `Feedback loop error: ${err.message}`);
   }
 }

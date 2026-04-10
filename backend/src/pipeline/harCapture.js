@@ -79,6 +79,38 @@ function normalisePathPattern(pathname) {
 }
 
 /**
+ * Extract the GraphQL operation name from a JSON request body.
+ * Returns null if the body is not a valid GraphQL request.
+ *
+ * @param {string|null} body - Raw request body string.
+ * @returns {string|null} Operation name, or null.
+ */
+function extractGraphQLOperationName(body) {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed.operationName === "string" && parsed.operationName) {
+      return parsed.operationName;
+    }
+    // Fallback: extract from the query string (e.g. "query GetUser { ... }")
+    if (typeof parsed.query === "string") {
+      const match = parsed.query.match(/^\s*(?:query|mutation|subscription)\s+(\w+)/);
+      if (match) return match[1];
+    }
+  } catch { /* not JSON or not GraphQL */ }
+  return null;
+}
+
+/**
+ * Check if a URL path looks like a GraphQL endpoint.
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+function isGraphQLPath(pathname) {
+  return /\/graphql\b/i.test(pathname);
+}
+
+/**
  * Attach API traffic capture to a Playwright BrowserContext.
  *
  * Call `capture.detach()` when done to stop listening. Then call
@@ -113,10 +145,18 @@ export function createHarCapture(context, appOrigin) {
       if (!["fetch", "xhr"].includes(resourceType)) return;
 
       let reqBody = null;
+      let rawPostData = null;
       try {
-        const postData = request.postData();
-        if (postData) reqBody = truncate(postData);
+        rawPostData = request.postData();
+        if (rawPostData) reqBody = truncate(rawPostData);
       } catch { /* no body */ }
+
+      // Detect GraphQL operations so they can be grouped separately.
+      // Extract from raw postData (before truncation) since complex GraphQL
+      // bodies often exceed MAX_BODY_CHARS and truncation breaks JSON parsing.
+      const graphqlOp = (method === "POST" && isGraphQLPath(parsed.pathname))
+        ? extractGraphQLOperationName(rawPostData)
+        : null;
 
       const entry = {
         method,
@@ -125,6 +165,7 @@ export function createHarCapture(context, appOrigin) {
         query: parsed.search || "",
         requestHeaders: safeHeaders(request.headers()),
         requestBody: reqBody,
+        graphqlOperation: graphqlOp,
         status: null,
         responseHeaders: {},
         responseBody: null,
@@ -214,12 +255,17 @@ export function summariseApiEndpoints(entries) {
 
   for (const e of entries) {
     const pattern = normalisePathPattern(e.pathname);
-    const key = `${e.method} ${pattern}`;
+    // For GraphQL endpoints, include the operation name in the key so
+    // different operations (queries, mutations) are grouped separately
+    // instead of being collapsed into a single "POST /graphql" entry.
+    const gqlOp = e.graphqlOperation || null;
+    const key = gqlOp ? `${e.method} ${pattern} [${gqlOp}]` : `${e.method} ${pattern}`;
 
     if (!groups.has(key)) {
       groups.set(key, {
         method: e.method,
-        pathPattern: pattern,
+        pathPattern: gqlOp ? `${pattern} (${gqlOp})` : pattern,
+        graphqlOperation: gqlOp,
         exampleUrls: [],
         statuses: new Set(),
         contentType: e.contentType || "",
@@ -249,6 +295,7 @@ export function summariseApiEndpoints(entries) {
     .map(g => ({
       method: g.method,
       pathPattern: g.pathPattern,
+      graphqlOperation: g.graphqlOperation || null,
       exampleUrls: g.exampleUrls,
       statuses: [...g.statuses].sort(),
       contentType: g.contentType,

@@ -8,6 +8,8 @@
  */
 
 import { VALID_TEST_TYPES } from "./prompts/outputSchema.js";
+import { extractTestBody, stripPlaywrightImports, patchNetworkIdle, repairBrokenStringLiterals } from "../runner/codeParsing.js";
+import { parse } from "acorn";
 
 const VALID_TYPES_SET = new Set(VALID_TEST_TYPES);
 
@@ -64,6 +66,31 @@ export function validateTest(test, projectUrl) {
       || test.playwrightCode.includes("request.newContext") || test.playwrightCode.includes("api.get") || test.playwrightCode.includes("api.post");
     if (!isApiTest && !test.playwrightCode.includes("page.goto")) {
       issues.push("playwrightCode missing page.goto navigation");
+    }
+    // Syntax validation — catch malformed code at generation time rather than
+    // at run time. Uses acorn to parse the code as a proper AST, which catches
+    // unbalanced braces, unterminated strings, and other syntax errors with
+    // precise line:column positions. This is more reliable than new Function()
+    // which couldn't handle `await` without an async wrapper.
+    //
+    // We strip imports first (they're removed at runtime by codeExecutor.js)
+    // and wrap the extracted body in an async function so top-level `await`
+    // is valid — matching the execution pattern in codeExecutor.js:45-67.
+    try {
+      const bodyForCheck = extractTestBody(test.playwrightCode);
+      const stripped = bodyForCheck
+        ? stripPlaywrightImports(bodyForCheck)
+        : stripPlaywrightImports(test.playwrightCode);
+      // Apply the same repair passes used at runtime (codeExecutor.js:37-41)
+      // so that known AI output patterns (e.g. newlines inside quoted strings,
+      // networkidle usage) don't cause false-positive rejections.
+      const codeToCheck = repairBrokenStringLiterals(patchNetworkIdle(stripped));
+      // Wrap in async function so `await` is valid at the top level
+      const wrapped = `(async () => {\n${codeToCheck}\n})();`;
+      parse(wrapped, { ecmaVersion: 2022, sourceType: "script" });
+    } catch (syntaxErr) {
+      const loc = syntaxErr.loc ? ` (line ${syntaxErr.loc.line}, col ${syntaxErr.loc.column})` : "";
+      issues.push(`playwrightCode has syntax error${loc}: ${syntaxErr.message}`);
     }
   }
 
