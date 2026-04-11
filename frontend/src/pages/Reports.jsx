@@ -12,6 +12,7 @@ import StatusBadge from "../components/StatusBadge";
 import PassFailChart from "../components/PassFailChart";
 import PassRateBar from "../components/PassRateBar";
 import usePageTitle from "../hooks/usePageTitle.js";
+import TablePagination, { PAGE_SIZE } from "../components/TablePagination.jsx";
 
 function downloadCSV(runs, projectNames) {
   const header = ["Run ID","Project","Type","Status","Passed","Failed","Total","Started","Duration"];
@@ -36,6 +37,7 @@ export default function Reports() {
   usePageTitle("Reports");
   const { projects, allTests, testRuns, projMap, loading } = useProjectData();
   const [selectedProject, setSelectedProject] = useState("all");
+  const [runPage, setRunPage] = useState(1);
   const navigate = useNavigate();
 
   const filteredRuns = useMemo(() =>
@@ -215,7 +217,7 @@ export default function Reports() {
           />
 
           {/* Two column: project breakdown + flaky / top failing */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div className="rpt-two-col" style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 16 }}>
 
             {/* Project breakdown */}
             <div className="card" style={{ padding: 22 }}>
@@ -338,7 +340,7 @@ export default function Reports() {
           </div>
 
           {/* Run history table */}
-          <div className="card">
+          <div className="card rpt-table">
             <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", fontWeight: 600, fontSize: "0.9rem" }}>
               Run History
               <span style={{ fontSize: "0.78rem", fontWeight: 400, color: "var(--text3)", marginLeft: 8 }}>
@@ -358,7 +360,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRuns.slice(0, 50).map(run => {
+                {filteredRuns.slice((runPage - 1) * PAGE_SIZE, runPage * PAGE_SIZE).map(run => {
                   const rate = run.total ? Math.round(((run.passed || 0) / run.total) * 100) : null;
                   return (
                     <tr key={run.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/runs/${run.id}`)}>
@@ -386,6 +388,13 @@ export default function Reports() {
                 })}
               </tbody>
             </table>
+            <TablePagination
+              total={filteredRuns.length}
+              page={runPage}
+              totalPages={Math.max(1, Math.ceil(filteredRuns.length / PAGE_SIZE))}
+              onPageChange={setRunPage}
+              label="runs"
+            />
           </div>
         </>
       )}

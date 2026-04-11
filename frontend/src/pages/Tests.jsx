@@ -18,6 +18,7 @@ import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeL
 import { exportCsv } from "../utils/exportCsv.js";
 import { StatusBadge, ScenarioBadges } from "../components/TestBadges.jsx";
 import usePageTitle from "../hooks/usePageTitle.js";
+import TablePagination from "../components/TablePagination.jsx";
 
 // Exclude "All" sentinel entries — reset is handled by clicking an active filter
 // or the explicit clear-all button in the bar.
@@ -35,7 +36,7 @@ const CATEGORY_FILTERS = [
   { key: "API", tooltip: "API tests", activeColor: "#2563eb", activeBg: "rgba(37,99,235,0.12)",  label: "🌐 API" },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 // ── Relative time utility ──────────────────────────────────────────────────────
 
@@ -671,8 +672,8 @@ export default function Tests() {
       </div>
 
       {/* Tests table */}
-      <div className="card">
-        <div style={{
+      <div className="card tests-table">
+        <div className="tests-filter-bar" style={{
           padding: "14px 16px", borderBottom: "1px solid var(--border)",
           display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
         }}>
@@ -698,10 +699,10 @@ export default function Tests() {
           </div>
 
           {/* Spacer pushes filter group to the right */}
-          <div style={{ flex: 1 }} />
+          <div className="tests-filter-spacer" style={{ flex: 1 }} />
 
           {/* ── Icon-only filter pill bar ─────────────────────────────── */}
-          <div style={{
+          <div className="tests-filter-pills" style={{
             display: "flex", alignItems: "center", gap: 1,
             background: "var(--bg2)", padding: "3px 4px",
             borderRadius: "var(--radius)", border: "1px solid var(--border)",
@@ -868,7 +869,7 @@ export default function Tests() {
           <>
             {/* Bulk action bar */}
             {selected.size > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "var(--accent-bg)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div className="tests-bulk-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "var(--accent-bg)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
                 <span style={{ fontSize: "0.82rem", color: "var(--accent)", fontWeight: 500 }}>
                   {selected.size} selected
                 </span>
@@ -1010,24 +1011,20 @@ export default function Tests() {
             </table>
 
             {/* Pagination */}
-            {totalPages > 1 && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
-                <span style={{ fontSize: "0.78rem", color: "var(--text3)" }}>
-                  {filtered.length} tests · page {page} of {totalPages}
-                </span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="btn btn-ghost btn-xs" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-                  <button className="btn btn-ghost btn-xs" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
-                </div>
-              </div>
-            )}
+            <TablePagination
+              total={filtered.length}
+              page={page}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              label="tests"
+            />
           </>
         )}
       </div>
 
       {/* Keyboard shortcut hints */}
       {selected.size > 0 && (
-        <div style={{ marginTop: 8, textAlign: "center", fontSize: "0.72rem", color: "var(--text3)" }}>
+        <div className="tests-kbd-hints" style={{ marginTop: 8, textAlign: "center", fontSize: "0.72rem", color: "var(--text3)" }}>
           <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>a</kbd> approve
           {" · "}
           <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>r</kbd> reject

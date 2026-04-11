@@ -11,6 +11,7 @@ const files = [
   "tests/pipeline.test.js",
   "tests/api-flow.test.js",
   "tests/integration-routes.test.js",
+  "tests/auth-cookies.test.js",
   "tests/utils.test.js",
   "tests/test-fix.test.js",
   "tests/healing-transforms.test.js",
@@ -20,6 +21,7 @@ const files = [
   "tests/test-validator.test.js",
   "tests/feedback-loop.test.js",
   "tests/pipeline-orchestrator.test.js",
+  "tests/chat-window.test.js",
 ];
 
 let passed = 0;

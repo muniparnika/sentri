@@ -156,9 +156,10 @@ The CSS follows ITCSS cascade order, imported via `frontend/src/index.css`:
 
 | Module | What it provides | When to use |
 |---|---|---|
-| `src/api.js` | All `api.*` methods, `getToken()`, `handleUnauthorized()` | Every backend call |
-| `src/utils/api.js` | `API_BASE`, `parseJsonResponse()` | Base URL resolution, safe JSON parsing |
-| `src/context/AuthContext.jsx` | `useAuth()` hook, login/logout/register | Auth state in any component |
+| `src/api.js` | All `api.*` methods, `handleUnauthorized()` | Every backend call |
+| `src/utils/apiBase.js` | `API_BASE`, `parseJsonResponse()` | Base URL resolution, safe JSON parsing |
+| `src/utils/csrf.js` | `getCsrfToken()` | CSRF token for mutating API requests |
+| `src/context/AuthContext.jsx` | `useAuth()` hook, login/logout, `authFetch()` | Auth state in any component |
 | `src/hooks/useProjectData.js` | `useProjectData(projectId)` | Fetching project + tests + runs |
 | `src/hooks/useRunSSE.js` | `useRunSSE(runId)` | Real-time run streaming |
 
@@ -395,7 +396,7 @@ const project = await api.getProject(id);
 const res = await fetch(`/api/projects/${id}`);
 ```
 
-The `api.js` `req()` wrapper handles 401 responses globally — it clears the stored token and redirects to `/login`. Any new `api.*` method that bypasses `req()` (e.g. for streaming) **must** replicate the 401 handling by calling `handleUnauthorized()`.
+The `api.js` `req()` wrapper sends `credentials: "include"` on every request so the HttpOnly auth cookie is attached automatically. It also injects the `X-CSRF-Token` header (from `utils/csrf.js`) on mutating methods (POST/PATCH/PUT/DELETE). On 401 responses it clears the stored user profile and redirects to `/login`. Any new `api.*` method that bypasses `req()` (e.g. for streaming) **must** replicate the 401 handling by calling `handleUnauthorized()` and include `credentials: "include"` + the CSRF header.
 
 ### Error Handling (Frontend)
 
@@ -422,9 +423,16 @@ The `api.js` `req()` wrapper handles 401 responses globally — it clears the st
 
 ## CI / CD
 
-> **Status**: No CI pipeline is configured yet. There are no GitHub Actions workflows in `.github/workflows/`.
+CI runs automatically on every push to `main`/`develop` and on PRs to `main` via `.github/workflows/ci.yml`. The pipeline includes:
 
-Until CI is set up, **manually verify before every PR**:
+1. **Backend** — `npm install` → syntax check (`node --check`) → `npm test` → JSDoc generation → live smoke test (starts server, registers user, verifies cookie-based auth + CSRF on authenticated endpoints).
+2. **Frontend** — `npm install` → `npm test` → `npm run build` (catches JSX errors, bad imports).
+3. **Docs** — VitePress build + JSDoc assembly (runs after backend passes).
+4. **Docker** — Builds both images, runs a container smoke test with cookie-based auth.
+
+All four jobs must pass before merge. If CI fails, check the smoke test section first — it exercises the full auth flow (register → login → cookie extraction → CSRF-protected POST).
+
+To run locally before pushing:
 
 ```bash
 # Backend — tests must all pass
@@ -436,13 +444,6 @@ cd frontend && npm run build
 # Frontend — tests must pass
 cd frontend && npm test
 ```
-
-When CI is added, the pipeline should include at minimum:
-1. **Lint** — ESLint / Prettier check (once configured).
-2. **Backend tests** — `npm --prefix backend test`.
-3. **Frontend build** — `npm --prefix frontend run build` (catches import errors, type issues).
-4. **Frontend tests** — `npm --prefix frontend test`.
-5. **Docker build** — Verify both Dockerfiles build successfully.
 
 ---
 
@@ -457,6 +458,7 @@ node tests/pipeline.test.js
 node tests/self-healing.test.js
 node tests/code-parsing.test.js
 node tests/api-flow.test.js
+node tests/auth-cookies.test.js
 ```
 
 Or run all at once: `npm test` from `backend/`.
@@ -549,7 +551,7 @@ The AI chat assistant (`⌘K` or top bar trigger) streams responses via `POST /a
 
 | Tier | What | How | Token cost |
 |---|---|---|---|
-| **Tier 1 — Workspace summary** | Projects, test counts, recent runs, failing tests, pass rate | `buildWorkspaceContext()` reads `getDb()` on every request | ~200-400 tokens |
+| **Tier 1 — Workspace summary** | Projects, test counts, recent runs, failing tests, pass rate | `buildWorkspaceContext()` reads from repository modules on every request | ~200-400 tokens |
 | **Tier 2 — Entity deep-dive** | Full test steps, Playwright code, run errors, project details | `buildEntityContext()` scans the user message for `TC-*`, `RUN-*`, `PRJ-*` IDs and fetches details | ~100-800 tokens per entity |
 
 Both tiers are **read-only** — no DB writes, no mutations, no actions. The AI cannot approve tests, trigger runs, or modify data.
@@ -577,6 +579,10 @@ When the user types "Why is **TC-15** failing in **RUN-42**?", the backend:
 | `frontend/src/components/AIChat.jsx` | Chat panel UI, markdown renderer, streaming display |
 | `frontend/src/api.js` → `api.chat()` | SSE stream parser with 401 handling |
 | `frontend/src/styles/features/chat.css` | All chat UI styles (`.chat-*` namespace) |
+
+### Sliding context window
+
+Long conversations are automatically trimmed by `trimConversationHistory()` before the prompt is built. It keeps the first message (initial context) and the most recent `MAX_CONVERSATION_TURNS` turn pairs (default 20), cutting at an assistant boundary so user↔assistant pairs are never split. This is pure truncation — zero extra LLM calls.
 
 ### When modifying the chat system
 
@@ -626,17 +632,16 @@ The Vite dev server proxies `/api/*` to `http://localhost:3001` automatically.
 
 ## Monitoring & Observability
 
-> **Status**: No external monitoring or observability tools are configured.
+> **Status**: No external monitoring or APM tools are configured. Structured logging is in place.
 
-Current observability is limited to:
+Current observability:
 
 - **Health endpoint**: `GET /health` — use for uptime monitoring (e.g. UptimeRobot, Pingdom).
 - **System info**: `GET /api/system` (authenticated) — returns uptime, Node/Playwright versions, memory usage, and DB record counts.
-- **Server logs**: `console.error` / `console.log` output. In Docker, access via `docker logs sentri-backend`.
-- **SSE events**: Real-time run progress is streamed to the frontend. No server-side log aggregation.
+- **Structured logging**: All backend logs go through `formatLogLine()` from `utils/logFormatter.js`. Set `LOG_JSON=true` for machine-parseable JSON lines (compatible with Datadog, Cloud Logging, etc.). Semantic lifecycle events (`run.start`, `browser.launched`, `run.complete`, etc.) are emitted via `structuredLog()`.
+- **SSE events**: Real-time run progress is streamed to the frontend via Server-Sent Events.
 
-When adding observability, consider:
-- Structured JSON logging (e.g. `pino`) to replace bare `console.*` calls.
+When adding external observability, consider:
 - APM integration (Datadog, New Relic) for request tracing.
 - Error tracking (Sentry) for both backend and frontend.
 
@@ -648,6 +653,8 @@ Before submitting any PR that touches auth, routes, or data handling, verify:
 
 - [ ] Passwords are hashed with `hashPassword()` (scrypt, random salt) — never stored plaintext.
 - [ ] JWTs are validated with `requireAuth` on every non-public endpoint.
+- [ ] JWTs are stored in HttpOnly cookies only — never returned in response bodies or stored in localStorage.
+- [ ] Mutating endpoints (POST/PATCH/PUT/DELETE) are protected by CSRF double-submit cookie validation (handled by `csrfMiddleware` in `appSetup.js`). New exempt paths must be added to `CSRF_EXEMPT_PATHS`.
 - [ ] User-supplied strings are validated with `utils/validate.js` before DB writes.
 - [ ] No sensitive data (API keys, passwords, full JWTs) is returned in API responses. Use `maskKey()` for display.
 - [ ] Credential values stored in the DB use `credentialEncryption.js`.
@@ -658,6 +665,9 @@ Before submitting any PR that touches auth, routes, or data handling, verify:
 
 The following have been implemented and are no longer open:
 
+- **Cookie-based auth** ✅: JWTs are stored in `access_token` HttpOnly; Secure; SameSite=Strict cookies. A `token_exp` cookie (Non-HttpOnly) exposes only the expiry timestamp for frontend UX. Tokens are never returned in response bodies or stored in localStorage.
+- **CSRF protection** ✅: Double-submit cookie pattern via `_csrf` cookie + `X-CSRF-Token` header. All mutating endpoints are validated by `csrfMiddleware` in `appSetup.js`. Auth endpoints are exempt via `CSRF_EXEMPT_PATHS`.
+- **Session refresh** ✅: `POST /api/auth/refresh` issues a new token and revokes the old one. Frontend proactively refreshes 5 minutes before expiry.
 - **Rate limiting** ✅: Per-endpoint rate limiters are configured in `routes/auth.js` — separate buckets for login (10/IP/15 min), forgot-password (5), and reset-password (5). Uses `trust proxy` for correct IP detection behind nginx.
 - **Content-Security-Policy** ✅: Helmet CSP is fully enabled in `middleware/appSetup.js` with explicit directives (`default-src 'self'`, `script-src 'self' 'unsafe-inline'`, `connect-src 'self'`, `frame-ancestors 'none'`, etc.). Tighten `'unsafe-inline'` to nonce-based in production.
 - **Reset token exposure** ✅: The forgot-password endpoint only returns the reset token in the response when `ENABLE_DEV_RESET_TOKENS=true` is explicitly set. Absence of a production flag is no longer sufficient to leak tokens.
@@ -697,6 +707,7 @@ The following are **not yet implemented** but should be addressed before product
 | `HEALING_HINT_MAX_FAILS` | No | `3` | Skip healing hints that have failed this many consecutive times |
 | `HEALING_VISIBLE_WAIT_CAP` | No | `1200` | Max `waitFor` timeout per strategy in `firstVisible` (ms) |
 | `ENABLE_DEV_RESET_TOKENS` | No | `false` | When `"true"`, forgot-password response includes the reset token (dev/test only) |
+| `MAX_CONVERSATION_TURNS` | No | `20` | Max user↔assistant turn pairs in chat context window (sliding window trims older turns) |
 
 ---
 
@@ -706,9 +717,10 @@ The following are **not yet implemented** but should be addressed before product
 
 1. Add the handler to the appropriate file in `backend/src/routes/`.
 2. Mount it in `index.js` behind `requireAuth` unless it is explicitly public.
-3. Add a JSDoc block documenting method, path, auth requirement, request body, and response shape.
-4. Add a corresponding function in `frontend/src/api.js`.
-5. Write a test in `backend/tests/api-flow.test.js`.
+3. If the endpoint is a public mutation (no auth required), add it to `CSRF_EXEMPT_PATHS` in `backend/src/middleware/appSetup.js`.
+4. Add a JSDoc block documenting method, path, auth requirement, request body, and response shape.
+5. Add a corresponding function in `frontend/src/api.js`. The `req()` wrapper auto-injects `credentials: "include"` and `X-CSRF-Token` — no manual auth handling needed.
+6. Write a test in `backend/tests/api-flow.test.js` or a dedicated test file. Register it in `backend/tests/run-tests.js`.
 
 ### Adding a New Pipeline Stage
 
@@ -755,7 +767,7 @@ The frontend follows a clear separation of concerns between pages:
 > **Status**: No formal release process exists yet.
 
 - Both packages are at `1.0.0`. Version bumps are manual.
-- No changelog is maintained. Use descriptive PR titles — they become the squash-merge commit messages.
+- A changelog is maintained at `docs/changelog.md`. Update the **Unreleased** section in every PR that adds user-visible features, fixes, or security changes.
 - Docker images are tagged `latest` on GHCR. When a tagging strategy is adopted, update `docker-compose.yml` to reference specific tags.
 
 ---
@@ -764,7 +776,9 @@ The frontend follows a clear separation of concerns between pages:
 
 - **Do not use `require()` anywhere.** The entire repo is ES Modules.
 - **Do not import LLM SDKs directly** outside of `aiProvider.js`.
-- **Do not call `fetch()` directly** in frontend components; use `api.js`. Streaming endpoints that bypass `req()` must still handle 401 via `handleUnauthorized()`.
+- **Do not call `fetch()` directly** in frontend components; use `api.js`. Streaming endpoints that bypass `req()` must still handle 401 via `handleUnauthorized()`, send `credentials: "include"`, and include `X-CSRF-Token` on mutating requests.
+- **Do not return JWTs in response bodies.** Auth cookies are set via `setAuthCookie()` — the token string must never appear in JSON responses.
+- **Do not store tokens in localStorage.** The JWT lives exclusively in the HttpOnly `access_token` cookie. Only the safe user profile (`app_auth_user`) is stored in localStorage.
 - **Do not store secrets in code or commit `.env` files.**
 - **Do not change the `healingHistory` key schema** (`<testId>@v<version>::<action>::<label>`) without a migration strategy — existing DB records will silently stop matching. The repository layer reads both versioned and legacy keys, but new writes always use the versioned format.
 - **Do not add polling** to the frontend for run status — use the existing SSE infrastructure (`useRunSSE`).

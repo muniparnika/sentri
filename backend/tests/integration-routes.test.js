@@ -37,9 +37,26 @@ function resetDb() {
   db.exec("UPDATE counters SET value = 0");
 }
 
+/** Extract a named cookie value from a fetch Response's Set-Cookie header. */
+function extractCookie(res, name) {
+  const raw = res.headers.getSetCookie?.() || [];
+  for (const c of raw) {
+    const match = c.match(new RegExp(`^${name}=([^;]+)`));
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/** Shared CSRF token — captured from the first server response that sets it. */
+let csrfToken = null;
+
 async function req(base, path, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+    headers.Cookie = (headers.Cookie ? headers.Cookie + "; " : "") + `_csrf=${csrfToken}`;
+  }
 
   const res = await fetch(`${base}${path}`, {
     method,
@@ -47,6 +64,8 @@ async function req(base, path, { method = "GET", token, body } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
+  const csrf = extractCookie(res, "_csrf");
+  if (csrf) csrfToken = csrf;
   const json = await res.json().catch(() => ({}));
   return { res, json };
 }
@@ -73,8 +92,8 @@ async function main() {
       body: { email, password: "Password123!" },
     });
     assert.equal(out.res.status, 200);
-    const token = out.json.token;
-    assert.ok(token);
+    const token = extractCookie(out.res, "access_token");
+    assert.ok(token, "Login response should set access_token cookie");
 
     out = await req(base, "/api/dashboard");
     assert.equal(out.res.status, 401);
