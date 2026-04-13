@@ -55,18 +55,18 @@ Use a Redis store (`rate-limit-redis`) for distributed enforcement once Redis is
 
 ---
 
-### ENH-007 — Authenticate artifact serving with signed URL tokens 🔴 Blocker
+### ~~ENH-007 — Authenticate artifact serving with signed URL tokens~~ ✅ Complete
 
 **Problem:** Screenshots, videos, and Playwright traces are served from `/artifacts/` as public static files with no auth check. The comment in `appSetup.js` acknowledges this explicitly. Any person who guesses or obtains an artifact URL can view screenshots and videos of your users' applications — only URL obscurity protects them.
 
 **Fix:** Generate short-lived HMAC-signed tokens for all artifact URLs. Validate the token on the static file middleware before serving. `<img>` and `<video>` tags cannot send `Authorization` headers, so query-param token signing is the correct pattern here.
 
-Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix timestamp>`
+Token format: `?token=<hmac-sha256(artifactPath+exp, ARTIFACT_SECRET)>&exp=<unix-ms>`
 
-**Files to change:**
-- `backend/src/middleware/appSetup.js` — add token-validation middleware before `express.static`
-- All places that generate artifact paths in `backend/src/runner/executeTest.js`, `backend/src/runner/pageCapture.js` — append signed token to artifact URLs
-- `backend/.env.example` — document `ARTIFACT_SECRET`
+**Implemented in:** PR #79
+- `backend/src/middleware/appSetup.js` — `signArtifactUrl()`, `isValidArtifactToken()`, token-validation middleware before `express.static`, `Cache-Control: private, no-store`
+- `backend/src/runner/executeTest.js`, `backend/src/runner/pageCapture.js`, `backend/src/testRunner.js` — all artifact paths wrapped with `signArtifactUrl()`
+- `backend/.env.example` — documents `ARTIFACT_SECRET` and `ARTIFACT_TOKEN_TTL_MS`
 
 **Effort:** M | **Source:** Audit
 
@@ -87,29 +87,29 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 
 ---
 
-### ENH-027 — Add global React Error Boundary 🔴 Blocker
+### ~~ENH-027 — Add global React Error Boundary~~ ✅ Complete
 
 **Problem:** There is no `ErrorBoundary` component wrapping routes. A single React rendering error anywhere in the component tree will crash the entire application and show a blank white screen with no recovery path.
 
-**Fix:** Implement a standard React class component with `componentDidCatch` and `getDerivedStateFromError`. Wrap the router in `main.jsx`. Show a friendly error message with a "Reload" button. Optionally report to a logging endpoint.
+**Fix:** Implement a standard React class component with `componentDidCatch` and `getDerivedStateFromError`. Wrap the router in `App.jsx`. Show a friendly error message with "Try again", "Reload page", and "Go to Dashboard" buttons. Report crashes to `/api/system/client-error`.
 
-**Files to change:**
-- New `frontend/src/components/ErrorBoundary.jsx`
-- `frontend/src/main.jsx` — wrap `<RouterProvider>` with `<ErrorBoundary>`
+**Implemented in:** PR #79
+- New `frontend/src/components/layout/ErrorBoundary.jsx` — extracted from inline class in `App.jsx`; adds `componentDidCatch` with server-side crash reporting and soft-reset "Try again" button
+- `frontend/src/App.jsx` — imports `ErrorBoundary` from the new component
 
 **Effort:** XS | **Source:** Audit
 
 ---
 
-### ENH-030 — Secrets scanning in CI pipeline 🔴 Blocker
+### ~~ENH-030 — Secrets scanning in CI pipeline~~ ✅ Complete
 
 **Problem:** The CI workflow (`ci.yml`) does not run secrets scanning. AI API keys, JWT secrets, or OAuth credentials accidentally committed to the repository will not be detected. Given that the codebase stores `CREDENTIAL_SECRET`, `JWT_SECRET`, and `LLM_API_KEY` values, this is an active risk.
 
 **Fix:** Add `gitleaks/gitleaks-action@v2` as a CI step. Run on every PR and push to `main`. Configure `gitleaks.toml` with allowed patterns for test fixtures and generated `.env.example` values.
 
-**Files to change:**
-- `.github/workflows/ci.yml` — add secrets scanning step
-- New `.gitleaks.toml` — configure allowlist for test fixtures
+**Implemented in:** PR #79
+- `.github/workflows/ci.yml` — new `secrets` job running `gitleaks/gitleaks-action@v2`; `lint` and `build` jobs now `needs: [secrets]`, gating the entire pipeline
+- New `.github/.gitleaks.toml` — extends default ruleset with allowlists for CI placeholder keys (`sk-ant-placeholder-for-ci`) and `.env.example` files
 
 **Effort:** XS | **Source:** Audit
 
@@ -177,13 +177,13 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 
 ---
 
-### ENH-004 — Persist AI provider keys encrypted in the database 🟡 High
+### ~~ENH-004 — Persist AI provider keys encrypted in the database~~ ✅ Complete
 
 **Problem:** AI API keys set via the Settings page are stored only in a process-level `runtimeKeys` object in `aiProvider.js`. They are lost on every server restart. Users must re-enter their API keys after every deployment — this is not acceptable for a production tool.
 
 **Fix:** Create an `api_keys(provider, encryptedKey, updatedAt)` table. On `POST /api/settings`, write the encrypted key using the existing `encryptCredentials` utility. On `getKey()`, check the runtime cache first, then fall back to the DB. The runtime cache becomes a performance optimisation, not the source of truth.
 
-**Files to change:**
+**Implemented in:** PR #80
 - `backend/src/database/migrations/` — create `api_keys` table
 - `backend/src/aiProvider.js` — add DB fallback in `getKey()`
 - `backend/src/routes/settings.js` — persist to DB on key update
@@ -279,7 +279,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 - `backend/src/middleware/appSetup.js` — add `requireRole()` middleware
 - All route files for mutation operations — add role guards
 - `frontend/src/context/AuthContext.jsx` — expose `role`
-- `frontend/src/components/ProtectedRoute.jsx` — role-based route guarding
+- `frontend/src/components/layout/ProtectedRoute.jsx` — role-based route guarding
 - `frontend/src/pages/Settings.jsx` — add Members / Role management tab
 
 **Effort:** M | **Source:** Audit
@@ -406,7 +406,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 - `backend/src/runner/executeTest.js` — capture and compare baseline
 - `backend/src/database/migrations/` — `baseline_screenshots` table
 - `backend/src/routes/runs.js` — serve diff images
-- `frontend/src/components/StepResultsView.jsx` — visual diff overlay component
+- `frontend/src/components/run/StepResultsView.jsx` — visual diff overlay component
 - `backend/package.json` — add `pixelmatch`, `pngjs`
 
 **Effort:** L | **Source:** Competitive
@@ -422,7 +422,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 **Files to change:**
 - `backend/src/runner/config.js` — parameterise `launchBrowser()`
 - `backend/src/testRunner.js` — pass `browserName` from run config
-- `frontend/src/components/RunRegressionModal.jsx` — add browser selector
+- `frontend/src/components/run/RunRegressionModal.jsx` — add browser selector
 - `frontend/src/pages/RunDetail.jsx` — show browser per result
 
 **Effort:** M | **Source:** Competitive
@@ -438,7 +438,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 **Files to change:**
 - `backend/src/runner/config.js` — add device map lookup
 - `backend/src/runner/executeTest.js` — apply device context
-- `frontend/src/components/RunRegressionModal.jsx` — add device selector dropdown
+- `frontend/src/components/run/RunRegressionModal.jsx` — add device selector dropdown
 
 **Effort:** S | **Source:** Competitive
 
@@ -455,7 +455,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 - `backend/src/testRunner.js` — call detector on run completion
 - `backend/src/database/migrations/` — add `flakyScore` to `tests`
 - `frontend/src/pages/Dashboard.jsx` — add Flaky Tests panel
-- `frontend/src/components/badges/TestBadges.jsx` — add flaky badge
+- `frontend/src/components/shared/TestBadges.jsx` — add flaky badge
 
 **Effort:** M | **Source:** Competitive
 
@@ -485,7 +485,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 **Files to change:**
 - `backend/src/runner/executeTest.js` — record step start/end timestamps
 - `backend/src/runner/codeExecutor.js` — inject timing instrumentation
-- `frontend/src/components/StepResultsView.jsx` — add waterfall chart
+- `frontend/src/components/run/StepResultsView.jsx` — add waterfall chart
 
 **Effort:** M | **Source:** Audit
 
@@ -513,7 +513,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 
 **Files to change:**
 - `frontend/src/pages/TestDetail.jsx` — add Changes tab
-- New `frontend/src/components/DiffViewer.jsx` — diff rendering component
+- New `frontend/src/components/ai/DiffViewer.jsx` — diff rendering component
 - `frontend/package.json` — add `diff`
 
 **Effort:** S | **Source:** Audit
@@ -631,7 +631,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 - `backend/src/routes/projects.js` — add profile CRUD endpoints
 - `backend/src/pipeline/stateExplorer.js` — accept `profileId` param
 - `frontend/src/pages/ProjectDetail.jsx` — add credential profiles panel
-- `frontend/src/components/TestDials.jsx` — connect `multi_role` dial to profile selector
+- `frontend/src/components/shared/TestDials.jsx` — connect `multi_role` dial to profile selector
 
 **Effort:** M | **Source:** Competitive (unique to Sentri)
 
@@ -644,7 +644,7 @@ Token format: `?token=<hmac-sha256(runId+path+exp, ARTIFACT_SECRET)>&exp=<unix t
 **Fix:** For each node in the site graph (`SiteGraph.jsx`), compute a "test density" score: 0 approved tests = red, 1–2 = amber, 3+ = green. Overlay the score as a coloured ring on each node. Add a legend. This makes gaps immediately visible without reading a table.
 
 **Files to change:**
-- `frontend/src/components/SiteGraph.jsx` — add density score computation and colour ring
+- `frontend/src/components/crawl/SiteGraph.jsx` — add density score computation and colour ring
 - `backend/src/routes/dashboard.js` — add `testsByUrl` to the dashboard API response
 
 **Effort:** S | **Source:** Competitive
@@ -737,17 +737,18 @@ These items are not phase-bounded — they should be addressed incrementally alo
 
 ---
 
-### MAINT-011 — Restructure frontend to feature-sliced architecture (M-06) 🟡 High
+### ~~MAINT-011 — Restructure frontend to feature-sliced architecture (M-06)~~ ✅ Complete
 
-**Problem:** `frontend/src/components/` is a flat directory of ~35 files with no domain grouping. Run views, modals, charts, badges, and layout chrome are all siblings. This makes the codebase hard to navigate, slows onboarding, and violates the principle of colocation by domain.
+**Problem:** `frontend/src/components/` was a flat directory of ~35 files with no domain grouping. Run views, modals, charts, badges, and layout chrome were all siblings. This made the codebase hard to navigate, slowed onboarding, and violated the principle of colocation by domain.
 
-**Note:** PR #70 already extracted `Sidebar`, `TopBar`, and `ThemeToggle` into `components/layout/`. This item completes the restructuring.
+**Implemented in:** PR #81
+- Moved 35 components from flat `components/` into 7 feature-based subdirectories: `ai/`, `charts/`, `crawl/`, `generate/`, `layout/`, `run/`, `shared/`
+- Added barrel `index.js` per folder for clean imports
+- Updated all import paths across pages, components, hooks, and existing subdirectories (`project/`, `test/`)
+- Removed deprecated `CompletionCTA.jsx` stub
+- No component logic, props, or behavior modified
 
-**Target structure:** Feature-sliced / domain-grouped under `features/` (auth, dashboard, projects, tests, runs, reports, settings), with shared primitives under `components/ui/`, `charts/`, `badges/`, `layout/`. Split the monolithic `api.js` (~380 lines) into domain modules under `api/`. Each feature migration is a single PR — start with `runs/` (15+ components), then `projects/`, `tests/`, `auth/`.
-
-**Files to change:** All `frontend/src/components/*.jsx`, `frontend/src/pages/*.jsx`, `frontend/src/hooks/*.js`, `frontend/src/api.js`, `frontend/src/App.jsx`, `frontend/src/context/AuthContext.jsx`
-
-**Effort:** L (incremental — 1 PR per feature domain) | **Source:** Audit (M-06)
+**Effort:** L | **Source:** Audit (M-06)
 
 ---
 
@@ -786,17 +787,17 @@ How Sentri compares to industry-standard QA platforms as of this audit:
 | Phase | Items | Status | Key Deliverable |
 |-------|-------|--------|-----------------|
 | ~~Phase 0 — Sprint 3~~ | S3-02, S3-04, S3-08 | ✅ Complete | Test quality, Shadow DOM, Disposable email |
-| Phase 1 (Weeks 1–6) | ENH-005, 007, 013, 027, 030, 021, 020, 010, 008, 004, 024 | 🔄 In progress (ENH-005 ✅, ENH-013 ✅, ENH-021 ✅) | Production-safe for real teams |
+| Phase 1 (Weeks 1–6) | ENH-005, 007, 013, 027, 030, 021, 020, 010, 008, 004, 024 | 🔄 In progress (ENH-004 ✅, ENH-005 ✅, ENH-007 ✅, ENH-013 ✅, ENH-021 ✅, ENH-027 ✅, ENH-030 ✅) | Production-safe for real teams |
 | Phase 2 (Weeks 7–16) | ENH-001, 002, 003, 012, 009, 011, 006, 017, 022, 023 | 🔲 Not started | Sellable to companies |
 | Phase 3 (Weeks 17–28) | ENH-016, 014, 015, 018, 019, 025, 028, 029, 026, S4-03, S4-04, S4-05, S4-06, S4-07, S4-08, S4-09 | 🔲 Not started | Competitive with Mabl / Testim |
 | Ongoing | MAINT-001 through MAINT-011 | 🔲 Backlog | Platform moat + infrastructure |
 
 **Total items:** 30 audit enhancements + 17 NEXT_STEPS sprint items + 11 maintenance items = **58 tracked items**
-**Completed:** S1-01 → S1-06 (Sprint 1), S3-02, S3-04, S3-08 (Sprint 3), ENH-005, ENH-013, ENH-021 = **12 complete**
-**Critical blockers remaining:** ENH-007, 027, 030 (Phase 1) · ENH-001, 002, 003, 012 (Phase 2) = **7 blockers**
+**Completed:** S1-01 → S1-06 (Sprint 1), S3-02, S3-04, S3-08 (Sprint 3), ENH-004, ENH-005, ENH-007, ENH-013, ENH-021, ENH-027, ENH-030 = **16 complete**
+**Critical blockers remaining:** ENH-001, 002, 003, 012 (Phase 2) = **4 blockers**
 **Highest adoption impact:** ENH-011 (CI/CD), ENH-006 (scheduling), ENH-003 (multi-tenancy), S4-06 (monitoring mode)
-**Lowest effort / highest immediate value:** ENH-027, ENH-030, ENH-015, S4-09, S4-07
-**Next PR priorities (recommended order):** ENH-027 (Error Boundary, XS) → ENH-030 (Secrets scanning, XS) → ENH-007 (Artifact auth, M) → ENH-020 (Soft-delete, M) → ENH-010 (Pagination, M)
+**Lowest effort / highest immediate value:** ENH-015, S4-09, S4-07
+**Next PR priorities (recommended order):** ENH-020 (Soft-delete, M) → ENH-010 (Pagination, M) → ENH-008 (Run logs table, M)
 
 ---
 
