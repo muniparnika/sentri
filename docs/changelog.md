@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-04-16
+
 ### Added
 - **API**: Dedicated `run_logs` table replaces O(n²) JSON read-modify-write on `runs.logs` — each log line is now a single INSERT row; readers get stable ordering via monotonic `seq` counter (ENH-008) (#85)
 - **API**: CI/CD webhook trigger endpoint `POST /api/projects/:id/trigger` — token-authenticated (Bearer), returns `202 Accepted` with `{ runId, statusUrl }` for polling; supports optional `callbackUrl` for completion notification (ENH-011) (#85)
