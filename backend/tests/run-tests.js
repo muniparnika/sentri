@@ -27,6 +27,11 @@ const files = [
   "tests/artifact-signing.test.js",
   "tests/soft-delete.test.js",
   "tests/recycle-bin.test.js",
+  "tests/run-logs.test.js",
+  "tests/webhook-token.test.js",
+  "tests/scheduler.test.js",
+  "tests/trigger-api.test.js",
+  "tests/ssrf-protection.test.js",
 ];
 
 let passed = 0;

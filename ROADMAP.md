@@ -161,17 +161,18 @@ Token format: `?token=<hmac-sha256(artifactPath+exp, ARTIFACT_SECRET)>&exp=<unix
 
 ---
 
-### ENH-008 — Move `runs.logs` to a separate `run_logs` table 🟡 High
+### ~~ENH-008 — Move `runs.logs` to a separate `run_logs` table~~ ✅ Complete
 
 **Problem:** Every call to `log(run, message)` in `runLogger.js` deserialises the entire `logs` JSON column, appends one entry, and re-serialises it. A crawl generating 200 log lines performs 200 read-modify-write cycles on a column that grows from 0 to ~20 KB. This is O(n²) in log volume. The `results`, `testQueue`, and `videoSegments` columns share the same pattern.
 
 **Fix:** Create a `run_logs(id, runId, seq, level, message, createdAt)` table. Update `log()`, `logWarn()`, `logSuccess()` to `INSERT` individual rows. SSE streaming reads from `run_logs` ordered by `seq`. The `runs` table retains only summary columns.
 
-**Files to change:**
-- `backend/src/database/migrations/` — create `run_logs` table
-- `backend/src/utils/runLogger.js` — replace JSON mutation with INSERT
-- `backend/src/database/repositories/runRepo.js` — update log queries
-- `backend/src/routes/runs.js` — update SSE log stream
+**Implemented in:** PR #86
+- `backend/src/database/migrations/002_run_logs_table.sql` — new `run_logs`, `webhook_tokens`, and `schedules` tables (consolidated migration for ENH-008 + ENH-011 + ENH-006)
+- `backend/src/database/repositories/runLogRepo.js` — append-only data-access layer with in-process seq counter cache
+- `backend/src/utils/runLogger.js` — each `log()`/`logWarn()`/`logError()` now does a single INSERT via `runLogRepo.appendLog()`
+- `backend/src/database/repositories/runRepo.js` — `logs` removed from JSON_FIELDS; `getById()` hydrates from `run_logs`; purge paths cascade into `run_logs`
+- `backend/src/routes/sse.js` — SSE snapshot hydrates logs from `run_logs`
 
 **Effort:** M | **Source:** Audit
 
@@ -303,7 +304,7 @@ Token format: `?token=<hmac-sha256(artifactPath+exp, ARTIFACT_SECRET)>&exp=<unix
 
 ---
 
-### ENH-011 — CI/CD webhook receiver + GitHub Actions integration 🟡 High
+### ~~ENH-011 — CI/CD webhook receiver + GitHub Actions integration~~ ✅ Complete
 
 **Problem:** There is no programmatic trigger for test runs. Sentri cannot be called from GitHub Actions, GitLab CI, CircleCI, Jenkins, or any other pipeline. The primary adoption trigger for any developer tool is "it fits into my existing workflow" — without CI/CD integration, Sentri will not be adopted by engineering teams.
 
@@ -314,32 +315,42 @@ Token format: `?token=<hmac-sha256(artifactPath+exp, ARTIFACT_SECRET)>&exp=<unix
 4. Add a **Trigger** tab to `ProjectDetail` showing the token, a copy button, and example YAML snippets for GitHub Actions, GitLab CI, and cURL.
 5. Support an optional `callbackUrl` param for async result delivery to external systems.
 
-**Files to change:**
-- `backend/src/routes/runs.js` — add `POST /projects/:id/trigger`
-- `backend/src/routes/settings.js` — add `POST/DELETE /projects/:id/trigger-token`
-- New `backend/src/database/repositories/webhookTokenRepo.js`
-- `frontend/src/pages/ProjectDetail.jsx` — add Trigger tab with token + YAML snippets
-- New `.github/actions/run-tests/` — GitHub Action definition
-- `backend/.env.example` — document webhook token settings
+**Implemented in:** PR #86
+- `backend/src/database/migrations/002_run_logs_table.sql` — `webhook_tokens` table with SHA-256 hashed tokens, unique index on `tokenHash` (consolidated migration)
+- `backend/src/database/repositories/webhookTokenRepo.js` — CRUD + `hashToken()`, `generateToken()`, `findByHash()`, `touch()`
+- `backend/src/routes/trigger.js` — `POST /api/projects/:id/trigger` with Bearer token auth (no JWT), 202 Accepted, optional `callbackUrl`
+- `backend/src/routes/runs.js` — token management endpoints: `GET/POST /trigger-tokens`, `DELETE /trigger-tokens/:tid`
+- `backend/src/utils/idGenerator.js` — `generateWebhookTokenId()` → `WH-1`, `WH-2`, …
+- `backend/src/routes/projects.js`, `backend/src/routes/recycleBin.js` — cascade-delete tokens on project delete/purge
+- `frontend/src/components/automation/TokenManager.jsx` — per-project token CRUD, one-time reveal banner (extracted from TriggerTab)
+- `frontend/src/components/automation/ProjectAutomationCard.jsx` — expandable per-project card (tokens + schedule placeholder)
+- `frontend/src/components/automation/IntegrationSnippets.jsx` — shared CI snippet section with project selector
+- `frontend/src/pages/Automation.jsx` — dedicated Automation page replacing the Trigger tab on ProjectDetail
+- `frontend/src/components/layout/Sidebar.jsx` — "Automation" nav item added
+- `frontend/src/components/project/ProjectHeader.jsx` — "⚡ Automation" quick-link to `/automation?project=PRJ-X`
+- `frontend/src/api.js` — `getTriggerTokens()`, `createTriggerToken()`, `deleteTriggerToken()`
 
 **Effort:** M | **Source:** Competitive (S2-01)
 
 ---
 
-### ENH-006 — Test scheduling engine (cron) 🟡 High
+### ~~ENH-006 — Test scheduling engine (cron)~~ ✅ Complete
 
 **Problem:** There is no way to schedule automated test runs. Teams cannot run nightly regressions without keeping a browser tab open and manually clicking "Run". Testing in production requires automated regression runs on a schedule — without this, Sentri is a manual tool, not an autonomous one.
 
 **Fix:** Add a `schedules(projectId, cronExpr, timezone, enabled, lastRunAt, nextRunAt)` table. Use `node-cron` to fire scheduled runs as background jobs. Display the next scheduled run time in `ProjectHeader`. Add a schedule toggle and CRON editor to the project Settings tab.
 
-**Files to change:**
-- New `backend/src/scheduler.js` — `node-cron` job manager
-- `backend/src/index.js` — initialise scheduler on startup
-- `backend/src/routes/projects.js` — add `PATCH /projects/:id/schedule`
-- `backend/src/database/migrations/` — create `schedules` table
-- `frontend/src/components/project/ProjectHeader.jsx` — show next run time
-- `frontend/src/pages/Settings.jsx` — schedule config UI
-- `backend/package.json` — add `node-cron`
+**Implemented in:** PR #86
+- `backend/src/database/migrations/002_run_logs_table.sql` — `schedules` table with `cronExpr`, `timezone`, `enabled`, `lastRunAt`, `nextRunAt`; UNIQUE constraint on `projectId`; seeded `schedule` counter for `SCH-N` IDs (consolidated migration)
+- `backend/src/database/repositories/scheduleRepo.js` — CRUD: `getByProjectId()`, `getAllEnabled()`, `upsert()`, `setEnabled()`, `updateRunTimes()`, `deleteByProjectId()`
+- `backend/src/scheduler.js` — `node-cron` task manager with `initScheduler()`, `reloadSchedule()`, `stopSchedule()`, `getNextRunAt()`; fires scheduled runs identically to `POST /projects/:id/run`
+- `backend/src/routes/projects.js` — `GET/PATCH/DELETE /projects/:id/schedule` endpoints with cron validation
+- `backend/src/routes/recycleBin.js` — cascade-delete schedules and stop tasks on project purge
+- `frontend/src/components/automation/ScheduleManager.jsx` — cron editor, preset picker, timezone selector, enable/disable toggle
+- `frontend/src/components/automation/ProjectAutomationCard.jsx` — `ScheduleManager` integrated into per-project card
+- `frontend/src/components/project/ProjectHeader.jsx` — next scheduled run time badge
+- `backend/src/utils/idGenerator.js` — `generateScheduleId()` → `SCH-1`, `SCH-2`, …
+- `backend/package.json` — added `node-cron`
 
 **Effort:** M | **Source:** Competitive
 
@@ -651,6 +662,147 @@ Token format: `?token=<hmac-sha256(artifactPath+exp, ARTIFACT_SECRET)>&exp=<unix
 
 ---
 
+## Quality Review Findings (April 2026)
+
+*Source: Comprehensive Product Quality Review. Items below were identified as gaps not covered by the existing roadmap. Findings already addressed (FLW-05 SSRF, FLW-06 rate limiting, BE-01 health endpoint) and findings already fixed in PR #85 (GAP-02, GAP-08, FLW-03, FLW-04, UX-08) are omitted.*
+
+---
+
+### ENH-031 — Email verification on registration 🔴 Blocker
+
+**Problem:** `POST /api/auth/register` creates an account immediately with no email verification. Anyone can claim any email address. This is a SOC 2 compliance failure and enables account spoofing. The forgot-password flow already acknowledges this gap with a comment "In production this would send an email" (`backend/src/routes/auth.js:426`).
+
+**Fix:** Add a `verification_tokens(token, userId, email, expiresAt)` table. On registration, create the user with `emailVerified = false` and send a verification email with a signed token link. Block login until `emailVerified = true`. Add `GET /api/auth/verify?token=` endpoint. Resend verification from the login error state.
+
+**Files to change:**
+- `backend/src/database/migrations/` — add `verification_tokens` table; add `emailVerified` column to `users`
+- `backend/src/routes/auth.js` — verification endpoint; block login for unverified users
+- New `backend/src/utils/emailSender.js` — email transport (Resend/SendGrid/SMTP)
+- `frontend/src/pages/Login.jsx` — show "verify your email" state
+- `backend/.env.example` — document `SMTP_*` / `RESEND_API_KEY`
+
+**Effort:** M | **Source:** Quality Review (GAP-01)
+
+---
+
+### ENH-032 — Nonce-based Content Security Policy 🟡 High
+
+**Problem:** `backend/src/middleware/appSetup.js:55` uses `'unsafe-inline'` for both `scriptSrc` and `styleSrc`. The code comment acknowledges "replace with nonces in prod." Without nonces, any XSS injection can execute inline scripts — CSP provides no protection. This weakens the otherwise strong security posture.
+
+**Fix:** Generate a per-request nonce via `crypto.randomBytes(16).toString('base64')`. Pass it to helmet's CSP directives as `'nonce-<value>'`. Inject the nonce into Vite's HTML template via a custom plugin (`transformIndexHtml`). Remove `'unsafe-inline'` from `scriptSrc`.
+
+**Files to change:**
+- `backend/src/middleware/appSetup.js` — nonce generation middleware; update helmet CSP directives
+- `frontend/vite.config.js` — custom plugin to inject `nonce` attribute on `<script>` tags
+- `frontend/index.html` — add `nonce` placeholder
+
+**Effort:** M | **Source:** Quality Review (GAP-03)
+
+---
+
+### ENH-033 — GDPR/CCPA account data export and deletion 🟡 High
+
+**Problem:** There is no way for a user to export their data or delete their account. GDPR Article 17 (right to erasure) and Article 20 (data portability) require both. This is a compliance blocker for EU deployments and increasingly expected by US users under CCPA.
+
+**Fix:** Add `DELETE /api/auth/account` — hard-deletes the user, their projects, tests, runs, activities, tokens, and schedules. Add `GET /api/auth/export` — returns a JSON archive of all user data. Require password confirmation for both. Add UI in Settings → Account.
+
+**Files to change:**
+- `backend/src/routes/auth.js` — `DELETE /account`, `GET /export`
+- All repo files — cascade delete by userId
+- `frontend/src/pages/Settings.jsx` — Account tab with delete/export buttons
+
+**Effort:** M | **Source:** Quality Review (GAP-04)
+
+---
+
+### ENH-034 — Empty crawl result distinction (`completed_empty`) 🟡 High
+
+**Problem:** When a crawl completes but generates zero tests (e.g., site is behind auth, JavaScript-only SPA with no crawlable links, or AI provider returned empty), the run status is `completed` with 0 tests. The UI shows a green success state. Users re-crawl repeatedly without understanding why no tests were generated.
+
+**Fix:** Add `completed_empty` as a run status value. Set it when `run.type === 'crawl' && run.tests.length === 0` at pipeline completion. Show a warning banner in RunDetail with actionable guidance ("Check credentials", "Try a different start URL", "Ensure the page has interactive elements").
+
+**Files to change:**
+- `backend/src/crawler.js` — set `completed_empty` status when no tests generated
+- `frontend/src/components/run/TestRunView.jsx` — render warning for `completed_empty`
+- `frontend/src/pages/RunDetail.jsx` — handle new status in status badge
+
+**Effort:** S | **Source:** Quality Review (FLW-02)
+
+---
+
+### ENH-035 — No-provider-configured global banner 🟡 High
+
+**Problem:** After registration, if no AI provider key is configured, the user can navigate to any project and attempt a crawl, which fails silently (error buried in SSE log stream). There is no persistent, visible warning that the platform requires an API key to function.
+
+**Fix:** Add a global sticky banner component that renders when `config.hasProvider === false`. Show on Dashboard, Tests, and ProjectDetail pages. Link directly to Settings → AI Provider. Dismissible per-session but re-appears on next login.
+
+**Files to change:**
+- New `frontend/src/components/layout/ProviderBanner.jsx`
+- `frontend/src/App.jsx` or layout wrapper — render banner conditionally
+- `frontend/src/api.js` — expose `hasProvider` from `GET /api/config`
+
+**Effort:** S | **Source:** Quality Review (FLW-01)
+
+---
+
+### MAINT-013 — Graceful shutdown with in-flight run draining
+
+**Problem:** `backend/src/index.js:86-87` handles SIGINT/SIGTERM by calling `closeDatabase()` and `process.exit(0)` immediately. Any in-flight test run, crawl, or AI generation is killed mid-execution with no cleanup. The run remains in `status: 'running'` until the next startup when `markOrphansInterrupted()` catches it. Playwright browser processes may leak.
+
+**Fix:** On SIGTERM/SIGINT: (1) stop accepting new HTTP connections, (2) abort all in-flight runs via `runAbortControllers`, (3) wait up to 30s for graceful completion, (4) close the database, (5) exit. Log the shutdown sequence.
+
+**Files to change:**
+- `backend/src/index.js` — replace immediate exit with graceful drain
+- `backend/src/utils/runWithAbort.js` — export a `abortAll()` helper
+
+**Effort:** S | **Source:** Quality Review (BE-05)
+
+---
+
+### MAINT-014 — ARIA live regions for real-time updates
+
+**Problem:** SSE-driven log streams, run status changes, and toast notifications update the DOM without announcing changes to screen readers. Users relying on assistive technology have no awareness of real-time updates — the live log panel is completely invisible to them.
+
+**Fix:** Add `aria-live="polite"` to the log stream container and run status badge. Add `role="alert"` to error/success toast banners. Add `aria-live="assertive"` to the abort confirmation. Ensure focus management after modal close (restore to trigger element).
+
+**Files to change:**
+- `frontend/src/components/run/TestRunView.jsx` — add `aria-live` to log panel
+- `frontend/src/components/shared/Toast.jsx` or banner components — add `role="alert"`
+- All modal components — restore focus on close
+
+**Effort:** S | **Source:** Quality Review (UX-06, UX-07)
+
+---
+
+### MAINT-015 — ESLint + Prettier enforcement in CI
+
+**Problem:** The codebase has no linting or formatting enforcement. Code style varies across files (trailing commas, semicolons, quote style). New contributors have no automated feedback on style violations. This increases review friction and produces unnecessary diff noise.
+
+**Fix:** Add ESLint (flat config) with `@eslint/js` recommended rules + `eslint-plugin-react`. Add Prettier with a `.prettierrc` matching the existing dominant style. Add `npm run lint` to the CI pipeline. Auto-fix existing files in a single formatting commit.
+
+**Files to change:**
+- `backend/eslint.config.js`, `frontend/eslint.config.js` — ESLint configs
+- `.prettierrc` — Prettier config
+- `.github/workflows/ci.yml` — add lint step
+- `backend/package.json`, `frontend/package.json` — add dev dependencies
+
+**Effort:** M | **Source:** Quality Review (PRD-04)
+
+---
+
+### MAINT-016 — Dependabot for automated dependency updates
+
+**Problem:** No automated dependency update mechanism exists. Security vulnerabilities in transitive dependencies (Playwright, Express, AI SDKs) will go undetected until a manual audit. The project has 50+ npm dependencies across backend and frontend.
+
+**Fix:** Add `.github/dependabot.yml` with weekly update schedules for both `backend/` and `frontend/` package ecosystems. Group minor/patch updates. Set reviewers to the maintainer team. Add a CI check that runs tests on Dependabot PRs.
+
+**Files to change:**
+- New `.github/dependabot.yml`
+
+**Effort:** XS | **Source:** Quality Review (PRD-07)
+
+---
+
 These items are not phase-bounded — they should be addressed incrementally alongside feature work.
 
 ---
@@ -729,9 +881,17 @@ These items are not phase-bounded — they should be addressed incrementally alo
 
 ---
 
-### MAINT-010 — Semantic deduplication using embedding similarity (M-05)
+### ~~MAINT-010 — Semantic deduplication using embedding similarity (M-05)~~ ✅ Complete
 
 **Problem:** `backend/src/pipeline/deduplicator.js` uses exact string matching on test name + description. Renamed tests or slightly rephrased duplicates are not caught. Large test suites accumulate near-duplicate tests over time, degrading run times and signal quality.
+
+**Implemented in:** PR #55
+- Added `levenshteinDistance()` + `fuzzyNameSimilarity()` — catches paraphrased test names (≥ 0.80 similarity threshold)
+- Added `buildTfIdfVector()` + `cosineSimilarity()` + `semanticSimilarity()` — catches semantic duplicates across name + description + steps (≥ 0.65 cosine threshold)
+- `hashTest()` now includes `description` field in fingerprint — tests with identical code but different descriptions are correctly grouped
+- `deduplicateTests()` and `deduplicateAcrossRuns()` both run 4-layer strategy: structural hash → normalized name → fuzzy name → semantic TF-IDF
+- Thresholds exported as `FUZZY_NAME_THRESHOLD` and `SEMANTIC_SIMILARITY_THRESHOLD` for testability
+- No new dependencies — pure JS + Node built-in `node:crypto`
 
 **Files:** `backend/src/pipeline/deduplicator.js` | **Effort:** M | **Source:** Audit (M-05)
 
@@ -752,6 +912,21 @@ These items are not phase-bounded — they should be addressed incrementally alo
 
 ---
 
+### ~~MAINT-012 — Deep test validation (locator, action, assertion) (M-07)~~ ✅ Complete
+
+**Problem:** `backend/src/pipeline/testValidator.js` only checked basic structure (URL presence + step count). AI-generated tests containing invalid CSS selectors, typo'd Playwright API calls (`.clicks()`, `.toHavURL()`), or logically-redundant `.not` chains passed validation and failed at runtime.
+
+**Implemented in:** PR #57
+- Added `validateLocators(code)` — checks CSS selectors for unbalanced brackets, unknown pseudo-classes, and excessive depth (> 6 combinators); checks XPath for unbalanced brackets, invalid `//[@` syntax, and excessive depth (> 8 steps)
+- Added `validateActions(code)` — whitelists all valid Playwright API methods on `page`/`locator`/`frame`/`context`/`request`; flags any call not in the whitelist (e.g. `.clicks()`, `.fillIn()`)
+- Added `validateAssertions(code)` — validates every `expect()` chain against the full Playwright matcher set; flags typos (`toHavURL` → `toHaveURL`) and logically-redundant `.not` pairs (`.not.toBeHidden()`, `.not.toBeDisabled()`)
+- Deep passes only run after Acorn confirms syntactic validity — no false positives from parsing malformed code
+- All three new validators are exported for unit testing with `VALID_PAGE_ACTIONS` and `VALID_MATCHERS` sets exported for whitelist extension
+
+**Files:** `backend/src/pipeline/testValidator.js` | **Effort:** M | **Source:** Issue #57
+
+---
+
 ## Competitive Gap Analysis
 
 How Sentri compares to industry-standard QA platforms as of this audit:
@@ -764,8 +939,8 @@ How Sentri compares to industry-standard QA platforms as of this audit:
 | Visual regression | ❌ **Gap** | ✅ Native | ✅ Native | ✅ Native | Via plugins |
 | Cross-browser | ❌ Chromium only | ✅ Chrome+Firefox | ✅ Chrome+Firefox | ✅ All | ✅ All 3 |
 | Mobile/device emulation | ❌ **Gap** | ✅ | ✅ | ✅ | ✅ Native |
-| CI/CD integration | ❌ **Gap** | ✅ Native | ✅ Native | ✅ Native | ✅ CLI |
-| Scheduled runs | ❌ **Gap** | ✅ | ✅ | ✅ | Via CI cron |
+| CI/CD integration | ✅ Webhook trigger + token auth | ✅ Native | ✅ Native | ✅ Native | ✅ CLI |
+| Scheduled runs | ✅ Cron scheduler + timezone | ✅ | ✅ | ✅ | Via CI cron |
 | Multi-tenancy / RBAC | ❌ **Gap** | ✅ | ✅ | ✅ | N/A |
 | Failure notifications | ❌ **Gap** | ✅ Slack/email | ✅ Slack/email | ✅ | N/A |
 | API testing | ✅ HAR-based generation | ✅ | ❌ | ✅ | ✅ Manual |
@@ -778,7 +953,7 @@ How Sentri compares to industry-standard QA platforms as of this audit:
 
 **Sentri's unique strengths:** Self-hosted + AI generation + human review queue + multi-provider LLM support + standalone Playwright export (planned). No competitor offers all of these together.
 
-**Critical competitive gaps to close (Phase 1–2):** CI/CD webhook, scheduled runs, cross-browser, visual regression, multi-tenancy/RBAC, failure notifications.
+**Critical competitive gaps to close (Phase 2–3):** Cross-browser, visual regression, multi-tenancy/RBAC, failure notifications, email verification (ENH-031).
 
 ---
 
@@ -787,17 +962,18 @@ How Sentri compares to industry-standard QA platforms as of this audit:
 | Phase | Items | Status | Key Deliverable |
 |-------|-------|--------|-----------------|
 | ~~Phase 0 — Sprint 3~~ | S3-02, S3-04, S3-08 | ✅ Complete | Test quality, Shadow DOM, Disposable email |
-| Phase 1 (Weeks 1–6) | ENH-005, 007, 013, 027, 030, 021, 020, 010, 008, 004, 024 | 🔄 In progress (ENH-004 ✅, ENH-005 ✅, ENH-007 ✅, ENH-010 ✅, ENH-013 ✅, ENH-020 ✅, ENH-021 ✅, ENH-024 ✅, ENH-027 ✅, ENH-030 ✅) | Production-safe for real teams |
-| Phase 2 (Weeks 7–16) | ENH-001, 002, 003, 012, 009, 011, 006, 017, 022, 023 | 🔲 Not started | Sellable to companies |
+| Phase 1 (Weeks 1–6) | ENH-005, 007, 013, 027, 030, 021, 020, 010, 008, 004, 024 | ✅ Complete | Production-safe for real teams |
+| Phase 2 (Weeks 7–16) | ENH-001, 002, 003, 012, 009, 011, 006, 017, 022, 023 | 🔄 In progress (ENH-011 ✅, ENH-006 ✅) | Sellable to companies |
 | Phase 3 (Weeks 17–28) | ENH-016, 014, 015, 018, 019, 025, 028, 029, 026, S4-03, S4-04, S4-05, S4-06, S4-07, S4-08, S4-09 | 🔲 Not started | Competitive with Mabl / Testim |
-| Ongoing | MAINT-001 through MAINT-011 | 🔲 Backlog | Platform moat + infrastructure |
+| Ongoing | MAINT-001 through MAINT-016 | 🔄 In progress (MAINT-010 ✅, MAINT-011 ✅, MAINT-012 ✅) | Platform moat + infrastructure |
+| Quality Review | ENH-031–035, MAINT-013–016 | 🔲 Not started | Compliance, UX, DX |
 
-**Total items:** 30 audit enhancements + 17 NEXT_STEPS sprint items + 11 maintenance items = **58 tracked items**
-**Completed:** S1-01 → S1-06 (Sprint 1), S3-02, S3-04, S3-08 (Sprint 3), ENH-004, ENH-005, ENH-007, ENH-010, ENH-013, ENH-020, ENH-021, ENH-024, ENH-027, ENH-030 = **19 complete**
-**Critical blockers remaining:** ENH-001, 002, 003, 012 (Phase 2) = **4 blockers**
-**Highest adoption impact:** ENH-011 (CI/CD), ENH-006 (scheduling), ENH-003 (multi-tenancy), S4-06 (monitoring mode)
-**Lowest effort / highest immediate value:** ENH-015, S4-09, S4-07
-**Next PR priorities (recommended order):** ENH-008 (Run logs table, M) → ENH-011 (CI/CD webhook, M) → ENH-006 (Scheduling, M)
+**Total items:** 35 audit enhancements + 17 NEXT_STEPS sprint items + 16 maintenance items = **68 tracked items**
+**Completed:** S1-01 → S1-06 (Sprint 1), S3-02, S3-04, S3-08 (Sprint 3), ENH-004, ENH-005, ENH-006, ENH-007, ENH-008, ENH-010, ENH-011, ENH-013, ENH-020, ENH-021, ENH-024, ENH-027, ENH-030, MAINT-010, MAINT-012 = **24 complete**
+**Critical blockers remaining:** ENH-001, 002, 003, 012 (Phase 2), ENH-031 (email verification) = **5 blockers**
+**Highest adoption impact:** ENH-003 (multi-tenancy), S4-06 (monitoring mode), ENH-017 (failure notifications), ENH-031 (email verification)
+**Lowest effort / highest immediate value:** ENH-034 (S), ENH-035 (S), MAINT-016 (XS), MAINT-013 (S)
+**Next PR priorities (recommended order):** ENH-031 (email verification, M) → ENH-009 (BullMQ job queue, L) → ENH-001 (PostgreSQL, XL) → ENH-003 (Multi-tenancy, L)
 
 ---
 

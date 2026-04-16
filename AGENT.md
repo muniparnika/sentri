@@ -21,13 +21,13 @@ backend/           Node.js 20+ ESM server (Express 4, Playwright, LLM SDKs)
       sqlite.js            SQLite singleton (WAL mode, auto-schema)
       schema.sql           Table definitions, indexes, counter seeds
       migrate.js           One-time JSON → SQLite migration
-      repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, activityRepo, healingRepo, passwordResetTokenRepo)
+      repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, runLogRepo, activityRepo, healingRepo, passwordResetTokenRepo, webhookTokenRepo, scheduleRepo)
     aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/Ollama)
     selfHealing.js         Adaptive selector waterfall + healing history
     crawler.js             Link-crawl orchestrator
     testRunner.js          Parallel test execution orchestrator
-    middleware/            Express middleware (appSetup, CORS, Helmet)
-    routes/                REST endpoints (auth, projects, tests, runs, sse, settings, dashboard, system, chat, recycleBin)
+    middleware/            Express middleware (appSetup, authenticate, CORS, Helmet)
+    routes/                REST endpoints (auth, projects, tests, runs, sse, settings, dashboard, system, chat, recycleBin, trigger)
     pipeline/              8-stage AI generation pipeline
     runner/                Per-test execution (code parsing, executor, screencast, page capture)
     utils/                 ID generator, logging, abort helpers, encryption, validation
@@ -107,7 +107,7 @@ Before writing new code, check whether a shared utility, component, or CSS class
 | `abortHelper.js` | `throwIfAborted(signal)`, `isRunAborted()`, `finalizeRunIfNotAborted()` | Every pipeline/runner stage with I/O |
 | `runLogger.js` | `log()`, `logWarn()`, `logError()`, `logSuccess()`, `emitRunEvent()` | All run-level logging and SSE |
 | `errorClassifier.js` | `classifyError(err, context)`, `ERROR_CATEGORY` | Converting raw errors to user-friendly messages (runs, chat, activity logs) |
-| `idGenerator.js` | `generateProjectId()`, `generateTestId()`, `generateRunId()` | Creating new domain objects |
+| `idGenerator.js` | `generateProjectId()`, `generateTestId()`, `generateRunId()`, `generateWebhookTokenId()`, `generateScheduleId()` | Creating new domain objects |
 | `validate.js` | `sanitise()`, `validateUrl()`, `validateProjectPayload()`, `validateTestPayload()`, etc. | All route input validation |
 | `credentialEncryption.js` | `encryptCredentials()`, `decryptCredentials()` | Storing/reading project login credentials |
 | `logFormatter.js` | `formatTimestamp()`, `formatLogLine()`, `shouldLog()` | Log formatting (used by runLogger) |
@@ -148,6 +148,11 @@ The CSS follows ITCSS cascade order, imported via `frontend/src/index.css`:
 | Text helpers | `.text-sm .text-xs .text-muted .text-sub .text-mono .font-bold .font-semi` | Inline font overrides |
 | Divider line | `.divider` | `style={{ height: 1, background: "var(--border)" }}` |
 | Animations | `.spin .pulse .fade-in .skeleton` | Custom `@keyframes` for common effects |
+| Automation card | `.auto-card__header .auto-card__icon .auto-card__body .auto-card__section .auto-card__section--bordered .auto-card__section-title` | `features/automation.css` — project automation card layout |
+| Schedule blocks | `.auto-sched-empty .auto-sched-summary .auto-sched-editor .auto-sched-hint .auto-sched-label` | `features/automation.css` — schedule manager states |
+| Preset dropdown | `.auto-preset-menu .auto-preset-item` | `features/automation.css` — cron preset picker |
+| Integration grid | `.auto-integ-grid .auto-integ-card .auto-integ-icon` | `features/automation.css` — CI/CD integration card grid |
+| Token states | `.auto-token-reveal .auto-token-empty .auto-snippet` | `features/automation.css` — token reveal banner, empty state, CI snippets |
 
 **When to create a new CSS file**:
 - **Feature-scoped styles** → `frontend/src/styles/features/<feature>.css` — for self-contained features (e.g. chat, onboarding). Scope all classes under a namespace prefix (`.chat-*`, `.onboard-*`).
@@ -163,6 +168,8 @@ The CSS follows ITCSS cascade order, imported via `frontend/src/index.css`:
 | `src/utils/apiBase.js` | `API_BASE`, `parseJsonResponse()` | Base URL resolution, safe JSON parsing |
 | `src/utils/csrf.js` | `getCsrfToken()` | CSRF token for mutating API requests |
 | `src/utils/markdown.js` | `escapeHtml()`, `renderMarkdown()` | Rendering AI/chat markdown safely (used by `AIChat.jsx` and `ChatHistory.jsx`) |
+| `src/utils/formatters.js` | `fmtMs()`, `fmtDate()`, `fmtDateTime()`, `fmtRelativeDate()`, `fmtDateTimeMedium()`, `fmtFutureRelative()`, `fmtDuration()`, `passRateColor()` | All date, time, duration, and colour formatting across pages and components |
+| `src/components/shared/CopyButton.jsx` | `<CopyButton text={…} />` | Copy-to-clipboard button with "Copied" feedback (used by TokenManager, IntegrationSnippets) |
 | `src/context/AuthContext.jsx` | `useAuth()` hook, login/logout, `authFetch()` | Auth state in any component |
 | `src/hooks/useProjectData.js` | `useProjectData(projectId)` | Fetching project + tests + runs |
 | `src/hooks/useRunSSE.js` | `useRunSSE(runId)` | Real-time run streaming |
@@ -299,7 +306,7 @@ console.error(`API key: ${apiKey}`);
 - 4xx errors return `{ error: string }` with a descriptive message.
 - 5xx errors return `{ error: "Internal server error" }` — never leak stack traces to the client.
 - Validate all user-supplied input at the route boundary using `utils/validate.js` before touching the DB.
-- All routes except `/api/auth/*` and `/health` require `requireAuth` middleware.
+- All routes except `/api/auth/*`, `/health`, and `/api/projects/:id/trigger*` require `requireAuth` middleware (re-exported from `routes/auth.js`, delegates to `middleware/authenticate.js`). The trigger endpoints (`POST /trigger` and `GET /trigger/runs/:runId`) use `requireTrigger` from `middleware/authenticate.js` for per-project Bearer token authentication (ENH-011). Both middlewares are produced by the same `authenticate()` strategy factory — see "Authentication Architecture" below.
 
 ```js
 // ✅ Route pattern — use repository modules for DB access
@@ -314,6 +321,48 @@ router.post("/projects/:id/thing", async (req, res) => {
 });
 ```
 
+### Authentication Architecture
+
+All authentication is centralised in **`backend/src/middleware/authenticate.js`** using a strategy pattern. This is the single source of truth for token extraction, verification, and revocation. Route files never implement their own auth logic.
+
+#### Strategy table
+
+| Strategy name    | Token source                   | Verifier                                 | Sets on `req`                              |
+|------------------|--------------------------------|------------------------------------------|--------------------------------------------|
+| `jwt-cookie`     | `access_token` HttpOnly cookie | HS256 JWT verify + revocation check      | `req.authUser`                             |
+| `jwt-bearer`     | `Authorization: Bearer` header | Same                                     | `req.authUser`                             |
+| `jwt-query`      | `?token=` query param (SSE)    | Same                                     | `req.authUser`                             |
+| `trigger-token`  | `Authorization: Bearer` header | SHA-256 hash lookup in `webhook_tokens`  | `req.triggerToken`, `req.triggerProject`    |
+
+#### Convenience aliases
+
+| Alias            | Strategies tried (in order)                       | Used by                                   |
+|------------------|---------------------------------------------------|-------------------------------------------|
+| `requireUser`    | `jwt-cookie` → `jwt-bearer` → `jwt-query`        | All user-facing routes (via `requireAuth`) |
+| `requireTrigger` | `trigger-token`                                   | CI/CD trigger endpoints in `trigger.js`    |
+| `requireAuth`    | Re-export of `requireUser` from `routes/auth.js`  | Backward compat — all existing imports     |
+
+#### CSRF auto-exemption
+
+The CSRF middleware in `appSetup.js` skips validation when no `access_token` cookie is present on the request. This means non-cookie auth strategies (Bearer token, trigger token, query param) are automatically CSRF-exempt — no manual regex carve-outs needed. When adding a new auth strategy, if it does not use cookies, CSRF exemption is automatic.
+
+#### Adding a new auth strategy
+
+1. Add a new entry to `AUTH_TYPE` in `middleware/authenticate.js`.
+2. Add a strategy object to the `STRATEGIES` array (extract → verify).
+3. If the strategy uses cookies, add its name to `COOKIE_STRATEGIES`.
+4. Create a convenience alias (e.g. `export const requireApiKey = authenticate(AUTH_TYPE.API_KEY)`).
+5. Mount it on the relevant routes. No changes needed to `appSetup.js`, `index.js`, or other route files.
+
+#### Key files
+
+| File | Role |
+|---|---|
+| `middleware/authenticate.js` | Strategy definitions, JWT primitives (`signJwt`, `verifyJwt`, `getJwtSecret`), token revocation, `authenticate()` factory |
+| `routes/auth.js` | Auth **routes** (login, register, OAuth, logout, refresh, password reset). Imports JWT primitives from `authenticate.js`. Re-exports `requireAuth` as alias for `requireUser`. |
+| `middleware/appSetup.js` | CSRF middleware — imports `AUTH_COOKIE` from `authenticate.js` for auto-exemption |
+| `routes/trigger.js` | CI/CD trigger routes — uses `requireTrigger` from `authenticate.js` |
+
 ### Database
 
 Sentri uses **SQLite** (via `better-sqlite3`) with WAL mode. Data lives in `data/sentri.db`.
@@ -321,8 +370,8 @@ Sentri uses **SQLite** (via `better-sqlite3`) with WAL mode. Data lives in `data
 - **Repository pattern**: All DB access goes through repository modules in `backend/src/database/repositories/`. Never write raw SQL in route handlers.
 - **`getDb()`** (in `db.js`) returns a read-only snapshot from SQLite. It exists as a backward-compatibility shim for pipeline code that still receives `db` as a parameter. **Do not use `getDb()` for writes** — use repository modules directly.
 - **`saveDb()`** is a no-op. SQLite writes are synchronous and immediately durable.
-- **Repositories**: `projectRepo`, `testRepo`, `runRepo`, `activityRepo`, `healingRepo`, `userRepo`, `counterRepo`, `passwordResetTokenRepo` — each in `backend/src/database/repositories/`.
-- **JSON columns**: `steps`, `tags`, `logs`, `results`, `testQueue`, `credentials`, etc. are stored as JSON strings and auto-serialized/deserialized by the repository layer.
+- **Repositories**: `projectRepo`, `testRepo`, `runRepo`, `runLogRepo`, `activityRepo`, `healingRepo`, `userRepo`, `counterRepo`, `passwordResetTokenRepo`, `webhookTokenRepo`, `scheduleRepo` — each in `backend/src/database/repositories/`.
+- **JSON columns**: `steps`, `tags`, `results`, `testQueue`, `credentials`, etc. are stored as JSON strings and auto-serialized/deserialized by the repository layer. Note: `logs` was moved from a JSON column on `runs` to a dedicated `run_logs` table (ENH-008) — `runRepo.getById()` hydrates `run.logs` from `run_logs` automatically.
 - **Boolean columns**: `isJourneyTest`, `assertionEnhanced`, `isApiTest` are stored as `0`/`1` integers and converted to `true`/`false` by `testRepo`.
 - **ID generation**: Atomic counters in the `counters` table via `counterRepo.next("test")` → `TC-1`, `TC-2`, etc.
 - **Auto-migration**: On first startup, if `data/sentri-db.json` exists and SQLite is empty, `database/migrate.js` imports all data in a single transaction and renames the JSON file to `.migrated`.
@@ -382,7 +431,7 @@ res.flushHeaders();
 
 - Functional components only. Class components exist only in `components/ErrorBoundary.jsx` for React's mandatory class API (`getDerivedStateFromError` / `componentDidCatch`).
 - Pages live in `src/pages/`, reusable UI in `src/components/`.
-- Domain-specific sub-components live in subdirectories, e.g. `src/components/project/`, `src/components/test/`.
+- Domain-specific sub-components live in subdirectories, e.g. `src/components/project/`, `src/components/test/`, `src/components/automation/`.
 - Lazy-load all page-level components via `React.lazy()` + `Suspense` as shown in `App.jsx`.
 
 ### State & Data Fetching
@@ -548,13 +597,45 @@ Stage 1  pageSnapshot.js        Capture DOM snapshot + classify page intent
 Stage 2  elementFilter.js       Filter interactive elements (remove noise, socials, etc.)
 Stage 3  intentClassifier.js    Classify element intent; build user journeys
 Stage 4  journeyGenerator.js    Generate test plans (PLAN phase, avoids token truncation)
-Stage 5  deduplicator.js        Hash+score dedup within batch and across existing tests
+Stage 5  deduplicator.js        4-layer dedup: structural hash → fuzzy name → semantic TF-IDF → description
 Stage 6  assertionEnhancer.js   Strengthen weak/missing assertions using page context
-Stage 7  testValidator.js       Reject malformed, placeholder, or navigation-only tests
+Stage 7  testValidator.js       Structural + locator + action method + assertion chain validation
 Stage 8  testPersistence.js     Write validated tests to DB as "draft" status
 ```
 
 Stages 5–7 are shared between `generateSingleTest` and `crawlAndGenerateTests` via `pipelineOrchestrator.js`. Any change to these stages must go through that module — do not duplicate the logic.
+
+### Stage 5 — Deduplicator detail
+
+`deduplicator.js` runs four layers in order; a test is eliminated the moment any layer matches:
+
+| Layer | Mechanism | Threshold | Defect resolved |
+|-------|-----------|-----------|-----------------|
+| 1 | Structural hash (SHA-256 of Playwright actions + description) | exact | #4 (description now included) |
+| 2 | Normalised name + same `sourceUrl` | exact, length ≥ 15 chars | existing |
+| 3 | Fuzzy name — Levenshtein similarity | ≥ 0.80 | #3 (paraphrased names) |
+| 4 | Semantic TF-IDF cosine — name + description + steps | ≥ 0.65 | #1, #2 (semantic duplicates) |
+
+Exported constants `FUZZY_NAME_THRESHOLD` and `SEMANTIC_SIMILARITY_THRESHOLD` let tests override thresholds without editing production code. The TF-IDF stop-word list is intentionally conservative: it strips common English words and generic QA verbs so domain-specific nouns (feature names, form field names, page routes) carry the signal.
+
+**Performance note:** Layers 3 and 4 are O(n²) over the post-layer-1 set. This is acceptable for typical batch sizes (< 200 tests) but should be revisited if batches routinely exceed 1 000.
+
+---
+
+### Stage 7 — Validator detail
+
+`testValidator.js` runs four validation passes in sequence. All collected issues are returned; the pipeline rejects any test with at least one issue.
+
+| Pass | Function | What it catches | Defect |
+|------|----------|-----------------|--------|
+| Structural | (inline in `validateTest`) | Missing name/steps, placeholder URLs, missing `async`, missing `page.goto` | existing |
+| Locator | `validateLocators(code)` | Unbalanced CSS brackets, unknown pseudo-classes, overly-deep selectors, malformed XPath (`//[@`) | #1 |
+| Action | `validateActions(code)` | Method calls on `page`/`locator`/`frame`/`request` not in the Playwright API whitelist (e.g. `.clicks()`, `.fillIn()`) | #2 |
+| Assertion | `validateAssertions(code)` | Matcher typos in `expect()` chains (e.g. `toHavURL`), logically-redundant `.not.toBeHidden()` | #3 |
+
+Deep validation (passes 2–4) only runs **after** Acorn confirms the code is syntactically valid, so regex passes never operate on malformed code.
+
+**Extending the whitelists:** add entries to `VALID_PAGE_ACTIONS` or `VALID_MATCHERS` in `testValidator.js` when Playwright releases new APIs. Do not inline these sets into other files.
 
 ---
 
@@ -731,7 +812,7 @@ The Vite dev server proxies `/api/*` to `http://localhost:3001` automatically. I
 Current observability:
 
 - **Health endpoint**: `GET /health` — use for uptime monitoring (e.g. UptimeRobot, Pingdom).
-- **System info**: `GET /api/system` (authenticated) — returns uptime, Node/Playwright versions, memory usage, and DB record counts.
+- **System info**: `GET /api/system` (authenticated) — returns uptime, Node/Playwright versions, memory usage, DB record counts, and `activeSchedules` (number of armed cron tasks).
 - **Structured logging**: All backend logs go through `formatLogLine()` from `utils/logFormatter.js`. Set `LOG_JSON=true` for machine-parseable JSON lines (compatible with Datadog, Cloud Logging, etc.). Semantic lifecycle events (`run.start`, `browser.launched`, `run.complete`, etc.) are emitted via `structuredLog()`.
 - **SSE events**: Real-time run progress is streamed to the frontend via Server-Sent Events.
 
@@ -746,9 +827,9 @@ When adding external observability, consider:
 Before submitting any PR that touches auth, routes, or data handling, verify:
 
 - [ ] Passwords are hashed with `hashPassword()` (scrypt, random salt) — never stored plaintext.
-- [ ] JWTs are validated with `requireAuth` on every non-public endpoint.
+- [ ] JWTs are validated with `requireAuth` (or `requireUser`/`requireTrigger` from `middleware/authenticate.js`) on every non-public endpoint.
 - [ ] JWTs are stored in HttpOnly cookies only — never returned in response bodies or stored in localStorage.
-- [ ] Mutating endpoints (POST/PATCH/PUT/DELETE) are protected by CSRF double-submit cookie validation (handled by `csrfMiddleware` in `appSetup.js`). New exempt paths must be added to `CSRF_EXEMPT_PATHS`.
+- [ ] Mutating endpoints (POST/PATCH/PUT/DELETE) are protected by CSRF double-submit cookie validation (handled by `csrfMiddleware` in `appSetup.js`). Non-cookie auth strategies are auto-exempt. Public mutation paths must be added to `CSRF_EXEMPT_PATHS`.
 - [ ] User-supplied strings are validated with `utils/validate.js` before DB writes.
 - [ ] No sensitive data (API keys, passwords, full JWTs) is returned in API responses. Use `maskKey()` for display.
 - [ ] Credential values stored in the DB use `credentialEncryption.js`.
@@ -817,8 +898,8 @@ The following are **not yet implemented** but should be addressed before product
 ### Adding a New API Endpoint
 
 1. Add the handler to the appropriate file in `backend/src/routes/`.
-2. Mount it in `index.js` behind `requireAuth` unless it is explicitly public.
-3. If the endpoint is a public mutation (no auth required), add it to `CSRF_EXEMPT_PATHS` in `backend/src/middleware/appSetup.js`.
+2. Mount it in `index.js` behind `requireAuth` unless it is explicitly public or uses a different auth strategy (e.g. `requireTrigger` for CI/CD endpoints).
+3. If the endpoint uses a new auth strategy, add it to `middleware/authenticate.js` (see "Authentication Architecture"). Non-cookie strategies are CSRF-exempt automatically. Public mutation paths must be added to `CSRF_EXEMPT_PATHS` in `appSetup.js`.
 4. Add a JSDoc block documenting method, path, auth requirement, request body, and response shape.
 5. Add a corresponding function in `frontend/src/api.js`. The `req()` wrapper auto-injects `credentials: "include"` and `X-CSRF-Token` — no manual auth handling needed.
 6. Write a test in `backend/tests/api-flow.test.js` or a dedicated test file. Register it in `backend/tests/run-tests.js`.
@@ -855,6 +936,7 @@ The frontend follows a clear separation of concerns between pages:
 | **Dashboard** | Read-only analytics hub | Pass rate, trends, defects, recent activity |
 | **Tests** (`Tests.jsx`) | **Central command centre** for all test creation | Crawl a project, Generate from story, Run regression, Review drafts |
 | **ProjectDetail** | Project-scoped execution & review | Run regression, review/approve/reject this project's tests, export, traceability |
+| **Automation** (`/automation`) | Cross-project automation hub | CI/CD trigger tokens, scheduled runs (ENH-006), integration snippets; deep-link via `?project=PRJ-X` |
 | **Projects** | Project list & creation | Create/delete projects |
 | **Runs** / **RunDetail** | Run history & live execution view | View logs, results, abort |
 | **ChatHistory** (`/chat`) | Full-page AI chat with session history | New/rename/delete sessions, search, export (Markdown/JSON), persistent localStorage per user |

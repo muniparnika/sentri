@@ -9,13 +9,14 @@
  * Extracted from ProjectDetail.jsx to reduce page-level complexity.
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Play, RefreshCw, Globe, Download, ChevronDown, Sparkles, ArrowRight,
+  Play, RefreshCw, Globe, Download, ChevronDown, Sparkles, ArrowRight, Zap, Clock,
 } from "lucide-react";
 import { PARALLEL_WORKERS_TUNING } from "../../config/testDialsConfig.js";
 import { api } from "../../api.js";
+import { fmtFutureRelative } from "../../utils/formatters.js";
 
 /**
  * @param {Object} props
@@ -40,6 +41,18 @@ export default function ProjectHeader({
 
   const { draftTests, approvedTests, rejectedTests, apiTests, uiTests, passed, failed } = stats;
 
+  // ENH-006: Load next scheduled run time
+  const [nextRunAt, setNextRunAt] = useState(null);
+  useEffect(() => {
+    if (!projectId) return;
+    api.getSchedule(projectId)
+      .then(data => {
+        const s = data && data.schedule;
+        setNextRunAt(s && s.enabled && s.nextRunAt ? s.nextRunAt : null);
+      })
+      .catch(() => {});
+  }, [projectId]);
+
   return (
     <div className="card pd-header">
       <div className="pd-header-top">
@@ -55,6 +68,23 @@ export default function ProjectHeader({
         <div className="pd-header-actions">
           {/* ── Row 1: Generate link + workers + Run button ── */}
           <div className="pd-header-row">
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => navigate(`/automation?project=${projectId}`)}
+              style={{ gap: 6 }}
+            >
+              <Zap size={13} />
+              Automation
+            </button>
+            {nextRunAt && (
+              <span
+                title={"Next scheduled run: " + nextRunAt}
+                style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.75rem", color: "var(--text3)" }}
+              >
+                <Clock size={11} />
+                {fmtFutureRelative(nextRunAt)}
+              </span>
+            )}
             <button
               className="btn btn-ghost btn-sm"
               onClick={() => navigate("/tests")}
