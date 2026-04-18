@@ -7,13 +7,13 @@ import { getDatabase } from "../sqlite.js";
 
 /**
  * Create an activity entry.
- * @param {Object} activity — { id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId?, userName? }
+ * @param {Object} activity — { id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId?, userName?, workspaceId? }
  */
 export function create(activity) {
   const db = getDatabase();
   db.prepare(`
-    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName)
-    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName)
+    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName, workspaceId)
+    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName, @workspaceId)
   `).run({
     id: activity.id,
     type: activity.type,
@@ -26,6 +26,7 @@ export function create(activity) {
     createdAt: activity.createdAt,
     userId: activity.userId || null,
     userName: activity.userName || null,
+    workspaceId: activity.workspaceId || null,
   });
 }
 
@@ -54,13 +55,18 @@ export function getAllAsDict() {
  * @param {Object} [filters]
  * @param {string} [filters.type]
  * @param {string} [filters.projectId]
+ * @param {string} [filters.workspaceId] — Scope to workspace (ACL-001).
  * @param {number} [filters.limit=200]
  * @returns {Object[]}
  */
-export function getFiltered({ type, projectId, limit } = {}) {
+export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
   const db = getDatabase();
   let sql = "SELECT * FROM activities WHERE 1=1";
   const params = [];
+  if (workspaceId) {
+    sql += " AND workspaceId = ?";
+    params.push(workspaceId);
+  }
   if (type) {
     sql += " AND type = ?";
     params.push(type);
@@ -75,26 +81,44 @@ export function getFiltered({ type, projectId, limit } = {}) {
 }
 
 /**
- * Count total activities.
+ * Count activities with optional workspace/project scope.
+ * @param {Object} [filters]
+ * @param {string} [filters.workspaceId]
+ * @param {string} [filters.projectId]
  * @returns {number}
  */
-export function count() {
+export function countFiltered({ workspaceId, projectId } = {}) {
   const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM activities").get().cnt;
+  let sql = "SELECT COUNT(*) as cnt FROM activities WHERE 1=1";
+  const params = [];
+  if (workspaceId) {
+    sql += " AND workspaceId = ?";
+    params.push(workspaceId);
+  }
+  if (projectId) {
+    sql += " AND projectId = ?";
+    params.push(projectId);
+  }
+  return db.prepare(sql).get(...params).cnt;
 }
 
 /**
  * Get activities filtered by type for dashboard analytics.
  * Only returns type, status, createdAt — skips detail, names, etc.
  * @param {string[]} types — Activity types to include.
+ * @param {Object} [opts]
+ * @param {string} [opts.workspaceId] — Optional workspace scope.
  * @returns {Object[]}
  */
-export function getByTypes(types) {
+export function getByTypes(types, opts = {}) {
   const db = getDatabase();
+  const { workspaceId } = opts;
   const placeholders = types.map(() => "?").join(", ");
+  const workspaceClause = workspaceId ? " AND workspaceId = ?" : "";
+  const params = workspaceId ? [...types, workspaceId] : types;
   return db.prepare(
-    `SELECT type, status, createdAt FROM activities WHERE type IN (${placeholders}) ORDER BY createdAt DESC`
-  ).all(...types);
+    `SELECT type, status, createdAt FROM activities WHERE type IN (${placeholders})${workspaceClause} ORDER BY createdAt DESC`
+  ).all(...params);
 }
 
 /**
@@ -109,12 +133,12 @@ export function deleteByProjectId(projectId) {
 }
 
 /**
- * Delete all activities.
+ * Delete all activities in a workspace.
+ * @param {string} workspaceId
  * @returns {number} Number of deleted rows.
  */
-export function clearAll() {
+export function clearByWorkspaceId(workspaceId) {
   const db = getDatabase();
-  const count = db.prepare("SELECT COUNT(*) as cnt FROM activities").get().cnt;
-  db.prepare("DELETE FROM activities").run();
-  return count;
+  const info = db.prepare("DELETE FROM activities WHERE workspaceId = ?").run(workspaceId);
+  return info.changes;
 }

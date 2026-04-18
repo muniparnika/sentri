@@ -10,7 +10,7 @@
  * Use {@link getDeletedByProjectId} / {@link restore} for recycle-bin operations.
  *
  * ### Pagination
- * {@link getByProjectIdPaged} and {@link getAllPaged} return
+ * {@link getByProjectIdPaged} and {@link getAllPagedByProjectIds} return
  * `{ data: Test[], meta: { total, page, pageSize, hasMore } }`.
  */
 
@@ -58,7 +58,7 @@ const INSERT_COLS = [
   "isJourneyTest", "journeyType", "assertionEnhanced", "reviewStatus",
   "reviewedAt", "promptVersion", "modelUsed", "linkedIssueKey", "tags",
   "generatedFrom", "isApiTest", "scenario", "codeRegeneratedAt",
-  "aiFixAppliedAt", "codeVersion",
+  "aiFixAppliedAt", "codeVersion", "workspaceId",
 ];
 
 const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
@@ -76,30 +76,106 @@ export function getAll() {
 }
 
 /**
- * Get all non-deleted tests with pagination.
+ * Get all non-deleted tests belonging to the given project IDs.
+ * Used by the workspace-scoped GET /api/tests endpoint (ACL-001).
+ * @param {string[]} projectIds
+ * @returns {Object[]}
+ */
+export function getAllByProjectIds(projectIds) {
+  if (!projectIds || projectIds.length === 0) return [];
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT * FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
+  ).all(...projectIds).map(rowToTest);
+}
+
+/**
+ * Get all test IDs (including soft-deleted) for the given project IDs.
+ * Used by data-management cleanup endpoints that need to clear derived data
+ * (e.g. healing history) for ALL tests, not just live ones.
+ * @param {string[]} projectIds
+ * @returns {string[]}
+ */
+export function getAllIdsByProjectIdsIncludeDeleted(projectIds) {
+  if (!projectIds || projectIds.length === 0) return [];
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT id FROM tests WHERE projectId IN (${placeholders})`
+  ).all(...projectIds).map((r) => r.id);
+}
+
+/**
+ * Count non-deleted tests for a set of project IDs.
+ * @param {string[]} projectIds
+ * @returns {number}
+ */
+export function countByProjectIds(projectIds) {
+  if (!projectIds || projectIds.length === 0) return 0;
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
+  ).get(...projectIds).cnt;
+}
+
+/**
+ * Count tests by review status for a set of project IDs.
+ * @param {string[]} projectIds
+ * @param {"approved"|"draft"} reviewStatus
+ * @returns {number}
+ */
+function countByProjectIdsAndStatus(projectIds, reviewStatus) {
+  if (!projectIds || projectIds.length === 0) return 0;
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL AND reviewStatus = ?`
+  ).get(...projectIds, reviewStatus).cnt;
+}
+
+/**
+ * Count approved tests for a set of project IDs.
+ * @param {string[]} projectIds
+ * @returns {number}
+ */
+export function countApprovedByProjectIds(projectIds) {
+  return countByProjectIdsAndStatus(projectIds, "approved");
+}
+
+/**
+ * Count draft tests for a set of project IDs.
+ * @param {string[]} projectIds
+ * @returns {number}
+ */
+export function countDraftByProjectIds(projectIds) {
+  return countByProjectIdsAndStatus(projectIds, "draft");
+}
+
+/**
+ * Get all non-deleted tests belonging to the given project IDs with pagination.
+ * Used by the workspace-scoped GET /api/tests endpoint (ACL-001).
+ * @param {string[]} projectIds
  * @param {number|string} [page=1]
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @returns {PagedResult}
  */
-export function getAllPaged(page, pageSize) {
+export function getAllPagedByProjectIds(projectIds, page, pageSize) {
+  if (!projectIds || projectIds.length === 0) {
+    const { page: p, pageSize: ps } = parsePagination(page, pageSize);
+    return { data: [], meta: { total: 0, page: p, pageSize: ps, hasMore: false } };
+  }
   const db = getDatabase();
   const { page: p, pageSize: ps, offset } = parsePagination(page, pageSize);
-  const total = db.prepare("SELECT COUNT(*) as cnt FROM tests WHERE deletedAt IS NULL").get().cnt;
-  const data  = db.prepare(
-    "SELECT * FROM tests WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?"
-  ).all(ps, offset).map(rowToTest);
+  const placeholders = projectIds.map(() => "?").join(", ");
+  const total = db.prepare(
+    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
+  ).get(...projectIds).cnt;
+  const data = db.prepare(
+    `SELECT * FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`
+  ).all(...projectIds, ps, offset).map(rowToTest);
   return { data, meta: { total, page: p, pageSize: ps, hasMore: offset + data.length < total } };
-}
-
-/**
- * Get all non-deleted tests as a dictionary keyed by ID.
- * @returns {Object<string, Object>}
- */
-export function getAllAsDict() {
-  const all = getAll();
-  const dict = {};
-  for (const t of all) dict[t.id] = t;
-  return dict;
 }
 
 /**
@@ -353,33 +429,6 @@ export function restoreByProjectIdAfter(projectId, deletedAfter) {
 }
 
 // ─── Counts ───────────────────────────────────────────────────────────────────
-
-/**
- * Count total non-deleted tests.
- * @returns {number}
- */
-export function count() {
-  const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM tests WHERE deletedAt IS NULL").get().cnt;
-}
-
-/**
- * Count approved non-deleted tests.
- * @returns {number}
- */
-export function countApproved() {
-  const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM tests WHERE reviewStatus = 'approved' AND deletedAt IS NULL").get().cnt;
-}
-
-/**
- * Count draft non-deleted tests.
- * @returns {number}
- */
-export function countDraft() {
-  const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM tests WHERE reviewStatus = 'draft' AND deletedAt IS NULL").get().cnt;
-}
 
 /**
  * Count tests by review status for a project (non-deleted only).

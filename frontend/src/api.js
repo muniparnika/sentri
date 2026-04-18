@@ -17,11 +17,11 @@
  * const dashboard = await api.getDashboard();
  */
 
-import { API_BASE, parseJsonResponse } from "./utils/apiBase.js";
+import { API_BASE, API_PATH, parseJsonResponse } from "./utils/apiBase.js";
 import { getCsrfToken } from "./utils/csrf.js";
 
-/** @type {string} Full base URL for API endpoints (e.g. `"/api"` or `"https://backend.example.com/api"`). */
-const BASE = `${API_BASE}/api`;
+/** @type {string} Full base URL for API endpoints. Derived from {@link API_PATH} in `apiBase.js`. */
+const BASE = API_PATH;
 
 /** @type {number} Default request timeout in milliseconds (30 seconds). */
 const TIMEOUT_DEFAULT = 30_000;
@@ -235,6 +235,27 @@ export const api = {
    */
   deleteTriggerToken: (projectId, tokenId) => req("DELETE", `/projects/${projectId}/trigger-tokens/${tokenId}`),
 
+  // ── Notifications (FEA-001) ──────────────────────────────────────────────────
+  /**
+   * Get the notification settings for a project, or null if none exist.
+   * @param {string} projectId
+   * @returns {Promise<{notifications: Object|null}>}
+   */
+  getNotifications: (projectId) => req("GET", `/projects/${projectId}/notifications`),
+  /**
+   * Create or update notification settings for a project.
+   * @param {string} projectId
+   * @param {{ teamsWebhookUrl: string, emailRecipients: string, webhookUrl: string, enabled: boolean }} body
+   * @returns {Promise<{ok: boolean, notifications: Object}>}
+   */
+  upsertNotifications: (projectId, body) => req("PATCH", `/projects/${projectId}/notifications`, body),
+  /**
+   * Remove notification settings for a project.
+   * @param {string} projectId
+   * @returns {Promise<{ok: boolean}>}
+   */
+  deleteNotifications: (projectId) => req("DELETE", `/projects/${projectId}/notifications`),
+
   // ── Schedules (ENH-006) ─────────────────────────────────────────────────────
   /**
    * Get the cron schedule for a project, or null if none exists.
@@ -348,6 +369,57 @@ export const api = {
    * @returns {Promise<{message: string}>}
    */
   resendVerification: (email) => req("POST", "/auth/resend-verification", { email }),
+
+  // ── Account data portability / deletion (SEC-003) ───────────────────────────
+  /**
+   * Export account data as JSON. Password confirmation is required.
+   * @param {string} password
+   * @returns {Promise<Object>}
+   */
+  exportAccountData: async (password) => {
+    const res = await fetch(`${BASE}/auth/export`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Account-Password": password,
+      },
+      credentials: "include",
+    });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error("Session expired. Please sign in again.");
+    }
+    // 403 = wrong password confirmation — do NOT trigger logout redirect.
+    if (!res.ok) {
+      const err = await parseJsonResponse(res).catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || res.statusText || "Request failed");
+    }
+    return parseJsonResponse(res);
+  },
+  /**
+   * Delete user account and owned data. Password confirmation is required.
+   * @param {string} password
+   * @returns {Promise<{ok: boolean, message: string}>}
+   */
+  deleteAccount: (password) => req("DELETE", "/auth/account", { password }),
+
+  // ── Workspace & Members (ACL-001, ACL-002) ───────────────────────────────────
+  /** @returns {Promise<Object>} Current workspace details. */
+  getWorkspace:      ()              => req("GET",    "/workspaces/current"),
+  /** @returns {Promise<Array>} All workspaces the user belongs to. */
+  getWorkspaces:     ()              => req("GET",    "/workspaces"),
+  /** @param {string} workspaceId — Switch to a different workspace. Returns updated user. */
+  switchWorkspace:   (workspaceId)   => req("POST",   "/workspaces/switch", { workspaceId }),
+  /** @param {Object} data - `{ name?, slug? }` */
+  updateWorkspace:   (data)          => req("PATCH",  "/workspaces/current", data),
+  /** @returns {Promise<Array>} List of workspace members with roles. */
+  getMembers:        ()              => req("GET",    "/workspaces/current/members"),
+  /** @param {Object} data - `{ email, role? }` */
+  inviteMember:      (data)          => req("POST",   "/workspaces/current/members", data),
+  /** @param {string} userId @param {string} role */
+  updateMemberRole:  (userId, role)  => req("PATCH",  `/workspaces/current/members/${userId}`, { role }),
+  /** @param {string} userId */
+  removeMember:      (userId)        => req("DELETE", `/workspaces/current/members/${userId}`),
 
   // ── System info & data management ───────────────────────────────────────────
   /** @returns {Promise<Object>} Uptime, Node/Playwright versions, memory, DB counts. */

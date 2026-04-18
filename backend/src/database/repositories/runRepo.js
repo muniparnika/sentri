@@ -14,7 +14,7 @@
  * Use {@link getDeletedByProjectId} / {@link restore} for recycle-bin operations.
  *
  * ### Pagination
- * {@link getByProjectIdPaged} and {@link getAllLeanPaged} return
+ * {@link getByProjectIdPaged} returns
  * `{ data: Run[], meta: { total, page, pageSize, hasMore } }`.
  */
 
@@ -71,7 +71,7 @@ const INSERT_COLS = [
   "pagesFound", "parallelWorkers", "tracePath", "videoPath", "videoSegments",
   "tests", "results", "testQueue", "generateInput", "promptAudit",
   "pipelineStats", "feedbackLoop", "currentStep",
-  "rateLimitError", "qualityAnalytics",
+  "rateLimitError", "qualityAnalytics", "workspaceId",
 ];
 
 const INSERT_SQL = `INSERT INTO runs (${INSERT_COLS.join(", ")})
@@ -110,69 +110,45 @@ function parseLeanJson(row) {
 // ─── Read queries (non-deleted) ───────────────────────────────────────────────
 
 /**
- * Get all non-deleted runs (full deserialization — expensive for large datasets).
- * Prefer {@link getAllLean} for listing endpoints that don't need heavy columns.
- * @returns {Object[]}
- */
-export function getAll() {
-  const db = getDatabase();
-  return db.prepare("SELECT * FROM runs WHERE deletedAt IS NULL").all().map(rowToRun);
-}
-
-/**
- * Get all non-deleted runs as a dictionary keyed by ID.
- * @returns {Object<string, Object>}
- */
-export function getAllAsDict() {
-  const all = getAll();
-  const dict = {};
-  for (const r of all) dict[r.id] = r;
-  return dict;
-}
-
-/**
- * Get all non-deleted runs with lightweight columns.
- * Skips logs, results, tests, testQueue, generateInput, promptAudit,
- * videoSegments, qualityAnalytics — which can be huge.
- * Includes feedbackLoop and pipelineStats (small JSON objects needed by UI).
- * ~10-50x faster than getAll() for projects with many runs.
- * @returns {Object[]}
- */
-export function getAllLean() {
-  const db = getDatabase();
-  return db.prepare(`SELECT ${LEAN_WITH_FEEDBACK_COLS} FROM runs WHERE deletedAt IS NULL`).all().map(parseLeanJson);
-}
-
-/**
- * Get all non-deleted runs with lean columns, paginated.
- * @param {number|string} [page=1]
- * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
- * @returns {{ data: Object[], meta: { total: number, page: number, pageSize: number, hasMore: boolean } }}
- */
-export function getAllLeanPaged(page, pageSize) {
-  const db = getDatabase();
-  const { page: p, pageSize: ps, offset } = parsePagination(page, pageSize);
-  const total = db.prepare("SELECT COUNT(*) as cnt FROM runs WHERE deletedAt IS NULL").get().cnt;
-  const data = db.prepare(
-    `SELECT ${LEAN_WITH_FEEDBACK_COLS} FROM runs WHERE deletedAt IS NULL ORDER BY startedAt DESC LIMIT ? OFFSET ?`
-  ).all(ps, offset).map(parseLeanJson);
-  return { data, meta: { total, page: p, pageSize: ps, hasMore: offset + data.length < total } };
-}
-
-/**
  * Get all non-deleted runs with results + feedbackLoop columns (for failure/analytics).
+ * Prefer {@link getWithResultsByProjectIds} for workspace-scoped queries.
  * @returns {Object[]}
  */
 export function getAllWithResults() {
   const db = getDatabase();
-  return db.prepare(`SELECT ${LEAN_COLS}, results, feedbackLoop FROM runs WHERE deletedAt IS NULL`).all().map(row => {
-    if (row.results) {
-      try { row.results = JSON.parse(row.results); } catch { row.results = []; }
-    } else {
-      row.results = [];
-    }
-    return parseLeanJson(row);
-  });
+  return db.prepare(`SELECT ${LEAN_COLS}, results, feedbackLoop FROM runs WHERE deletedAt IS NULL`).all().map(parseResultsAndLean);
+}
+
+/**
+ * Get non-deleted runs with results + feedbackLoop for a set of project IDs.
+ * Workspace-scoped alternative to {@link getAllWithResults} — queries only the
+ * rows belonging to the given projects instead of loading the entire table.
+ *
+ * @param {string[]} projectIds
+ * @returns {Object[]}
+ */
+export function getWithResultsByProjectIds(projectIds) {
+  if (!projectIds || projectIds.length === 0) return [];
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT ${LEAN_COLS}, results, feedbackLoop FROM runs WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
+  ).all(...projectIds).map(parseResultsAndLean);
+}
+
+/**
+ * Parse results JSON + lean JSON columns on a row.
+ * Shared by {@link getAllWithResults} and {@link getWithResultsByProjectIds}.
+ * @param {Object} row
+ * @returns {Object}
+ */
+function parseResultsAndLean(row) {
+  if (row.results) {
+    try { row.results = JSON.parse(row.results); } catch { row.results = []; }
+  } else {
+    row.results = [];
+  }
+  return parseLeanJson(row);
 }
 
 /**
@@ -185,6 +161,20 @@ export function getByProjectId(projectId) {
   return db.prepare(
     "SELECT * FROM runs WHERE projectId = ? AND deletedAt IS NULL ORDER BY startedAt DESC"
   ).all(projectId).map(rowToRun);
+}
+
+/**
+ * Count non-deleted runs for a set of project IDs.
+ * @param {string[]} projectIds
+ * @returns {number}
+ */
+export function countByProjectIds(projectIds) {
+  if (!projectIds || projectIds.length === 0) return 0;
+  const db = getDatabase();
+  const placeholders = projectIds.map(() => "?").join(", ");
+  return db.prepare(
+    `SELECT COUNT(*) as cnt FROM runs WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
+  ).get(...projectIds).cnt;
 }
 
 /**
@@ -362,27 +352,6 @@ export function hardDeleteByProjectId(projectId) {
     db.prepare("DELETE FROM runs WHERE projectId = ?").run(projectId);
   }
   return ids;
-}
-
-/**
- * Count total non-deleted runs.
- * @returns {number}
- */
-export function count() {
-  const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM runs WHERE deletedAt IS NULL").get().cnt;
-}
-
-/**
- * Hard-delete all runs (permanent — used by the admin "Clear Runs" data management action).
- * Also purges all rows from `run_logs`.
- * @returns {number} Number of runs permanently removed.
- */
-export function hardClearAll() {
-  const db = getDatabase();
-  runLogRepo.deleteAll();
-  const info = db.prepare("DELETE FROM runs").run();
-  return info.changes;
 }
 
 /**

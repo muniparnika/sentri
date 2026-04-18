@@ -70,7 +70,7 @@ There are plenty of "AI test generator" repos. Most generate code and leave you 
 | 🆔 **Human-Readable IDs** | `TC-1`, `RUN-2`, `PRJ-3` — not UUIDs. Counters persist in DB and rehydrate on startup |
 | ⛔ **Abort Everything** | `AbortSignal` threaded through the entire pipeline — AI calls, browser ops, and feedback loops halt immediately |
 | 🔀 **Code Diff View** | Built-in Myers line diff shows what changed when Playwright code is regenerated |
-| 📦 **Smart Data Fetching** | `useProjectData` hook with 30s TTL cache + batch `/api/tests` endpoint eliminates N+1 fetches |
+| 📦 **Smart Data Fetching** | `useProjectData` hook with 30s TTL cache + batch `/api/v1/tests` endpoint eliminates N+1 fetches |
 | 🦙 **Ollama Support** | Completely free, private, local inference. NDJSON response fallback, `OLLAMA_MAX_PREDICT` token cap, HTTP 500 retry |
 | 🔐 **Built-in Auth** | Email/password + GitHub/Google OAuth. Scrypt hashing, JWT in HttpOnly cookies (never in localStorage), CSRF double-submit protection, rate limiting, proactive session refresh |
 | 📖 **Full Documentation** | VitePress guide, REST API reference, and auto-generated JSDoc — all deployed to GitHub Pages |
@@ -118,6 +118,10 @@ npm run dev                 # Starts on :3001, creates data/sentri.db automatica
 ```
 
 > **Database:** SQLite (`data/sentri.db`) is created automatically on first startup — no manual setup needed. To use PostgreSQL instead, set `DATABASE_URL=postgres://…` and install `pg` + `pg-native`. If upgrading from a previous version that used `sentri-db.json`, data is auto-migrated on first run.
+
+> **Redis (optional):** Install and start Redis locally (`brew install redis && redis-server` on macOS, or `docker run -p 6379:6379 redis:7-alpine`), then set `REDIS_URL=redis://localhost:6379` in `.env`. This enables shared rate limiting, token revocation across restarts, and SSE pub/sub. Requires `npm install ioredis rate-limit-redis`.
+
+> **BullMQ (optional):** With Redis running, install `npm install bullmq` to enable durable job queue execution for crawls and test runs. Without BullMQ, runs execute in-process (fine for local dev). Set `MAX_WORKERS=2` to control concurrency. See [INF-003 in ROADMAP.md](ROADMAP.md) for details.
 
 **Frontend:**
 ```bash
@@ -167,6 +171,9 @@ NODE_ENV=production
 # Parallel test execution (1 = sequential, max 10)
 PARALLEL_WORKERS=4
 
+# BullMQ concurrency (requires REDIS_URL + npm install bullmq)
+# MAX_WORKERS=2
+
 # Frontend (build-time, for cross-origin deploys)
 VITE_API_URL=https://your-backend.onrender.com
 ```
@@ -177,17 +184,18 @@ VITE_API_URL=https://your-backend.onrender.com
 
 ## API Reference
 
-The backend exposes a RESTful JSON API on port `3001`. Key endpoint groups:
+The backend exposes a RESTful JSON API on port `3001`. All endpoints are versioned under `/api/v1/` (INF-005). Legacy `/api/*` paths are 308-redirected for backward compatibility (preserves HTTP method on POST/PUT/PATCH/DELETE). Key endpoint groups:
 
 | Group | Endpoints | Description |
 |---|---|---|
-| **Projects** | `POST/GET/DELETE /api/projects` | CRUD for web applications |
-| **Crawl & Run** | `POST /api/projects/:id/crawl`, `/run` | Start crawl or execute tests |
-| **Tests** | `GET/POST/PATCH/DELETE /api/tests` | CRUD, generate, review, bulk actions, export |
-| **Runs** | `GET /api/runs/:id`, `/events`, `POST /abort` | Results, SSE stream, abort |
-| **Auth** | `POST /api/auth/register`, `/login`, `/logout` | Email/password + OAuth |
-| **Settings** | `GET/POST/DELETE /api/settings` | AI provider config, Ollama status |
-| **System** | `GET /api/dashboard`, `/system`, `/activities`, `POST /system/client-error` | Analytics, info, data management, client crash reports |
+| **Projects** | `POST/GET/DELETE /api/v1/projects` | CRUD for web applications |
+| **Crawl & Run** | `POST /api/v1/projects/:id/crawl`, `/run` | Start crawl or execute tests |
+| **Tests** | `GET/POST/PATCH/DELETE /api/v1/tests` | CRUD, generate, review, bulk actions, export |
+| **Runs** | `GET /api/v1/runs/:id`, `/events`, `POST /abort` | Results, SSE stream, abort |
+| **Auth** | `POST /api/v1/auth/register`, `/login`, `/logout`, `GET /export`, `DELETE /account` | Email/password + OAuth, GDPR export/delete |
+| **Notifications** | `GET/PATCH/DELETE /api/v1/projects/:id/notifications` | Per-project failure alert config (Teams, email, webhook) |
+| **Settings** | `GET/POST/DELETE /api/v1/settings` | AI provider config, Ollama status |
+| **System** | `GET /api/v1/dashboard`, `/system`, `/activities`, `POST /system/client-error` | Analytics, info, data management, client crash reports |
 
 > 📖 Full API documentation with request/response examples and code samples: **[API Reference →](https://rameshbabuprudhvi.github.io/sentri/docs/api/)**
 
@@ -239,6 +247,8 @@ GITHUB_PAGES=true VITE_API_URL=https://your-app.onrender.com npm run build
 
 Set on Render: `NODE_ENV=production`, `JWT_SECRET=<openssl rand -base64 48>`, plus your AI provider key.
 
+**Demo mode (optional):** Set `DEMO_GOOGLE_API_KEY` on Render with a [free Gemini API key](https://aistudio.google.com/apikey) to let new users try Sentri without bringing their own key. Per-user daily quotas (2 crawls, 3 runs, 5 AI generations) prevent abuse. Users who add their own key bypass all quotas. See `DEMO_DAILY_CRAWLS`, `DEMO_DAILY_RUNS`, `DEMO_DAILY_GENERATIONS` to customise limits.
+
 See the [full deployment guide](https://rameshbabuprudhvi.github.io/sentri/docs/guide/github-pages-render.html) for details.
 
 ---
@@ -267,10 +277,13 @@ See the [full deployment guide](https://rameshbabuprudhvi.github.io/sentri/docs/
 | **Scheduling** | ✅ Cron-based auto-runs with timezone support via `node-cron` |
 | **CI/CD Integration** | ✅ Webhook trigger endpoint with per-project Bearer tokens |
 | **Graceful Shutdown** | ✅ Drains in-flight runs, stops scheduler, closes Redis + DB on SIGTERM/SIGINT |
-| **Job Queue** | ⬜ Add BullMQ for durable background run execution (INF-003) |
+| **Job Queue** | ✅ BullMQ durable execution when Redis is available — crash recovery, retry, `MAX_WORKERS` concurrency (INF-003) |
+| **Notifications** | ✅ Per-project failure alerts via Microsoft Teams, email, and generic webhook (FEA-001) |
+| **Nonce CSP** | ✅ Per-request cryptographic nonce replaces `'unsafe-inline'` in `script-src` (SEC-002) |
+| **GDPR/CCPA** | ✅ Account data export (`GET /api/v1/auth/export`) and cascade deletion (`DELETE /api/v1/auth/account`) with password confirmation (SEC-003) |
 | **File Storage** | ⬜ Store videos/screenshots to S3/R2 instead of local disk (MNT-006) |
-| **Notifications** | ⬜ Send Slack/email alerts on test failures (FEA-001) |
-| **Multi-tenancy** | ⬜ Add workspace/organisation scoping (ACL-001) |
+| **Multi-tenancy** | ✅ Workspace isolation — every entity scoped to a workspace; auto-created on first login (ACL-001) |
+| **RBAC** | ✅ Role-based access control — Admin / QA Lead / Viewer with `requireRole()` middleware on all mutating routes (ACL-002) |
 | **Cross-Browser** | ⬜ Firefox + WebKit/Safari support (DIF-002) |
 | **Visual Regression** | ⬜ Baseline screenshot diffing with `pixelmatch` (DIF-001) |
 

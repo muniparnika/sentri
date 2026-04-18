@@ -3,19 +3,22 @@
  * @description Server entry point. Initialises the database, mounts all route
  * modules on the Express app, and starts listening.
  *
- * ### Mounted routes
- * | Prefix             | Module              |
- * |--------------------|---------------------|
- * | `/api/projects`    | `routes/projects`   |
- * | `/api` (tests)     | `routes/tests`      |
- * | `/api` (runs)      | `routes/runs`       |
- * | `/api` (SSE)       | `routes/sse`        |
- * | `/api` (dashboard) | `routes/dashboard`  |
- * | `/api` (settings)  | `routes/settings`   |
- * | `/api` (system)    | `routes/system`     |
- * | `/api` (testFix)   | `routes/testFix`    |
- * | `/api/auth`        | `routes/auth`       |
- * | `/health`          | Health check        |
+ * ### Mounted routes (INF-005: all under `/api/v1/`)
+ * | Prefix                 | Module              |
+ * |------------------------|---------------------|
+ * | `/api/v1/projects`     | `routes/projects`   |
+ * | `/api/v1` (tests)      | `routes/tests`      |
+ * | `/api/v1` (runs)       | `routes/runs`       |
+ * | `/api/v1` (SSE)        | `routes/sse`        |
+ * | `/api/v1` (dashboard)  | `routes/dashboard`  |
+ * | `/api/v1` (settings)   | `routes/settings`   |
+ * | `/api/v1` (system)     | `routes/system`     |
+ * | `/api/v1` (testFix)    | `routes/testFix`    |
+ * | `/api/v1/auth`         | `routes/auth`       |
+ * | `/health`              | Health check        |
+ *
+ * Legacy `/api/*` paths are 308-redirected to `/api/v1/*` for backward
+ * compatibility during the transition window (INF-005).
  */
 
 import dotenv from "dotenv";
@@ -26,9 +29,13 @@ import { formatLogLine, structuredLog } from "./utils/logFormatter.js";
 import { loadKeysFromDatabase } from "./aiProvider.js";
 import { initScheduler, stopAllTasks } from "./scheduler.js";
 import { closeRedis } from "./utils/redisClient.js";
+import { ensureDefaultWorkspaces } from "./database/repositories/workspaceRepo.js";
+import { closeQueue } from "./queue.js";
+import { startWorker, stopWorker } from "./workers/runWorker.js";
 
 // ─── App + global middleware ──────────────────────────────────────────────────
-import { app } from "./middleware/appSetup.js";
+import { app, serveIndexWithNonce } from "./middleware/appSetup.js";
+import { workspaceScope } from "./middleware/workspaceScope.js";
 
 // ─── Route modules ────────────────────────────────────────────────────────────
 import projectsRouter from "./routes/projects.js";
@@ -44,6 +51,7 @@ import { requireAuth } from "./routes/auth.js";
 import chatRouter from "./routes/chat.js";
 import testFixRouter from "./routes/testFix.js";
 import recycleBinRouter from "./routes/recycleBin.js";
+import workspacesRouter from "./routes/workspaces.js";
 
 // Re-export SSE symbols so existing imports from "./index.js" keep working
 // during incremental migration (runLogger.js, crawler.js, testRunner.js).
@@ -82,9 +90,15 @@ const orphanCount = runRepo.markOrphansInterrupted();
 if (orphanCount > 0) {
   console.warn(formatLogLine("warn", null, `[db] Marked ${orphanCount} orphaned run(s) as interrupted`));
 }
-// 5. Initialise cron-based test scheduler (ENH-006)
+// 5. Ensure every user has a workspace (ACL-001 backfill for existing data).
+//    Must run after DB init + migrations so the workspaces table exists.
+ensureDefaultWorkspaces();
+// 6. Initialise cron-based test scheduler (ENH-006)
 //    Must run after DB init so scheduleRepo can read the schedules table.
 initScheduler();
+// 7. Start BullMQ worker for durable run execution (INF-003)
+//    No-op if Redis/BullMQ is not available — falls back to in-process execution.
+startWorker();
 
 // ─── Graceful shutdown (MAINT-013) ────────────────────────────────────────────
 // Instead of killing the process immediately, drain in-flight runs so they
@@ -141,10 +155,14 @@ async function gracefulShutdown(signal) {
       runAbortControllers.clear();
     }
 
-    // 5. Close Redis connections (INF-002)
+    // 5. Stop BullMQ worker and close queue (INF-003)
+    await stopWorker();
+    await closeQueue();
+
+    // 6. Close Redis connections (INF-002)
     await closeRedis();
 
-    // 6. Close database cleanly (WAL checkpoint for SQLite, pool drain for PostgreSQL)
+    // 7. Close database cleanly (WAL checkpoint for SQLite, pool drain for PostgreSQL)
     await closeDatabase();
     console.log(formatLogLine("info", null, "[shutdown] Graceful shutdown complete"));
     process.exit(0);
@@ -161,26 +179,45 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 // If you need it for integration tests, mount it in your test setup file
 // directly on a test-only Express instance — never in this production entry point.
 
-// ─── Mount route modules ──────────────────────────────────────────────────────
+// ─── INF-005: Versioned API prefix ────────────────────────────────────────────
+// Single source of truth for the API version. Change this one constant to bump
+// all route mounts — no other backend file needs to change.
+const API_VERSION = "v1";
+const API_PREFIX = `/api/${API_VERSION}`;
+
+// ─── Mount route modules (INF-005: ${API_PREFIX} prefix) ─────────────────────
 // Auth routes are public (login, register, OAuth callbacks)
-app.use("/api/auth", authRouter);
+app.use(`${API_PREFIX}/auth`, authRouter);
 
-// CI/CD trigger endpoint (/api/projects/:id/trigger) uses its own token-based
-// auth — it must be mounted WITHOUT requireAuth so CI pipelines can call it
-// with a project token rather than a user JWT.
-app.use("/api", triggerRouter);
+// CI/CD trigger endpoint uses its own token-based auth — it must be mounted
+// WITHOUT requireAuth so CI pipelines can call it with a project token.
+app.use(API_PREFIX, triggerRouter);
 
-// All other API routes require a valid JWT token
-app.use("/api/projects", requireAuth, projectsRouter);
-app.use("/api", requireAuth, testsRouter);
-app.use("/api", requireAuth, runsRouter);
-app.use("/api", requireAuth, sseRouter);
-app.use("/api", requireAuth, dashboardRouter);
-app.use("/api", requireAuth, settingsRouter);
-app.use("/api", requireAuth, systemRouter);
-app.use("/api", requireAuth, chatRouter);
-app.use("/api", requireAuth, testFixRouter);
-app.use("/api", requireAuth, recycleBinRouter);
+// All other API routes require a valid JWT token + workspace context (ACL-001).
+// workspaceScope injects req.workspaceId and req.userRole from the JWT or DB.
+app.use(`${API_PREFIX}/projects`, requireAuth, workspaceScope, projectsRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, testsRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, runsRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, sseRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, dashboardRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, settingsRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, systemRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, chatRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, testFixRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, recycleBinRouter);
+app.use(`${API_PREFIX}/workspaces`, requireAuth, workspaceScope, workspacesRouter);
+
+// ─── INF-005: Legacy /api/* → /api/v1/* 308 redirects ────────────────────────
+// Backward compatibility during the transition window. CI/CD integrations,
+// GitHub Actions, and external webhooks using the old /api/* paths will be
+// redirected to the versioned endpoint. Uses 308 (not 301) to preserve the
+// HTTP method on POST/PUT/PATCH/DELETE requests. Remove after all consumers migrate.
+app.use("/api", (req, res, next) => {
+  // Skip if already under the versioned prefix
+  if (req.path.startsWith(`/${API_VERSION}`)) return next();
+  const newUrl = `${API_PREFIX}${req.path}${req._parsedUrl?.search || ""}`;
+  res.redirect(308, newUrl);
+});
 
 // ─── Health probes (root-level, not under /api, no auth required) ────────────
 // GET /health  — liveness: is the process alive?
@@ -247,6 +284,20 @@ app.get("/health/ready", async (_req, res) => {
   }
 
   res.status(allOk ? 200 : 503).json({ ok: allOk, checks });
+});
+
+// ─── SPA fallback (SEC-002: nonce injection) ─────────────────────────────────
+// In Docker, nginx proxies unmatched paths to the backend via @backend_spa.
+// This catch-all serves the Vite-built index.html with __CSP_NONCE__ replaced
+// by the per-request nonce so inline scripts pass CSP validation.
+// Must be mounted AFTER all API routes and health checks.
+//
+// Skip /api/* and /artifacts/* paths so unmatched API GETs fall through to
+// Express's default 404 handler and return a proper JSON error instead of HTML.
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api/") || req.path.startsWith("/artifacts/")) return next();
+  if (req.path.startsWith("/health")) return next();
+  serveIndexWithNonce(req, res);
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@
 
 import { generateActivityId } from "./idGenerator.js";
 import * as activityRepo from "../database/repositories/activityRepo.js";
+import { formatLogLine } from "./logFormatter.js";
 
 /**
  * Log an activity entry to the database.
@@ -28,9 +29,18 @@ import * as activityRepo from "../database/repositories/activityRepo.js";
  * @param {string}      [opts.status="completed"] - Activity status.
  * @param {string}      [opts.userId]    - ID of the user who triggered the action (from req.authUser.sub).
  * @param {string}      [opts.userName]  - Display name of the user (from req.authUser.name or email).
+ * @param {string}      [opts.workspaceId] - Workspace ID for multi-tenancy scoping (ACL-001).
  * @returns {Object}    The created activity record.
  */
-export function logActivity({ type, projectId, projectName, testId, testName, detail, status, userId, userName }) {
+export function logActivity({ type, projectId, projectName, testId, testName, detail, status, userId, userName, workspaceId }) {
+  // Warn when a project-scoped activity is logged without a workspaceId.
+  // Activities with workspaceId=NULL become orphaned — invisible to
+  // workspace-scoped queries (/api/activities, /api/data/activities).
+  if (projectId && !workspaceId) {
+    console.warn(formatLogLine("warn", null,
+      `[activity] Activity "${type}" for project ${projectId} logged without workspaceId — row will be orphaned`));
+  }
+
   const id = generateActivityId();
   const activity = {
     id,
@@ -44,6 +54,7 @@ export function logActivity({ type, projectId, projectName, testId, testName, de
     createdAt: new Date().toISOString(),
     userId: userId || null,
     userName: userName || null,
+    workspaceId: workspaceId || null,
   };
   activityRepo.create(activity);
   return activity;

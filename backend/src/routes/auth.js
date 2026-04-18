@@ -2,20 +2,22 @@
  * @module routes/auth
  * @description Authentication routes for email/password and OAuth (GitHub, Google).
  *
- * ### Endpoints
- * | Method | Path                          | Description                          |
- * |--------|-------------------------------|--------------------------------------|
- * | POST   | `/api/auth/register`          | Email/password registration          |
- * | POST   | `/api/auth/login`             | Email/password sign-in               |
- * | POST   | `/api/auth/logout`            | Token revocation + cookie clear      |
- * | POST   | `/api/auth/refresh`           | Refresh session (extend cookie TTL)  |
- * | GET    | `/api/auth/me`                | Return current user from cookie      |
- * | GET    | `/api/auth/verify`            | Verify email via token (SEC-001)     |
- * | POST   | `/api/auth/resend-verification` | Resend verification email (SEC-001)|
- * | POST   | `/api/auth/forgot-password`   | Request a password reset token       |
- * | POST   | `/api/auth/reset-password`    | Reset password using a valid token   |
- * | GET    | `/api/auth/github/callback`   | GitHub OAuth token exchange          |
- * | GET    | `/api/auth/google/callback`   | Google OAuth token exchange          |
+ * ### Endpoints (INF-005: all under `/api/v1/auth/`)
+ * | Method | Path                              | Description                          |
+ * |--------|-----------------------------------|--------------------------------------|
+ * | POST   | `/api/v1/auth/register`           | Email/password registration          |
+ * | POST   | `/api/v1/auth/login`              | Email/password sign-in               |
+ * | POST   | `/api/v1/auth/logout`             | Token revocation + cookie clear      |
+ * | POST   | `/api/v1/auth/refresh`            | Refresh session (extend cookie TTL)  |
+ * | GET    | `/api/v1/auth/me`                 | Return current user from cookie      |
+ * | GET    | `/api/v1/auth/export`             | Export user-owned account data (SEC-003) |
+ * | DELETE | `/api/v1/auth/account`            | Delete account + owned data (SEC-003) |
+ * | GET    | `/api/v1/auth/verify`             | Verify email via token (SEC-001)     |
+ * | POST   | `/api/v1/auth/resend-verification`| Resend verification email (SEC-001)  |
+ * | POST   | `/api/v1/auth/forgot-password`    | Request a password reset token       |
+ * | POST   | `/api/v1/auth/reset-password`     | Reset password using a valid token   |
+ * | GET    | `/api/v1/auth/github/callback`    | GitHub OAuth token exchange          |
+ * | GET    | `/api/v1/auth/google/callback`    | Google OAuth token exchange          |
  *
  * ### Security measures
  * - Passwords hashed with scrypt (64-byte key, 16-byte random salt)
@@ -37,8 +39,13 @@ import crypto from "crypto";
 import * as userRepo from "../database/repositories/userRepo.js";
 import * as resetTokenRepo from "../database/repositories/passwordResetTokenRepo.js";
 import * as verificationTokenRepo from "../database/repositories/verificationTokenRepo.js";
+import * as workspaceRepo from "../database/repositories/workspaceRepo.js";
+import * as accountRepo from "../database/repositories/accountRepo.js";
+import * as projectRepo from "../database/repositories/projectRepo.js";
 import { formatLogLine } from "../utils/logFormatter.js";
+import { stopSchedule } from "../scheduler.js";
 import { sendVerificationEmail } from "../utils/emailSender.js";
+import { buildJwtPayload, buildUserResponse } from "../utils/authWorkspace.js";
 import { cookieSameSite } from "../middleware/appSetup.js";
 import {
   signJwt, getJwtSecret, revokedTokens,
@@ -56,19 +63,19 @@ export const requireAuth = requireUser;
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 
 /** Expiry hint cookie — Non-HttpOnly so the frontend can read the `exp` timestamp. */
-const EXP_COOKIE      = "token_exp";
+export const EXP_COOKIE      = "token_exp";
 /** JWT TTL in seconds (8 hours). Must match signJwt default. */
-const JWT_TTL_SEC     = 8 * 60 * 60;
+export const JWT_TTL_SEC     = 8 * 60 * 60;
 
 /**
  * Set the HttpOnly auth cookie + a readable expiry hint cookie on a response.
- * Called after every successful authentication (login, OAuth, refresh).
+ * Called after every successful authentication (login, OAuth, refresh, workspace switch).
  *
  * @param {Object} res       - Express response object.
  * @param {string} token     - The signed JWT string.
  * @param {number} expSec    - Unix timestamp of token expiry (seconds).
  */
-function setAuthCookie(res, token, expSec) {
+export function setAuthCookie(res, token, expSec) {
   const maxAge  = JWT_TTL_SEC;
   const sameSite = cookieSameSite();
 
@@ -261,12 +268,26 @@ function validatePasswordStrength(password) {
   return null;
 }
 
+/**
+ * Ensure the user belongs to at least one workspace, creating a personal
+ * workspace if needed.  Called from every auth path (login, OAuth) so no
+ * user can end up without a workspace.
+ *
+ * @param {Object} user — User row from the database.
+ */
+function ensureUserWorkspace(user) {
+  const existing = workspaceRepo.getByUserId(user.id);
+  if (existing && existing.length > 0) return;
+  const slug = `${(user.name || "user").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${crypto.randomBytes(3).toString("hex")}`;
+  workspaceRepo.create({ name: `${user.name || "My"}'s Workspace`, slug, ownerId: user.id });
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 /**
  * Register a new user with email and password.
  *
- * @route POST /api/auth/register
+ * @route POST /api/v1/auth/register
  * @param {Object} req.body
  * @param {string} req.body.name     - Full name (max 100 chars).
  * @param {string} req.body.email    - Email address (max 254 chars).
@@ -333,16 +354,17 @@ router.post("/register", async (req, res) => {
 });
 
 /**
- * Sign in with email and password. Returns a JWT token and user profile.
+ * Sign in with email and password. Sets auth cookies and returns user profile.
  * Rate-limited to 10 attempts per IP per 15 minutes.
  *
- * @route POST /api/auth/login
+ * @route POST /api/v1/auth/login
  * @param {Object} req.body
  * @param {string} req.body.email    - Email address.
  * @param {string} req.body.password - Password.
- * @returns {200} `{ token, user: { id, name, email, role, avatar } }`.
+ * @returns {200} `{ user: { id, name, email, role, avatar, workspaceId, workspaceName, workspaceRole } }`.
  * @returns {400} Invalid input.
  * @returns {401} Wrong credentials.
+ * @returns {403} Email not verified.
  * @returns {429} Rate limit exceeded (`Retry-After` header set).
  */
 router.post("/login", async (req, res) => {
@@ -382,8 +404,11 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const jti   = crypto.randomUUID();
-    const token = signJwt({ sub: user.id, email: user.email, name: user.name, role: user.role, jti }, getJwtSecret());
+    // ACL-001: Ensure the user has a workspace before issuing a token.
+    ensureUserWorkspace(user);
+
+    const payload = buildJwtPayload(user);
+    const token = signJwt(payload, getJwtSecret());
     const exp   = Math.floor(Date.now() / 1000) + JWT_TTL_SEC;
 
     setAuthCookie(res, token, exp);
@@ -391,9 +416,7 @@ router.post("/login", async (req, res) => {
     // Note: token is NOT returned in the response body — it lives in the HttpOnly
     // cookie only. The frontend reads user profile from this response and stores
     // it in React state. The token_exp cookie exposes the expiry timestamp.
-    return res.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null },
-    });
+    return res.json({ user: buildUserResponse(user) });
   } catch (err) {
     console.error(formatLogLine("error", null, `[auth/login] ${err.message}`));
     return res.status(500).json({ error: "Sign-in failed. Please try again." });
@@ -404,7 +427,7 @@ router.post("/login", async (req, res) => {
  * Sign out — revokes the JWT server-side so it can't be reused.
  * Requires `Authorization: Bearer <token>`.
  *
- * @route POST /api/auth/logout
+ * @route POST /api/v1/auth/logout
  * @returns {200} `{ message: "Signed out successfully." }`.
  * @returns {401} Missing or invalid token.
  */
@@ -416,18 +439,123 @@ router.post("/logout", requireAuth, (req, res) => {
 });
 
 /**
- * Get the currently authenticated user's profile.
- * Requires `Authorization: Bearer <token>`.
+ * Get the currently authenticated user's profile with workspace context.
  *
- * @route GET /api/auth/me
- * @returns {200} `{ id, name, email, role, avatar, createdAt }`.
+ * @route GET /api/v1/auth/me
+ * @returns {200} `{ id, name, email, role, avatar, createdAt, workspaceId, workspaceName, workspaceRole }`.
  * @returns {401} Missing or invalid token.
  * @returns {404} User not found in database.
  */
 router.get("/me", requireAuth, (req, res) => {
   const user = userRepo.getById(req.authUser.sub);
   if (!user) return res.status(404).json({ error: "User not found." });
-  return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null, createdAt: user.createdAt });
+  return res.json({ ...buildUserResponse(user, req.authUser.workspaceId), createdAt: user.createdAt });
+});
+
+// ─── Account export / deletion (SEC-003) ─────────────────────────────────────
+
+/**
+ * Check whether a user registered via OAuth only (no password set).
+ *
+ * @param {Object} user
+ * @returns {boolean}
+ */
+function isOAuthOnlyUser(user) {
+  return !user?.passwordHash;
+}
+
+/**
+ * Verify the authenticated user's password for sensitive account actions.
+ * For OAuth-only users (no passwordHash), password verification is skipped
+ * — the OAuth session itself serves as proof of identity.
+ *
+ * @param {Object} user
+ * @param {string} password
+ * @returns {Promise<boolean>}
+ */
+async function verifyAccountPassword(user, password) {
+  if (isOAuthOnlyUser(user)) return true;
+  if (typeof password !== "string" || !password) return false;
+  return verifyPassword(password, user.passwordHash);
+}
+
+/**
+ * Export all user-owned account data as JSON (GDPR/CCPA data portability).
+ * Requires password confirmation via `x-account-password` header.
+ *
+ * @route GET /api/v1/auth/export
+ * @returns {200} JSON export payload.
+ * @returns {400} Missing password.
+ * @returns {403} Invalid password.
+ */
+router.get("/export", requireAuth, async (req, res) => {
+  const user = userRepo.getById(req.authUser.sub);
+  if (!user) return res.status(404).json({ error: "User not found." });
+
+  // OAuth-only users have no password — skip confirmation (session is proof).
+  if (!isOAuthOnlyUser(user)) {
+    const password = req.headers["x-account-password"];
+    if (typeof password !== "string" || !password) {
+      return res.status(400).json({ error: "Password confirmation is required." });
+    }
+    const valid = await verifyAccountPassword(user, password);
+    if (!valid) {
+      return res.status(403).json({ error: "Password confirmation failed." });
+    }
+  }
+
+  const data = accountRepo.buildAccountExport(user.id);
+  return res.json(data);
+});
+
+/**
+ * Delete account and all user-owned workspace data (GDPR right to erasure).
+ * Requires password confirmation.
+ *
+ * @route DELETE /api/v1/auth/account
+ * @param {Object} req.body
+ * @param {string} req.body.password - Account password confirmation.
+ * @returns {200} `{ ok: true }` on success.
+ */
+router.delete("/account", requireAuth, async (req, res) => {
+  const user = userRepo.getById(req.authUser.sub);
+  if (!user) return res.status(404).json({ error: "User not found." });
+
+  // OAuth-only users have no password — skip confirmation (session is proof).
+  if (!isOAuthOnlyUser(user)) {
+    const password = req.body?.password;
+    if (typeof password !== "string" || !password) {
+      return res.status(400).json({ error: "Password confirmation is required." });
+    }
+    const valid = await verifyAccountPassword(user, password);
+    if (!valid) {
+      return res.status(403).json({ error: "Password confirmation failed." });
+    }
+  }
+
+  // Collect owned project IDs before deletion so we can stop their in-memory
+  // cron tasks afterwards. deleteAccount() removes the DB rows but cannot
+  // reach the process-local scheduler task Map.
+  const ownedWsIds = workspaceRepo.getOwnedWorkspaceIds(user.id);
+  const ownedProjectIds = ownedWsIds.flatMap(wsId => projectRepo.getAllIncludeDeleted(wsId).map(p => p.id));
+
+  try {
+    accountRepo.deleteAccount(user.id);
+  } catch (err) {
+    console.error(formatLogLine("error", null, `[auth/account] Delete failed for user ${user.id}: ${err.message}`));
+    return res.status(500).json({ error: "Failed to delete account." });
+  }
+
+  // Stop in-memory cron tasks for deleted projects (no-op if no schedule existed).
+  for (const projectId of ownedProjectIds) {
+    stopSchedule(projectId);
+  }
+
+  // Revoke the current JWT so it cannot be reused from another tab or replay.
+  const { jti, exp } = req.authUser;
+  if (jti) revokedTokens.set(jti, exp);
+  clearAuthCookies(res);
+  return res.json({ ok: true, message: "Account and owned data deleted." });
 });
 
 /**
@@ -438,7 +566,7 @@ router.get("/me", requireAuth, (req, res) => {
  * The existing token must still be valid (not expired, not revoked).
  * The old JTI is revoked and a new one is issued.
  *
- * @route POST /api/auth/refresh
+ * @route POST /api/v1/auth/refresh
  * @returns {200} `{ user }` — same shape as login response.
  * @returns {401} If the current session is invalid or expired.
  */
@@ -450,15 +578,13 @@ router.post("/refresh", requireAuth, (req, res) => {
   const { jti: oldJti, exp: oldExp } = req.authUser;
   if (oldJti) revokedTokens.set(oldJti, oldExp);
 
-  // Issue a fresh token with a new JTI
-  const jti   = crypto.randomUUID();
-  const token = signJwt({ sub: user.id, email: user.email, name: user.name, role: user.role, jti }, getJwtSecret());
+  // Issue a fresh token with a new JTI (includes updated workspace context)
+  const payload = buildJwtPayload(user, req.authUser.workspaceId);
+  const token = signJwt(payload, getJwtSecret());
   const exp   = Math.floor(Date.now() / 1000) + JWT_TTL_SEC;
   setAuthCookie(res, token, exp);
 
-  return res.json({
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null },
-  });
+  return res.json({ user: buildUserResponse(user, req.authUser.workspaceId) });
 });
 
 // ─── Email Verification (SEC-001) ────────────────────────────────────────────
@@ -467,7 +593,7 @@ router.post("/refresh", requireAuth, (req, res) => {
  * Verify a user's email address using a signed token.
  * Called when the user clicks the verification link in their email.
  *
- * @route GET /api/auth/verify
+ * @route GET /api/v1/auth/verify
  * @param {string} req.query.token - The verification token from the email.
  * @returns {200} `{ message, verified: true }` on success.
  * @returns {400} Invalid, expired, or already-used token.
@@ -517,7 +643,7 @@ router.get("/verify", async (req, res) => {
  * Resend the verification email for an unverified account.
  * Rate-limited to prevent abuse.
  *
- * @route POST /api/auth/resend-verification
+ * @route POST /api/v1/auth/resend-verification
  * @param {Object} req.body
  * @param {string} req.body.email - Email address of the unverified account.
  * @returns {200} `{ message }` — always returns success to prevent enumeration.
@@ -566,7 +692,7 @@ router.post("/resend-verification", async (req, res) => {
  * Always returns 200 regardless of whether the email exists to prevent
  * user enumeration.
  *
- * @route POST /api/auth/forgot-password
+ * @route POST /api/v1/auth/forgot-password
  * @param {Object} req.body
  * @param {string} req.body.email - Email address of the account.
  * @returns {200} `{ message, ...(dev: resetToken, resetUrl) }`.
@@ -634,7 +760,7 @@ router.post("/forgot-password", async (req, res) => {
 /**
  * Reset password using a valid reset token.
  *
- * @route POST /api/auth/reset-password
+ * @route POST /api/v1/auth/reset-password
  * @param {Object} req.body
  * @param {string} req.body.token       - The reset token from the email/URL.
  * @param {string} req.body.newPassword - New password (8–128 chars).
@@ -703,11 +829,11 @@ router.post("/reset-password", async (req, res) => {
 
 /**
  * GitHub OAuth callback. Exchanges an authorization code for an access token,
- * fetches the user profile, and issues a signed JWT.
+ * fetches the user profile, sets auth cookies, and returns the user profile.
  *
- * @route GET /api/auth/github/callback
+ * @route GET /api/v1/auth/github/callback
  * @param {string} req.query.code - The OAuth authorization code from GitHub.
- * @returns {200} `{ token, user: { id, name, email, role, avatar } }`.
+ * @returns {200} `{ user: { id, name, email, role, avatar, workspaceId, workspaceName, workspaceRole } }`.
  * @returns {400} Missing code parameter.
  * @returns {401} Token exchange or profile fetch failed.
  * @returns {503} GitHub OAuth not configured on this server.
@@ -759,14 +885,14 @@ router.get("/github/callback", async (req, res) => {
       avatar: profile.avatar_url || null,
     });
 
-    const jti   = crypto.randomUUID();
-    const token = signJwt({ sub: user.id, email: user.email, name: user.name, role: user.role, jti }, getJwtSecret());
+    ensureUserWorkspace(user);
+
+    const payload = buildJwtPayload(user);
+    const token = signJwt(payload, getJwtSecret());
     const exp   = Math.floor(Date.now() / 1000) + JWT_TTL_SEC;
     setAuthCookie(res, token, exp);
 
-    return res.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null },
-    });
+    return res.json({ user: buildUserResponse(user) });
   } catch (err) {
     console.error(formatLogLine("error", null, `[auth/github] ${err.message}`));
     return res.status(401).json({ error: err.message || "GitHub authentication failed." });
@@ -777,11 +903,11 @@ router.get("/github/callback", async (req, res) => {
 
 /**
  * Google OAuth callback. Exchanges an authorization code for an access token,
- * fetches the user profile, and issues a signed JWT.
+ * fetches the user profile, sets auth cookies, and returns the user profile.
  *
- * @route GET /api/auth/google/callback
+ * @route GET /api/v1/auth/google/callback
  * @param {string} req.query.code - The OAuth authorization code from Google.
- * @returns {200} `{ token, user: { id, name, email, role, avatar } }`.
+ * @returns {200} `{ user: { id, name, email, role, avatar, workspaceId, workspaceName, workspaceRole } }`.
  * @returns {400} Missing code parameter.
  * @returns {401} Token exchange or profile fetch failed.
  * @returns {503} Google OAuth not configured on this server.
@@ -822,18 +948,18 @@ router.get("/google/callback", async (req, res) => {
       provider: "google",
       providerId: profile.sub,
       email: profile.email.toLowerCase(),
-      name: profile.name,
+      name: profile.name || profile.email.split("@")[0],
       avatar: profile.picture || null,
     });
 
-    const jti   = crypto.randomUUID();
-    const token = signJwt({ sub: user.id, email: user.email, name: user.name, role: user.role, jti }, getJwtSecret());
+    ensureUserWorkspace(user);
+
+    const payload = buildJwtPayload(user);
+    const token = signJwt(payload, getJwtSecret());
     const exp   = Math.floor(Date.now() / 1000) + JWT_TTL_SEC;
     setAuthCookie(res, token, exp);
 
-    return res.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, avatar: user.avatar || null },
-    });
+    return res.json({ user: buildUserResponse(user) });
   } catch (err) {
     console.error(formatLogLine("error", null, `[auth/google] ${err.message}`));
     return res.status(401).json({ error: err.message || "Google authentication failed." });

@@ -1,26 +1,26 @@
 /**
  * @module routes/tests
- * @description Test CRUD, AI generation, single-test run, review, bulk actions, and export. Mounted at `/api`.
+ * @description Test CRUD, AI generation, single-test run, review, bulk actions, and export. Mounted at `/api/v1` (INF-005).
  *
  * ### Endpoints
- * | Method   | Path                                          | Description                         |
- * |----------|-----------------------------------------------|-------------------------------------|
- * | `GET`    | `/api/projects/:id/tests`                     | List tests for a project            |
- * | `GET`    | `/api/tests`                                  | List all tests                      |
- * | `GET`    | `/api/tests/:testId`                          | Get a single test                   |
- * | `PATCH`  | `/api/tests/:testId`                          | Edit test (steps, name, code, etc.) |
- * | `POST`   | `/api/projects/:id/tests`                     | Create a manual test (Draft)        |
- * | `DELETE` | `/api/projects/:id/tests/:testId`             | Delete a test                       |
- * | `POST`   | `/api/projects/:id/tests/generate`            | AI-generate test(s) from description|
- * | `POST`   | `/api/tests/:testId/run`                      | Run a single test                   |
- * | `PATCH`  | `/api/projects/:id/tests/:testId/approve`     | Approve (Draft → Approved)          |
- * | `PATCH`  | `/api/projects/:id/tests/:testId/reject`      | Reject                              |
- * | `PATCH`  | `/api/projects/:id/tests/:testId/restore`     | Restore to Draft                    |
- * | `POST`   | `/api/projects/:id/tests/bulk`                | Bulk approve/reject/restore/delete  |
- * | `GET`    | `/api/projects/:id/tests/counts`              | Per-status test counts              |
- * | `GET`    | `/api/projects/:id/tests/export/zephyr`       | Zephyr Scale CSV export             |
- * | `GET`    | `/api/projects/:id/tests/export/testrail`     | TestRail CSV export                 |
- * | `GET`    | `/api/projects/:id/tests/traceability`        | Traceability matrix                 |
+ * | Method   | Path                                             | Description                         |
+ * |----------|--------------------------------------------------|-------------------------------------|
+ * | `GET`    | `/api/v1/projects/:id/tests`                     | List tests for a project            |
+ * | `GET`    | `/api/v1/tests`                                  | List all tests                      |
+ * | `GET`    | `/api/v1/tests/:testId`                          | Get a single test                   |
+ * | `PATCH`  | `/api/v1/tests/:testId`                          | Edit test (steps, name, code, etc.) |
+ * | `POST`   | `/api/v1/projects/:id/tests`                     | Create a manual test (Draft)        |
+ * | `DELETE` | `/api/v1/projects/:id/tests/:testId`             | Delete a test                       |
+ * | `POST`   | `/api/v1/projects/:id/tests/generate`            | AI-generate test(s) from description|
+ * | `POST`   | `/api/v1/tests/:testId/run`                      | Run a single test                   |
+ * | `PATCH`  | `/api/v1/projects/:id/tests/:testId/approve`     | Approve (Draft → Approved)          |
+ * | `PATCH`  | `/api/v1/projects/:id/tests/:testId/reject`      | Reject                              |
+ * | `PATCH`  | `/api/v1/projects/:id/tests/:testId/restore`     | Restore to Draft                    |
+ * | `POST`   | `/api/v1/projects/:id/tests/bulk`                | Bulk approve/reject/restore/delete  |
+ * | `GET`    | `/api/v1/projects/:id/tests/counts`              | Per-status test counts              |
+ * | `GET`    | `/api/v1/projects/:id/tests/export/zephyr`       | Zephyr Scale CSV export             |
+ * | `GET`    | `/api/v1/projects/:id/tests/export/testrail`     | TestRail CSV export                 |
+ * | `GET`    | `/api/v1/projects/:id/tests/traceability`        | Traceability matrix                 |
  */
 
 import { Router } from "express";
@@ -40,13 +40,19 @@ import { validateTestPayload, validateTestUpdate, validateBulkAction } from "../
 import { isApiTest } from "../runner/codeParsing.js";
 import { formatLogLine } from "../utils/logFormatter.js";
 import { aiGenerationLimiter, expensiveOpLimiter } from "../middleware/appSetup.js";
+import { demoQuota } from "../middleware/demoQuota.js";
 import { actor } from "../utils/actor.js";
+import { requireRole } from "../middleware/requireRole.js";
 
 const router = Router();
 
 // ─── Test CRUD ────────────────────────────────────────────────────────────────
 
 router.get("/projects/:id/tests", (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
+
   const { page, pageSize, reviewStatus, category, search } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const filters = {};
@@ -59,26 +65,36 @@ router.get("/projects/:id/tests", (req, res) => {
 });
 
 router.get("/tests", (req, res) => {
+  // Scope to the user's workspace by fetching workspace project IDs (ACL-001)
+  const wsProjects = projectRepo.getAll(req.workspaceId);
+  const projectIds = wsProjects.map(p => p.id);
+
   const { page, pageSize } = req.query;
   if (page !== undefined || pageSize !== undefined) {
-    return res.json(testRepo.getAllPaged(page, pageSize));
+    return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize));
   }
-  res.json(testRepo.getAll());
+  res.json(testRepo.getAllByProjectIds(projectIds));
 });
 
 router.get("/tests/:testId", (req, res) => {
   const test = testRepo.getById(req.params.testId);
   if (!test) return res.status(404).json({ error: "not found" });
+  // Verify the test's project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   res.json(test);
 });
 
 // PATCH /api/tests/:testId — persist user-edited steps (and optionally other fields)
-router.patch("/tests/:testId", async (req, res) => {
+router.patch("/tests/:testId", requireRole("qa_lead"), async (req, res) => {
   const validationErr = validateTestUpdate(req.body);
   if (validationErr) return res.status(400).json({ error: validationErr });
 
   const test = testRepo.getById(req.params.testId);
   if (!test) return res.status(404).json({ error: "not found" });
+  // Verify the test's project belongs to the user's workspace (ACL-001)
+  const ownerProject = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
+  if (!ownerProject) return res.status(404).json({ error: "not found" });
 
   const { steps, name, description, priority, regenerateCode, previewCode, playwrightCode, linkedIssueKey, tags } = req.body;
 
@@ -291,11 +307,11 @@ No imports, no explanation.`;
 });
 
 // ── Manual test creation ──────────────────────────────────────────────────────
-router.post("/projects/:id/tests", (req, res) => {
+router.post("/projects/:id/tests", requireRole("qa_lead"), (req, res) => {
   const validationErr = validateTestPayload(req.body);
   if (validationErr) return res.status(400).json({ error: validationErr });
 
-  const project = projectRepo.getById(req.params.id);
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const { name, description, steps, playwrightCode, priority, type } = req.body;
@@ -323,6 +339,7 @@ router.post("/projects/:id/tests", (req, res) => {
     modelUsed: null,
     linkedIssueKey: null,
     tags: [],
+    workspaceId: project.workspaceId || null,
   };
 
   testRepo.create(test);
@@ -336,11 +353,13 @@ router.post("/projects/:id/tests", (req, res) => {
   res.status(201).json(test);
 });
 
-router.delete("/projects/:id/tests/:testId", (req, res) => {
+router.delete("/projects/:id/tests/:testId", requireRole("qa_lead"), (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
-  const project = projectRepo.getById(req.params.id);
   logActivity({ ...actor(req),
     type: "test.delete", projectId: req.params.id, projectName: project?.name || null,
     testId: req.params.testId, testName: test.name,
@@ -352,8 +371,8 @@ router.delete("/projects/:id/tests/:testId", (req, res) => {
 
 // ─── AI-powered test generation (pipeline-based) ──────────────────────────────
 
-router.post("/projects/:id/tests/generate", aiGenerationLimiter, async (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+router.post("/projects/:id/tests/generate", requireRole("qa_lead"), demoQuota("generation"), aiGenerationLimiter, async (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const { name, description, dialsConfig } = req.body;
@@ -424,6 +443,7 @@ router.post("/projects/:id/tests/generate", aiGenerationLimiter, async (req, res
       } : null,
       requestedAt: new Date().toISOString(),
     },
+    workspaceId: project.workspaceId || null,
   };
   runRepo.create(run);
   logActivity({ ...actor(req),
@@ -456,11 +476,11 @@ router.post("/projects/:id/tests/generate", aiGenerationLimiter, async (req, res
 });
 
 // ── Run a single test by ID ───────────────────────────────────────────────────
-router.post("/tests/:testId/run", expensiveOpLimiter, async (req, res) => {
+router.post("/tests/:testId/run", requireRole("qa_lead"), demoQuota("run"), expensiveOpLimiter, async (req, res) => {
   const test = testRepo.getById(req.params.testId);
   if (!test) return res.status(404).json({ error: "test not found" });
 
-  const project = projectRepo.getById(test.projectId);
+  const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const runId = generateRunId();
@@ -476,6 +496,7 @@ router.post("/tests/:testId/run", expensiveOpLimiter, async (req, res) => {
     failed: 0,
     total: 1,
     testQueue: [{ id: test.id, name: test.name, steps: test.steps || [] }],
+    workspaceId: project.workspaceId || null,
   };
   runRepo.create(run);
   logActivity({ ...actor(req),
@@ -506,44 +527,50 @@ router.post("/tests/:testId/run", expensiveOpLimiter, async (req, res) => {
 
 // ─── Test Review: Approve / Reject / Restore / Bulk ──────────────────────────
 
-router.patch("/projects/:id/tests/:testId/approve", (req, res) => {
+router.patch("/projects/:id/tests/:testId/approve", requireRole("qa_lead"), (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
   testRepo.update(test.id, { reviewStatus: "approved", reviewedAt });
-  const project = projectRepo.getById(req.params.id);
   logActivity({ ...actor(req),
-    type: "test.approve", projectId: req.params.id, projectName: project?.name || null,
+    type: "test.approve", projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test approved — "${test.name}"`,
   });
   res.json(testRepo.getById(test.id));
 });
 
-router.patch("/projects/:id/tests/:testId/reject", (req, res) => {
+router.patch("/projects/:id/tests/:testId/reject", requireRole("qa_lead"), (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
   testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt });
-  const project = projectRepo.getById(req.params.id);
   logActivity({ ...actor(req),
-    type: "test.reject", projectId: req.params.id, projectName: project?.name || null,
+    type: "test.reject", projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test rejected — "${test.name}"`,
   });
   res.json(testRepo.getById(test.id));
 });
 
-router.patch("/projects/:id/tests/:testId/restore", (req, res) => {
+router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   testRepo.update(test.id, { reviewStatus: "draft", reviewedAt: null });
-  const project = projectRepo.getById(req.params.id);
   logActivity({ ...actor(req),
-    type: "test.restore", projectId: req.params.id, projectName: project?.name || null,
+    type: "test.restore", projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test restored to draft — "${test.name}"`,
   });
@@ -551,7 +578,11 @@ router.patch("/projects/:id/tests/:testId/restore", (req, res) => {
 });
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
-router.post("/projects/:id/tests/bulk", (req, res) => {
+router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
+
   const validationErr = validateBulkAction(req.body);
   if (validationErr) return res.status(400).json({ error: validationErr });
 
@@ -567,9 +598,8 @@ router.post("/projects/:id/tests/bulk", (req, res) => {
       }
     });
     if (deleted.length) {
-      const project = projectRepo.getById(req.params.id);
       logActivity({ ...actor(req),
-        type: "test.bulk_delete", projectId: req.params.id, projectName: project?.name || null,
+        type: "test.bulk_delete", projectId: req.params.id, projectName: project.name,
         detail: `Bulk delete — ${deleted.length} test${deleted.length !== 1 ? "s" : ""} moved to recycle bin`,
       });
     }
@@ -581,16 +611,15 @@ router.post("/projects/:id/tests/bulk", (req, res) => {
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
 
   if (updated.length) {
-    const project = projectRepo.getById(req.params.id);
     for (const test of updated) {
       logActivity({ ...actor(req),
-        type: `test.${action}`, projectId: req.params.id, projectName: project?.name || null,
+        type: `test.${action}`, projectId: req.params.id, projectName: project.name,
         testId: test.id, testName: test.name,
         detail: `Test ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "restored to draft"} (bulk) — "${test.name}"`,
       });
     }
     logActivity({ ...actor(req),
-      type: `test.bulk_${action}`, projectId: req.params.id, projectName: project?.name || null,
+      type: `test.bulk_${action}`, projectId: req.params.id, projectName: project.name,
       detail: `Bulk ${action} — ${updated.length} test${updated.length !== 1 ? "s" : ""}`,
     });
   }
@@ -600,6 +629,9 @@ router.post("/projects/:id/tests/bulk", (req, res) => {
 // ─── Test counts (lightweight — no row data, just per-status totals) ──────────
 
 router.get("/projects/:id/tests/counts", (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
   const counts = testRepo.countByReviewStatus(req.params.id);
   res.json({ ...counts, total: counts.draft + counts.approved + counts.rejected });
 });
@@ -608,7 +640,7 @@ router.get("/projects/:id/tests/counts", (req, res) => {
 
 // GET /api/projects/:id/tests/export/zephyr — Zephyr Scale CSV for test management import
 router.get("/projects/:id/tests/export/zephyr", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const tests = testRepo.getByProjectId(req.params.id);
@@ -623,7 +655,7 @@ router.get("/projects/:id/tests/export/zephyr", (req, res) => {
 
 // GET /api/projects/:id/tests/export/testrail — TestRail CSV for bulk import
 router.get("/projects/:id/tests/export/testrail", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const tests = testRepo.getByProjectId(req.params.id);
@@ -638,7 +670,7 @@ router.get("/projects/:id/tests/export/testrail", (req, res) => {
 
 // GET /api/projects/:id/tests/traceability — traceability matrix (requirement → test → result)
 router.get("/projects/:id/tests/traceability", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   const tests = testRepo.getByProjectId(req.params.id);

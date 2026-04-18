@@ -1,20 +1,20 @@
 /**
  * @module routes/runs
  * @description Run routes — crawl, test execution, abort, listing, and CI/CD triggers.
- * Mounted at `/api`.
+ * Mounted at `/api/v1` (INF-005).
  *
  * ### Endpoints
- * | Method   | Path                                     | Description                         |
- * |----------|------------------------------------------|-------------------------------------|
- * | `POST`   | `/api/projects/:id/crawl`                | Start crawl + AI test generation    |
- * | `POST`   | `/api/projects/:id/run`                  | Execute all approved tests          |
- * | `GET`    | `/api/projects/:id/runs`                 | List runs for a project             |
- * | `GET`    | `/api/runs/:runId`                       | Get run detail                      |
- * | `POST`   | `/api/runs/:runId/abort`                 | Abort a running crawl or test run   |
- * | `POST`   | `/api/projects/:id/trigger`              | CI/CD token-authenticated test run  |
- * | `GET`    | `/api/projects/:id/trigger-tokens`       | List trigger tokens for a project   |
- * | `POST`   | `/api/projects/:id/trigger-tokens`       | Create a new trigger token          |
- * | `DELETE` | `/api/projects/:id/trigger-tokens/:tid`  | Revoke a trigger token              |
+ * | Method   | Path                                        | Description                         |
+ * |----------|---------------------------------------------|-------------------------------------|
+ * | `POST`   | `/api/v1/projects/:id/crawl`                | Start crawl + AI test generation    |
+ * | `POST`   | `/api/v1/projects/:id/run`                  | Execute all approved tests          |
+ * | `GET`    | `/api/v1/projects/:id/runs`                 | List runs for a project             |
+ * | `GET`    | `/api/v1/runs/:runId`                       | Get run detail                      |
+ * | `POST`   | `/api/v1/runs/:runId/abort`                 | Abort a running crawl or test run   |
+ * | `POST`   | `/api/v1/projects/:id/trigger`              | CI/CD token-authenticated test run  |
+ * | `GET`    | `/api/v1/projects/:id/trigger-tokens`       | List trigger tokens for a project   |
+ * | `POST`   | `/api/v1/projects/:id/trigger-tokens`       | Create a new trigger token          |
+ * | `DELETE` | `/api/v1/projects/:id/trigger-tokens/:tid`  | Revoke a trigger token              |
  */
 
 import { Router } from "express";
@@ -25,20 +25,25 @@ import * as webhookTokenRepo from "../database/repositories/webhookTokenRepo.js"
 import { generateRunId, generateWebhookTokenId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort, runAbortControllers } from "../utils/runWithAbort.js";
+import { workerAbortControllers } from "../workers/runWorker.js";
 import { emitRunEvent } from "./sse.js";
 import { resolveDialsPrompt, resolveDialsConfig } from "../testDials.js";
 import { crawlAndGenerateTests } from "../crawler.js";
 import { runTests } from "../testRunner.js"; // thin orchestrator — delegates to runner/ modules
 import { classifyError } from "../utils/errorClassifier.js";
 import { expensiveOpLimiter, signRunArtifacts } from "../middleware/appSetup.js";
+import { demoQuota } from "../middleware/demoQuota.js";
 import { actor } from "../utils/actor.js";
+import { requireRole } from "../middleware/requireRole.js";
+import { runQueue, isQueueAvailable } from "../queue.js";
+import { fireNotifications } from "../utils/notifications.js";
 
 const router = Router();
 
 // ─── Crawl & Generate Tests ───────────────────────────────────────────────────
 
-router.post("/projects/:id/crawl", expensiveOpLimiter, async (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+router.post("/projects/:id/crawl", requireRole("qa_lead"), demoQuota("crawl"), expensiveOpLimiter, async (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
   const existingRun = runRepo.findActiveByProjectId(project.id);
   if (existingRun) {
@@ -70,6 +75,7 @@ router.post("/projects/:id/crawl", expensiveOpLimiter, async (req, res) => {
     logs: [],
     tests: [],
     pagesFound: 0,
+    workspaceId: project.workspaceId || null,
   };
   runRepo.create(run);
 
@@ -78,28 +84,50 @@ router.post("/projects/:id/crawl", expensiveOpLimiter, async (req, res) => {
     detail: `Crawl started for ${project.url}`, status: "running",
   });
 
-  runWithAbort(runId, run,
-    (signal) => crawlAndGenerateTests(project, run, { dialsPrompt, testCount, explorerMode, explorerTuning, signal }),
-    {
-      onSuccess: () => logActivity({ ...actor(req),
-        type: "crawl.complete", projectId: project.id, projectName: project.name,
-        detail: `Crawl completed — ${run.pagesFound || 0} pages found`,
-      }),
-      onFailActivity: (err) => ({
-        type: "crawl.fail", projectId: project.id, projectName: project.name,
-        detail: `Crawl failed: ${classifyError(err, "crawl").message}`,
-      }),
-      actorInfo: actor(req),
-    },
-  );
+  if (isQueueAvailable()) {
+    // INF-003: Enqueue via BullMQ for durable execution
+    try {
+      await runQueue.add("crawl", {
+        runId,
+        projectId: project.id,
+        type: "crawl",
+        options: { dialsPrompt, testCount, explorerMode, explorerTuning, actorInfo: actor(req) },
+      }, { jobId: runId });
+    } catch (enqueueErr) {
+      // Redis connection dropped after startup — mark the run as failed so it
+      // doesn't block the project with a perpetual "running" status.
+      runRepo.update(runId, { status: "failed", error: "Failed to enqueue job", finishedAt: new Date().toISOString() });
+      return res.status(503).json({ error: "Job queue unavailable. Please try again." });
+    }
+  } else {
+    // Fallback: in-process execution (no Redis)
+    runWithAbort(runId, run,
+      (signal) => crawlAndGenerateTests(project, run, { dialsPrompt, testCount, explorerMode, explorerTuning, signal }),
+      {
+        onSuccess: () => logActivity({ ...actor(req),
+          type: "crawl.complete", projectId: project.id, projectName: project.name,
+          detail: `Crawl completed — ${run.pagesFound || 0} pages found`,
+        }),
+        onFailActivity: (err) => ({
+          type: "crawl.fail", projectId: project.id, projectName: project.name,
+          detail: `Crawl failed: ${classifyError(err, "crawl").message}`,
+        }),
+        actorInfo: actor(req),
+        onComplete: async (finishedRun) => {
+          // FEA-001: Fire failure notifications — best-effort
+          try { await fireNotifications(finishedRun, project); } catch { /* best-effort */ }
+        },
+      },
+    );
+  }
 
   res.json({ runId });
 });
 
 // ─── Run Tests ────────────────────────────────────────────────────────────────
 
-router.post("/projects/:id/run", expensiveOpLimiter, async (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+router.post("/projects/:id/run", requireRole("qa_lead"), demoQuota("run"), expensiveOpLimiter, async (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
   const existingRun = runRepo.findActiveByProjectId(project.id);
   if (existingRun) {
@@ -113,8 +141,8 @@ router.post("/projects/:id/run", expensiveOpLimiter, async (req, res) => {
   if (!allTests.length) return res.status(400).json({ error: "no tests found, crawl first" });
   if (!tests.length) return res.status(400).json({ error: "no approved tests — review generated tests and approve them before running regression" });
 
-  // Extract parallel workers from dials config (if provided)
-  const { dialsConfig } = req.body || {};
+  // Extract parallel workers and device emulation from request body / dials config
+  const { dialsConfig, device } = req.body || {};
   const validatedRunDials = resolveDialsConfig(dialsConfig);
   const parallelWorkers = validatedRunDials?.parallelWorkers ?? 1;
 
@@ -131,7 +159,9 @@ router.post("/projects/:id/run", expensiveOpLimiter, async (req, res) => {
     failed: 0,
     total: tests.length,
     parallelWorkers,
+    device: device || null,
     testQueue: tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
+    workspaceId: project.workspaceId || null,
   };
   runRepo.create(run);
 
@@ -140,20 +170,45 @@ router.post("/projects/:id/run", expensiveOpLimiter, async (req, res) => {
     detail: `Test run started — ${tests.length} test${tests.length !== 1 ? "s" : ""}${parallelWorkers > 1 ? ` (${parallelWorkers}x parallel)` : ""}`, status: "running",
   });
 
-  runWithAbort(runId, run,
-    (signal) => runTests(project, tests, run, { parallelWorkers, signal }),
-    {
-      onSuccess: () => logActivity({ ...actor(req),
-        type: "test_run.complete", projectId: project.id, projectName: project.name,
-        detail: `Test run completed — ${run.passed || 0} passed, ${run.failed || 0} failed`,
-      }),
-      onFailActivity: (err) => ({
-        type: "test_run.fail", projectId: project.id, projectName: project.name,
-        detail: `Test run failed: ${classifyError(err, "run").message}`,
-      }),
-      actorInfo: actor(req),
-    },
-  );
+  if (isQueueAvailable()) {
+    // INF-003: Enqueue via BullMQ for durable execution.
+    // Snapshot approved test IDs at enqueue time so retries use the same
+    // set — prevents mismatch between run.total/testQueue and the actual
+    // tests executed if approvals change between attempts.
+    try {
+      await runQueue.add("test_run", {
+        runId,
+        projectId: project.id,
+        type: "test_run",
+        options: { parallelWorkers, device: device || null, testIds: tests.map((t) => t.id), actorInfo: actor(req) },
+      }, { jobId: runId });
+    } catch (enqueueErr) {
+      // Redis connection dropped after startup — mark the run as failed so it
+      // doesn't block the project with a perpetual "running" status.
+      runRepo.update(runId, { status: "failed", error: "Failed to enqueue job", finishedAt: new Date().toISOString() });
+      return res.status(503).json({ error: "Job queue unavailable. Please try again." });
+    }
+  } else {
+    // Fallback: in-process execution (no Redis)
+    runWithAbort(runId, run,
+      (signal) => runTests(project, tests, run, { parallelWorkers, device, signal }),
+      {
+        onSuccess: () => logActivity({ ...actor(req),
+          type: "test_run.complete", projectId: project.id, projectName: project.name,
+          detail: `Test run completed — ${run.passed || 0} passed, ${run.failed || 0} failed`,
+        }),
+        onFailActivity: (err) => ({
+          type: "test_run.fail", projectId: project.id, projectName: project.name,
+          detail: `Test run failed: ${classifyError(err, "run").message}`,
+        }),
+        actorInfo: actor(req),
+        onComplete: async (finishedRun) => {
+          // FEA-001: Fire failure notifications — best-effort
+          try { await fireNotifications(finishedRun, project); } catch { /* best-effort */ }
+        },
+      },
+    );
+  }
 
   res.json({ runId });
 });
@@ -161,6 +216,10 @@ router.post("/projects/:id/run", expensiveOpLimiter, async (req, res) => {
 // ─── Run listing ──────────────────────────────────────────────────────────────
 
 router.get("/projects/:id/runs", (req, res) => {
+  // Verify the project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+
   const { page, pageSize } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const result = runRepo.getByProjectIdPaged(req.params.id, page, pageSize);
@@ -173,19 +232,26 @@ router.get("/projects/:id/runs", (req, res) => {
 router.get("/runs/:runId", (req, res) => {
   const run = runRepo.getById(req.params.runId);
   if (!run) return res.status(404).json({ error: "not found" });
+  // Verify the run's project belongs to the user's workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(run.projectId, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
   res.json(signRunArtifacts(run));
 });
 
 // ─── Abort a running task ─────────────────────────────────────────────────────
 
-router.post("/runs/:runId/abort", (req, res) => {
+router.post("/runs/:runId/abort", requireRole("qa_lead"), (req, res) => {
   const run = runRepo.getById(req.params.runId);
   if (!run) return res.status(404).json({ error: "not found" });
+  // Verify the run's project belongs to the user's workspace (ACL-001)
+  const ownerProject = projectRepo.getByIdInWorkspace(run.projectId, req.workspaceId);
+  if (!ownerProject) return res.status(404).json({ error: "not found" });
   if (run.status !== "running") {
     return res.status(409).json({ error: "Run is not in progress" });
   }
 
   const entry = runAbortControllers.get(req.params.runId);
+  const workerController = workerAbortControllers.get(req.params.runId);
   if (entry) {
     // Mutate the in-memory run object that the pipeline holds so that
     // finalizeRunIfNotAborted() and runRepo.save(run) see "aborted" and
@@ -198,12 +264,21 @@ router.post("/runs/:runId/abort", (req, res) => {
 
     entry.controller.abort();
     runAbortControllers.delete(req.params.runId);
+  } else if (workerController) {
+    // BullMQ-processed run: signal the worker's AbortController.
+    // The worker's catch block checks signal.aborted (set synchronously
+    // by controller.abort()) and skips terminal side-effects.
+    workerController.abort();
+    workerAbortControllers.delete(req.params.runId);
   }
 
   // Mark queued tests that never executed as "skipped" so pass/fail/total
   // metrics are consistent (FLW-03).  Uses the live in-memory run when
   // available (has the latest results from processResult calls).
-  const liveRun = entry?.run || run;
+  // For BullMQ runs (workerController path), re-read from DB after signalling
+  // abort — testRunner flushes results to SQLite after each test, so the fresh
+  // snapshot captures results completed between the initial read and the abort.
+  const liveRun = entry?.run || (workerController ? (runRepo.getById(req.params.runId) || run) : run);
   if (Array.isArray(liveRun.results) && Array.isArray(liveRun.testQueue)) {
     const executedIds = new Set(liveRun.results.map(r => r.testId));
     for (const queued of liveRun.testQueue) {
@@ -229,11 +304,10 @@ router.post("/runs/:runId/abort", (req, res) => {
     runRepo.update(req.params.runId, { results: liveRun.results });
   }
 
-  const project = projectRepo.getById(run.projectId);
   logActivity({ ...actor(req),
     type: `${run.type === "test_run" || run.type === "run" ? "test_run" : run.type}.abort`,
     projectId: run.projectId,
-    projectName: project?.name || null,
+    projectName: ownerProject.name,
     detail: `Run aborted by user`,
     status: "aborted",
   });
@@ -264,7 +338,7 @@ router.post("/runs/:runId/abort", (req, res) => {
  * List all trigger tokens for a project (hashes never returned).
  */
 router.get("/projects/:id/trigger-tokens", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
   res.json(webhookTokenRepo.getByProjectId(project.id));
 });
@@ -277,8 +351,8 @@ router.get("/projects/:id/trigger-tokens", (req, res) => {
  * Body: `{ label?: string }`
  * Response `201`: `{ id, token, label, createdAt }`
  */
-router.post("/projects/:id/trigger-tokens", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+router.post("/projects/:id/trigger-tokens", requireRole("admin"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
 
   const label = typeof req.body?.label === "string"
@@ -309,8 +383,8 @@ router.post("/projects/:id/trigger-tokens", (req, res) => {
  * DELETE /api/projects/:id/trigger-tokens/:tid
  * Revoke (permanently delete) a trigger token.
  */
-router.delete("/projects/:id/trigger-tokens/:tid", (req, res) => {
-  const project = projectRepo.getById(req.params.id);
+router.delete("/projects/:id/trigger-tokens/:tid", requireRole("admin"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
 
   // Verify the token belongs to this project before deleting (prevent

@@ -2,16 +2,16 @@
  * @module routes/chat
  * @description AI chat endpoint — proxies multi-turn conversations through
  * the configured AI provider (Anthropic / OpenAI / Google / Ollama).
- * Mounted at `/api`.
+ * Mounted at `/api/v1` (INF-005).
  *
  * The system prompt includes a live workspace snapshot (projects, tests,
  * recent runs, failures) so the AI can answer questions about the user's
  * actual data without extra API calls from the frontend.
  *
  * ### Endpoints
- * | Method | Path        | Description                                   |
- * |--------|-------------|-----------------------------------------------|
- * | `POST` | `/api/chat` | Send a message and receive an AI reply (SSE)  |
+ * | Method | Path            | Description                                   |
+ * |--------|-----------------|-----------------------------------------------|
+ * | `POST` | `/api/v1/chat`  | Send a message and receive an AI reply (SSE)  |
  *
  * Request body:
  *   { messages: [{ role: "user"|"assistant", content: string }] }
@@ -357,9 +357,10 @@ router.post("/chat", async (req, res) => {
   // for failure analysis. Skipping logs/testQueue/videoSegments saves ~10-50×
   // in JSON parse time.
   const isLocal = isLocalProvider();
-  const projects = projectRepo.getAll();
-  const tests = testRepo.getAll();
-  const runs = runRepo.getAllWithResults();
+  const projects = projectRepo.getAll(req.workspaceId);
+  const projectIds = projects.map((p) => p.id);
+  const tests = testRepo.getAllByProjectIds(projectIds);
+  const runs = runRepo.getWithResultsByProjectIds(projectIds);
   const projectsById = {};
   for (const p of projects) projectsById[p.id] = p;
   const testsById = {};

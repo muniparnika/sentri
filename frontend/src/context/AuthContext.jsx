@@ -20,7 +20,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
-import { API_BASE } from "../utils/apiBase.js";
+import { API_PATH } from "../utils/apiBase.js";
 import { getCsrfToken } from "../utils/csrf.js";
 
 const AuthContext = createContext(null);
@@ -65,7 +65,14 @@ function msUntilRefresh() {
 }
 
 function sanitiseUser(u) {
-  return { id: u.id, name: u.name, email: u.email, avatar: u.avatar || null, role: u.role || "user" };
+  return {
+    id: u.id, name: u.name, email: u.email, avatar: u.avatar || null, role: u.role || "user",
+    hasPassword: u.hasPassword !== undefined ? !!u.hasPassword : true,
+    workspaceId: u.workspaceId || null,
+    workspaceName: u.workspaceName || null,
+    workspaceRole: u.workspaceRole || null,
+    workspaces: Array.isArray(u.workspaces) ? u.workspaces : null,
+  };
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -89,7 +96,7 @@ export function AuthProvider({ children }) {
     }
     refreshTimerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+        const res = await fetch(`${API_PATH}/auth/refresh`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrfToken() },
@@ -139,7 +146,7 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
-    fetch(`${API_BASE}/api/auth/me`, { credentials: "include" })
+    fetch(`${API_PATH}/auth/me`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.id) {
@@ -173,7 +180,7 @@ export function AuthProvider({ children }) {
   /** Sign out — revokes token server-side, clears cookie, wipes local state. */
   async function logout() {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
+      await fetch(`${API_PATH}/auth/logout`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -196,7 +203,8 @@ export function AuthProvider({ children }) {
       ...(options.headers || {}),
       ...(!safe.has(method) ? { "X-CSRF-Token": getCsrfToken() } : {}),
     };
-    const fullUrl = url.startsWith("/api") ? `${API_BASE}${url}` : url;
+    // authFetch callers pass paths like "/api/v1/…" — prepend the backend origin.
+    const fullUrl = url.startsWith("/api/") ? `${API_PATH}${url.replace(/^\/api(\/v\d+)?/, "")}` : url;
     const res = await fetch(fullUrl, { ...options, headers, credentials: "include" });
     if (res.status === 401) {
       doLogout(true);

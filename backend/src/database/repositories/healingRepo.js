@@ -128,32 +128,37 @@ export function deleteByTestIds(testIds) {
 }
 
 /**
- * Delete all healing entries.
+ * Count healing entries for specific test IDs.
+ * @param {string[]} testIds
  * @returns {number}
  */
-export function clearAll() {
+export function countByTestIds(testIds) {
+  if (!testIds || testIds.length === 0) return 0;
   const db = getDatabase();
-  const count = db.prepare("SELECT COUNT(*) as cnt FROM healing_history").get().cnt;
-  db.prepare("DELETE FROM healing_history").run();
-  return count;
+  const clauses = [];
+  const params = [];
+  for (const tid of testIds) {
+    clauses.push("key LIKE ?", "key LIKE ?");
+    params.push(`${tid}::%`, `${tid}@v%::%`);
+  }
+  return db.prepare(`SELECT COUNT(*) as cnt FROM healing_history WHERE ${clauses.join(" OR ")}`).get(...params).cnt;
 }
 
 /**
- * Count total entries.
+ * Count successful healing entries for specific test IDs.
+ * @param {string[]} testIds
  * @returns {number}
  */
-export function count() {
+export function countSuccessesByTestIds(testIds) {
+  if (!testIds || testIds.length === 0) return 0;
   const db = getDatabase();
-  return db.prepare("SELECT COUNT(*) as cnt FROM healing_history").get().cnt;
-}
-
-/**
- * Count entries where strategyIndex >= 0 and succeededAt is not null.
- * @returns {number}
- */
-export function countSuccesses() {
-  const db = getDatabase();
+  const clauses = [];
+  const params = [];
+  for (const tid of testIds) {
+    clauses.push("key LIKE ?", "key LIKE ?");
+    params.push(`${tid}::%`, `${tid}@v%::%`);
+  }
   return db.prepare(
-    "SELECT COUNT(*) as cnt FROM healing_history WHERE strategyIndex >= 0 AND succeededAt IS NOT NULL"
-  ).get().cnt;
+    `SELECT COUNT(*) as cnt FROM healing_history WHERE (${clauses.join(" OR ")}) AND strategyIndex >= 0 AND succeededAt IS NOT NULL`
+  ).get(...params).cnt;
 }

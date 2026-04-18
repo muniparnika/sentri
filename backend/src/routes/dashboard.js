@@ -1,11 +1,11 @@
 /**
  * @module routes/dashboard
- * @description Dashboard analytics endpoint. Mounted at `/api`.
+ * @description Dashboard analytics endpoint. Mounted at `/api/v1` (INF-005).
  *
  * ### Endpoints
- * | Method | Path              | Description                                                |
- * |--------|-------------------|------------------------------------------------------------|
- * | `GET`  | `/api/dashboard`  | Pass rate, defects, flaky tests, MTTR, growth, and more    |
+ * | Method | Path                 | Description                                                |
+ * |--------|----------------------|------------------------------------------------------------|
+ * | `GET`  | `/api/v1/dashboard`  | Pass rate, defects, flaky tests, MTTR, growth, and more    |
  */
 
 import { Router } from "express";
@@ -19,14 +19,20 @@ import { classifyFailure } from "../pipeline/feedbackLoop.js";
 const router = Router();
 
 router.get("/dashboard", (req, res) => {
-  const projects = projectRepo.getAll();
-  // Use lean queries — dashboard only needs scalar fields + results for failure analysis.
-  // Skipping logs, testQueue, generateInput, promptAudit, videoSegments saves ~10-50×
-  // in JSON parse time compared to runRepo.getAll().
-  const runs = runRepo.getAllWithResults();
-  const tests = testRepo.getAll();
+  // ACL-001: Scope dashboard data to the user's workspace.
+  // Projects are filtered by workspaceId; runs and tests are filtered by
+  // the set of project IDs that belong to this workspace.
+  const projects = projectRepo.getAll(req.workspaceId);
+  const projectIds = projects.map(p => p.id);
+
+  // Scope queries to the user's workspace project IDs at the SQL layer
+  // so multi-tenant deployments don't load data from other workspaces.
+  const runs = runRepo.getWithResultsByProjectIds(projectIds);
+  const tests = testRepo.getAllByProjectIds(projectIds);
   // Only fetch activity types needed for dashboard counters (not all activities)
-  const generationActivities = activityRepo.getByTypes(["test.create", "test.generate"]);
+  const generationActivities = activityRepo.getByTypes(["test.create", "test.generate"], {
+    workspaceId: req.workspaceId,
+  });
   const projectsById = {};
   for (const p of projects) projectsById[p.id] = p;
 
@@ -88,8 +94,9 @@ router.get("/dashboard", (req, res) => {
   // ── Tests auto-fixed (feedback loop + self-healing) ─────────────────────
   let testsAutoFixed = 0;
   for (const r of runs) { if (r.feedbackLoop?.improved) testsAutoFixed += r.feedbackLoop.improved; }
-  const healingEntries = healingRepo.count();
-  const healingSuccesses = healingRepo.countSuccesses();
+  const testIds = tests.map((t) => t.id);
+  const healingEntries = healingRepo.countByTestIds(testIds);
+  const healingSuccesses = healingRepo.countSuccessesByTestIds(testIds);
 
   // ── Average run duration (completed test runs) ──────────────────────────
   const durations = completedTestRuns.filter((r) => r.duration > 0).map((r) => r.duration);
@@ -171,11 +178,20 @@ router.get("/dashboard", (req, res) => {
     ? Math.round(recoveryDeltas.reduce((s, d) => s + d, 0) / recoveryDeltas.length)
     : null;
 
+  // ── DIF-011: Test density per URL for coverage heatmap ────────────────────
+  // Counts approved tests per sourceUrl so the SiteGraph can colour nodes
+  // by coverage density: 0 = red, 1–2 = amber, 3+ = green.
+  const testsByUrl = {};
+  for (const t of tests) {
+    if (t.reviewStatus !== "approved" || !t.sourceUrl) continue;
+    testsByUrl[t.sourceUrl] = (testsByUrl[t.sourceUrl] || 0) + 1;
+  }
+
   res.json({
     totalProjects: projects.length,
     totalTests: tests.length,
     totalRuns: runs.length,
-    totalActivities: activityRepo.count(),
+    totalActivities: activityRepo.countFiltered({ workspaceId: req.workspaceId }),
     passRate,
     history,
     recentRuns,
@@ -192,6 +208,7 @@ router.get("/dashboard", (req, res) => {
     flakyTestCount,
     testGrowth,
     mttrMs,
+    testsByUrl,
   });
 });
 

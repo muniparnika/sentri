@@ -2,10 +2,10 @@
  * @module routes/sse
  * @description SSE (Server-Sent Events) infrastructure for real-time run updates.
  *
- * ### Endpoints
- * | Method | Path                         | Description                 |
- * |--------|------------------------------|-----------------------------|
- * | `GET`  | `/api/runs/:runId/events`    | SSE stream for a single run |
+ * ### Endpoints (INF-005: all under `/api/v1/`)
+ * | Method | Path                            | Description                 |
+ * |--------|---------------------------------|-----------------------------|
+ * | `GET`  | `/api/v1/runs/:runId/events`    | SSE stream for a single run |
  *
  * ### Exports
  * - {@link emitRunEvent} — Broadcast an event to all listeners on a run.
@@ -149,8 +149,8 @@ router.get("/runs/:runId/events", (req, res) => {
   const run = runRepo.getById(runId);
   if (!run) return res.status(404).json({ error: "not found" });
 
-  // Verify the run's project exists (future: check user ownership here)
-  const project = projectRepo.getById(run.projectId);
+  // Verify the run belongs to the current workspace (ACL-001)
+  const project = projectRepo.getByIdInWorkspace(run.projectId, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
   res.setHeader("Content-Type", "text/event-stream");

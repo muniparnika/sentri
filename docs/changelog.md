@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **API**: All routes versioned under `/api/v1/` — legacy `/api/*` paths 308-redirect to `/api/v1/*` for backward compatibility during migration window; 308 preserves HTTP method so POST/PATCH/DELETE requests are not downgraded to GET (INF-005) (#94)
+- **AI**: Provider fallback chain on rate limits — when the primary AI provider returns a rate-limit error, `generateText()` automatically retries with the next configured provider in detection order before giving up; per-provider circuit breaker disables a provider for 5 minutes after 3 consecutive rate-limit failures (FEA-003) (#94)
+- **Runner**: Mobile viewport / device emulation — pass a `device` parameter (e.g. `"iPhone 14"`, `"Pixel 7"`) in run config to apply Playwright's built-in device profiles (viewport, user agent, touch); curated preset list exposed for UI dropdowns (DIF-003) (#94)
+- **Dashboard**: `testsByUrl` field in dashboard API response — counts approved tests per source URL for coverage heatmap visualisation (DIF-011) (#94)
+- **Frontend**: Coverage heatmap on SiteGraph — when `testsByUrl` is provided, nodes are coloured by test density: red (0 tests) → amber (1–2) → green (3+); legend updates to show heatmap tiers (DIF-011) (#94)
+- **Runner**: Cursor overlay on live browser view — injects animated cursor dot, click ripple, and keystroke toast via `page.evaluate()` so CDP screencast viewers can follow what the test is doing; re-injected after each navigation (DIF-014) (#94)
+- **Platform**: Demo mode — set `DEMO_GOOGLE_API_KEY` on hosted deployments to let new users try Sentri without bringing their own AI key; per-user daily quotas (2 crawls, 3 runs, 5 generations) enforced via `demoQuota` middleware; users who add their own key (BYOK) bypass all quotas; counters use Redis when available, in-memory otherwise; `GET /config` returns `demoMode` flag and per-user quota status (#94)
+- **Runner**: Per-step screenshots and timing — injects `__captureStep(N)` calls after each `// Step N:` comment in generated code; captures a screenshot and records `{ step, durationMs }` after each logical step; `StepResultsView` now shows the per-step screenshot when a step is clicked instead of always showing the final screenshot; real per-step timing replaces the approximate linear interpolation (DIF-016) (#94)
+- **API**: Multi-tenancy workspaces — all entities (projects, tests, runs, activities) are scoped to workspaces; workspace management endpoints at `/api/workspaces/*` (ACL-001) (#88)
+- **API**: Role-based access control — `admin`/`qa_lead`/`viewer` roles enforced via `requireRole` middleware; role hierarchy admin > qa_lead > viewer (ACL-002) (#88)
+- **DB**: Migration 004 — `workspaces` and `workspace_members` tables; `workspaceId` foreign key on projects, tests, runs, activities (ACL-001) (#88)
+- **Auth**: JWT now includes `workspaceId` hint; workspace role resolved from DB on every request for immediate permission changes (ACL-001, ACL-002) (#88)
+- **Frontend**: `ProtectedRoute` supports `requiredRole` prop for role-gated pages; `AuthContext` exposes `workspaceId`, `workspaceName`, `workspaceRole` (ACL-002) (#88)
+- **Infra**: BullMQ job queue for durable run execution — when Redis is available, crawl and test runs are enqueued via BullMQ instead of fire-and-forget in-process execution; provides crash recovery, global concurrency control via `MAX_WORKERS`, and queue depth visibility; falls back to in-process execution without Redis (INF-003) (#92)
+- **Backend**: `queue.js` — shared BullMQ Queue definition with lazy-load and graceful fallback (INF-003) (#92)
+- **Backend**: `workers/runWorker.js` — BullMQ Worker that processes crawl and test_run jobs with abort support, structured logging, and automatic retry (INF-003) (#92)
+- **API**: Per-project failure notification settings — `GET/PATCH/DELETE /api/projects/:id/notifications` for configuring Microsoft Teams webhook, email recipients, and generic webhook URL per project (FEA-001) (#92)
+- **Backend**: `notifications.js` — failure notification dispatcher supporting Teams Adaptive Cards, HTML email via existing emailSender transport, and generic webhook POST; all dispatches are best-effort (FEA-001) (#92)
+- **DB**: Migration 004 — `notification_settings` table with per-project Teams webhook URL, email recipients, generic webhook URL, and enabled flag (FEA-001) (#92)
+- **Backend**: Failure notifications fire automatically on run completion (with failures) for all run types: manual, scheduled, CI/CD triggered, and BullMQ worker-processed (FEA-001) (#92)
+- **Frontend**: `api.getNotifications()`, `api.upsertNotifications()`, `api.deleteNotifications()` — notification settings API methods (FEA-001) (#92)
+- **API**: `GET /api/auth/export` — export all user-owned account data as JSON (workspaces, projects, tests, runs, activities, schedules, notification settings) for GDPR/CCPA data portability; requires password confirmation via `X-Account-Password` header (SEC-003) (#93)
+- **API**: `DELETE /api/auth/account` — hard-delete user account and all owned workspace data in a single transaction for GDPR right to erasure; requires password confirmation in request body (SEC-003) (#93)
+- **Backend**: `accountRepo.js` — repository module encapsulating account export and cascade deletion queries (SEC-003) (#93)
+- **Frontend**: Account tab in Settings with password-confirmed "Export account data" (JSON download) and "Delete account" (two-click confirm with 5s auto-disarm) actions (SEC-003) (#93)
+- **Frontend**: `api.exportAccountData(password)` and `api.deleteAccount(password)` client methods (SEC-003) (#93)
+
+### Fixed
+- **Backend**: `notificationSettingsRepo.getByProjectId()` now converts SQLite INTEGER `enabled` (0/1) to JS boolean — previously the API returned `enabled: 1` instead of `enabled: true`, inconsistent with the `scheduleRepo` pattern and the API contract (FEA-001) (#92)
+- **Backend**: BullMQ worker retry logic no longer persists terminal state (failed status, activity log, SSE event) on non-final attempts — previously a failed first attempt wrote `status: "failed"` to the DB before BullMQ retried, causing duplicate activity logs, duplicate SSE events, and status overwrites (INF-003) (#92)
+- **Backend**: Abort endpoint now checks `workerAbortControllers` for BullMQ-processed runs — previously only the in-process `runAbortControllers` registry was consulted, so aborting a BullMQ run updated the DB but the worker continued executing and overwrote the status (INF-003) (#92)
+- **Backend**: BullMQ worker success path now checks `signal.aborted` before persisting — prevents the worker from overwriting `status: "aborted"` and "skipped" entries written by the abort endpoint when the abort fires between pipeline completion and `runRepo.save()` (INF-003) (#92)
+- **Backend**: Abort endpoint re-reads run from DB after signalling BullMQ abort — previously used a stale snapshot for skipped-test calculation, potentially missing results flushed by `testRunner` between the initial read and the abort signal (INF-003) (#92)
+- **Backend**: GDPR account export now includes `runLogs` from the `run_logs` table — post-ENH-008 runs store log lines in `run_logs` instead of the `runs.logs` JSON column; the export was missing all log data for post-migration runs (SEC-003) (#92)
+- **Docker**: SPA fallback for CSP nonce injection now works in multi-container deployments — frontend dist is shared with the backend via a Docker named volume (`frontend_dist`) and `SPA_INDEX_PATH` env var; previously `serveIndexWithNonce()` returned 404 because the backend container had no access to the built `index.html` (SEC-002) (#92)
+
+### Security
+- **CSP**: Replaced `'unsafe-inline'` in `script-src` with per-request cryptographic nonce — generates `crypto.randomBytes(16)` nonce per request, passes it to Helmet CSP directive, and injects `nonce="__CSP_NONCE__"` placeholder on all `<script>` tags via Vite plugin; `serveIndexWithNonce()` replaces the placeholder at serve-time (SEC-002) (#93)
+- **SSRF**: Notification webhook URLs are now validated with full SSRF protection at write time (`PATCH /notifications`) and at fetch time (`safeFetch`) — rejects private IPs, localhost, `.internal`/`.local` hostnames, non-http protocols, and DNS-rebinding attacks; SSRF logic extracted from `trigger.js` into shared `utils/ssrfGuard.js` (FEA-001) (#92)
+- **Account**: Account export strips `passwordHash` from the user profile before including it in the JSON payload — prevents offline brute-force attacks if the export file is shared (SEC-003) (#93)
+- **Account**: Password confirmation failures on export/delete return 403 (not 401) to prevent the frontend from misinterpreting them as session expiry and triggering an unexpected logout redirect (SEC-003) (#93)
+
 ## [1.5.0] — 2026-04-17
 
 ### Added

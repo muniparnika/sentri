@@ -38,6 +38,7 @@
 import assert from "node:assert/strict";
 import { app } from "../../src/middleware/appSetup.js";
 import { getDatabase } from "../../src/database/sqlite.js";
+import { workspaceScope } from "../../src/middleware/workspaceScope.js";
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 
@@ -107,6 +108,7 @@ export function decodeJwtPayload(token) {
  * Additional tables can be passed to resetDb() for test-specific cleanup.
  */
 const RESET_TABLES = [
+  "notification_settings",
   "verification_tokens",
   "password_reset_tokens",
   "webhook_tokens",
@@ -118,6 +120,8 @@ const RESET_TABLES = [
   "tests",
   "oauth_ids",
   "projects",
+  "workspace_members",
+  "workspaces",
   "users",
 ];
 
@@ -324,6 +328,7 @@ export function createTestContext() {
   return {
     app,
     getDatabase,
+    workspaceScope,
     req,
     extractCookie: ec,
     parseCookies,

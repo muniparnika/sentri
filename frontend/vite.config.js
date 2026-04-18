@@ -1,8 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+function cspNoncePlugin() {
+  return {
+    name: "sentri-csp-nonce",
+    transformIndexHtml(html) {
+      return html.replace(/<script(?![^>]*\bnonce=)/g, '<script nonce="__CSP_NONCE__"');
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), cspNoncePlugin()],
   base: process.env.GITHUB_PAGES === "true" ? "/sentri/" : "/",
 
   build: {
@@ -30,7 +39,8 @@ export default defineConfig({
       // SSE endpoints are long-lived streams — disable proxy timeouts so
       // http-proxy doesn't kill them after 60 s, causing ECONNRESET on the
       // frontend and a reconnect loop in useRunSSE.
-      "/api/runs/": {
+      // INF-005: Frontend now sends requests to /api/v1/runs/
+      "/api/v1/runs/": {
         target: "http://localhost:3001",
         changeOrigin: true,
         timeout: 60000,

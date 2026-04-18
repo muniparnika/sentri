@@ -12,7 +12,6 @@ Auto-generated documentation for every module, function, and type in the codebas
 
 | Module | Description |
 |---|---|
-| `db.js` | **Deprecated** — emptied stub. All consumers migrated to repository modules. Do not use in new code |
 | `database/sqlite.js` | Database singleton — `getDatabase()`, `closeDatabase()`, `getDatabaseDialect()`. Detects SQLite vs PostgreSQL from `DATABASE_URL` |
 | `database/adapters/sqlite-adapter.js` | SQLite adapter — WAL mode, better-sqlite3 wrapper |
 | `database/adapters/postgres-adapter.js` | PostgreSQL adapter — pg-native/deasync, SQL dialect translation, `AsyncLocalStorage` transactions |
@@ -34,7 +33,7 @@ Auto-generated documentation for every module, function, and type in the codebas
 | Module | Description |
 |---|---|
 | `api.js` | Centralised API client — every `api.*` method documented with params/returns |
-| `utils/api.js` | `API_BASE` constant and `parseJsonResponse` helper |
+| `utils/apiBase.js` | `API_BASE`, `API_VERSION`, `API_PATH` constants and `parseJsonResponse` helper |
 | `context/AuthContext.jsx` | `AuthProvider`, `useAuth()` hook, `login()`, `logout()`, `authFetch()` |
 
 ## Regenerating Locally

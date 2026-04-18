@@ -32,8 +32,15 @@ const files = [
   "tests/scheduler.test.js",
   "tests/trigger-api.test.js",
   "tests/ssrf-protection.test.js",
+  "tests/run-worker.test.js",
+  "tests/abort-worker.test.js",
+  "tests/notifications-api.test.js",
   "tests/email-verification.test.js",
+  "tests/account-compliance.test.js",
   "tests/postgres-adapter.test.js",
+  "tests/device-emulation.test.js",
+  "tests/ai-fallback.test.js",
+  "tests/api-versioning.test.js",
 ];
 
 let passed = 0;

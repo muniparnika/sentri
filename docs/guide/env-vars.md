@@ -21,6 +21,15 @@ Only `JWT_SECRET` and one AI provider key are required to get started — everyt
 | `OLLAMA_MAX_PREDICT` | `4096` | Max output tokens for Ollama |
 | `OLLAMA_TIMEOUT_MS` | `120000` | Timeout for Ollama calls (ms) |
 
+### Demo Mode
+
+| Variable | Default | Description |
+|---|---|---|
+| `DEMO_GOOGLE_API_KEY` | — | Platform-owned Gemini API key for zero-config trial. When set, users without their own AI key can try Sentri immediately using the shared key, subject to per-user daily quotas |
+| `DEMO_DAILY_CRAWLS` | `2` | Max crawls per user per day in demo mode |
+| `DEMO_DAILY_RUNS` | `3` | Max test runs per user per day in demo mode |
+| `DEMO_DAILY_GENERATIONS` | `5` | Max AI test generations per user per day in demo mode |
+
 ### LLM Retry & Tokens
 
 | Variable | Default | Description |
@@ -39,6 +48,7 @@ Only `JWT_SECRET` and one AI provider key are required to get started — everyt
 | `DB_PATH` | `data/sentri.db` | SQLite database file path (ignored when `DATABASE_URL` is set) |
 | `CORS_ORIGIN` | `*` | Frontend origin(s) for CORS, comma-separated. **Required in production** |
 | `SHUTDOWN_DRAIN_MS` | `10000` | Max time (ms) to wait for in-flight runs during graceful shutdown |
+| `SPA_INDEX_PATH` | auto-detect | Path to the Vite-built `index.html` for CSP nonce injection (SEC-002). Only needed when the frontend dist is not at the default location relative to the backend source. In Docker multi-container deployments, set to the shared volume path (e.g. `/usr/share/frontend/index.html`) |
 
 ### Database & Infrastructure
 
@@ -46,7 +56,44 @@ Only `JWT_SECRET` and one AI provider key are required to get started — everyt
 |---|---|---|
 | `DATABASE_URL` | — | PostgreSQL connection string (e.g. `postgres://user:pass@host:5432/db`). When set, uses PostgreSQL instead of SQLite. Requires `pg` + `pg-native` (or `deasync` as fallback) |
 | `PG_POOL_SIZE` | `10` | Max PostgreSQL connection pool size (ignored for SQLite) |
-| `REDIS_URL` | — | Redis connection URL (e.g. `redis://localhost:6379`). When set, enables shared rate limiting, cross-instance token revocation, and SSE pub/sub. Requires `ioredis`. For Redis-backed rate limiting also install `rate-limit-redis` |
+| `REDIS_URL` | — | Redis connection URL (e.g. `redis://localhost:6379`). When set, enables shared rate limiting, cross-instance token revocation, SSE pub/sub, and BullMQ job queue. Requires `ioredis`. For Redis-backed rate limiting also install `rate-limit-redis` |
+| `MAX_WORKERS` | `2` | Global concurrency limit for BullMQ run execution (INF-003). Each slot processes one crawl or test run at a time. Ignored when Redis/BullMQ is not available |
+
+#### Local Redis setup
+
+Redis is **optional** for local development — without it, Sentri uses in-memory stores for rate limiting, token revocation, and SSE. To enable Redis locally:
+
+```bash
+# macOS (Homebrew)
+brew install redis && redis-server
+
+# Or via Docker (any platform)
+docker run -d --name sentri-redis -p 6379:6379 redis:7-alpine
+```
+
+Then in `backend/.env`:
+```bash
+REDIS_URL=redis://localhost:6379
+```
+
+Install the required npm packages:
+```bash
+cd backend
+npm install ioredis rate-limit-redis
+```
+
+#### Local BullMQ setup
+
+BullMQ provides **durable job queue execution** for crawls and test runs (INF-003). Without it, runs execute in-process — which is fine for local development but means runs are lost if the server crashes mid-execution.
+
+To enable BullMQ locally, ensure Redis is running (see above), then:
+
+```bash
+cd backend
+npm install bullmq
+```
+
+BullMQ is detected automatically when both `REDIS_URL` is set and the `bullmq` package is installed. Set `MAX_WORKERS` to control how many runs can execute concurrently (default: 2).
 
 ### Email (Transactional)
 
@@ -70,7 +117,7 @@ Only `JWT_SECRET` and one AI provider key are required to get started — everyt
 | `ARTIFACT_SECRET` | random (dev) | **Required in production.** Signs artifact URLs (screenshots, videos) |
 | `ARTIFACT_TOKEN_TTL_MS` | `3600000` | Artifact URL token TTL (ms) |
 | `ENABLE_DEV_RESET_TOKENS` | `false` | When `"true"`, forgot-password response includes the reset token (dev/test only — never in production) |
-| `APP_URL` | `http://localhost:3000` | Frontend base URL (used for OAuth redirects and email verification links) |
+| `APP_URL` | `http://localhost:3000` | Frontend base URL (used for OAuth redirects, email verification links, and notification deep links). Falls back to `CORS_ORIGIN` |
 | `APP_BASE_PATH` | `/` | Frontend base path prefix (e.g. `/sentri` for GitHub Pages) |
 | `BACKEND_URL` | auto-detect | Backend URL override for cross-origin cookie detection |
 
