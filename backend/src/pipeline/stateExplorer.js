@@ -30,11 +30,12 @@ import { fingerprintState, statesEqual } from "./stateFingerprint.js";
 import { discoverActions, detectSignupIntent } from "./actionDiscovery.js";
 import { fillEmailVerificationFlow, waitForVerification, dispose } from "../utils/disposableEmail.js";
 import { extractFlows, flowToJourney } from "./flowGraph.js";
-import { extractPathPattern } from "./smartCrawl.js";
+import { extractPathPatternWithParams, stripNoiseParams } from "./smartCrawl.js";
 import { log, logWarn, logSuccess } from "../utils/runLogger.js";
 import { decryptCredentials } from "../utils/credentialEncryption.js";
 import { createHarCapture, summariseApiEndpoints } from "./harCapture.js";
 import { launchBrowser } from "../runner/config.js";
+import { loadRobotsRules, isAllowed, loadSitemapUrls } from "../utils/robotsSitemap.js";
 
 // Defaults — overridden per-run by tuning values from Test Dials
 const DEFAULT_MAX_STATES = parseInt(process.env.CRAWL_MAX_PAGES, 10) || 30;
@@ -157,20 +158,54 @@ async function executeFormGroup(page, formActions, actionTimeout) {
   return executed;
 }
 
-// Max states allowed per URL — prevents the same page with trivial dynamic
-// differences from consuming the entire state budget.
-const MAX_STATES_PER_URL = 3;
+// ── Per-URL state cap (#52 defect #6) ────────────────────────────────────────
+// Base cap per URL path pattern. The actual cap scales up when existing states
+// at the same URL are structurally diverse (different DOM structure or component
+// inventory), which indicates a multi-step wizard or SPA with meaningful
+// in-page state changes. This replaces the previous hard cap of 3.
+const BASE_STATES_PER_URL = 3;
+const MAX_STATES_PER_URL  = 8;
+
+/**
+ * Compute the effective per-URL state cap based on fingerprint diversity.
+ *
+ * If the existing states at this URL all have different DOM structures or
+ * component inventories, the cap is raised to allow deeper exploration of
+ * multi-step wizards and SPA flows. If the states are structurally similar
+ * (same DOM, different timestamps), the base cap applies.
+ *
+ * @param {Array} existingSnapshots — snapshots already captured at this URL
+ * @returns {number} effective cap for this URL
+ */
+function effectiveUrlCap(existingSnapshots) {
+  if (existingSnapshots.length < BASE_STATES_PER_URL) return BASE_STATES_PER_URL;
+  // Count distinct structural fingerprints among existing states at this URL
+  const structures = new Set(existingSnapshots.map(s => {
+    const tags = (s.elements || []).map(el => `${el.tag}:${el.type || ""}`).sort().join(",");
+    const components = [
+      s.hasModals ? "m" : "", s.hasTabs ? "t" : "", s.hasSidebar ? "s" : "",
+      s.hasDropdown ? "d" : "", s.hasToast ? "o" : "", s.hasAccordion ? "a" : "",
+    ].filter(Boolean).join("");
+    return `${tags}|${components}`;
+  }));
+  // If every existing state is structurally unique, raise the cap
+  if (structures.size >= existingSnapshots.length) {
+    return Math.min(existingSnapshots.length + BASE_STATES_PER_URL, MAX_STATES_PER_URL);
+  }
+  return BASE_STATES_PER_URL;
+}
 
 async function captureState(page, ctx) {
   const snapshot = await takeSnapshot(page);
   const fp = fingerprintState(snapshot);
   const isNovel = !ctx.states.has(fp);
   if (isNovel) {
-    // Per-URL cap: if we already have MAX_STATES_PER_URL states for this URL,
-    // treat this as a duplicate to avoid budget waste on trivially different
-    // snapshots of the same page (timestamps, personalisation, A/B tests).
-    const urlStateCount = ctx.snapshots.filter(s => s.url === snapshot.url).length;
-    if (urlStateCount >= MAX_STATES_PER_URL) {
+    // Per-URL cap: check against the diversity-aware cap to avoid budget waste
+    // on trivially different snapshots while still allowing multi-step wizards
+    // and SPA flows to be fully explored (#52 defect #6).
+    const existingAtUrl = ctx.snapshots.filter(s => s.url === snapshot.url);
+    const cap = effectiveUrlCap(existingAtUrl);
+    if (existingAtUrl.length >= cap) {
       return { snapshot, fp, isNovel: false };
     }
     ctx.states.add(fp);
@@ -201,7 +236,7 @@ async function restorePage(page, beforeUrl, fallbackUrl, actionTimeout) {
 }
 
 function enqueueIfNew(ctx, fp, url, depth) {
-  const pathPattern = extractPathPattern(url);
+  const pathPattern = extractPathPatternWithParams(url);
   if (ctx.pathPatternsSeen.has(pathPattern)) return;
   ctx.pathPatternsSeen.add(pathPattern);
   ctx.queue.push({ fp, url, depth });
@@ -216,10 +251,16 @@ async function crawlLinks(page, currentFp, currentUrl, depth, project, ctx, run,
     if (ctx.states.size >= ctx.limits.maxStates) break;
     try {
       const u = new URL(href, currentUrl);
-      u.hash = ""; u.search = "";
+      u.hash = "";
+      // Strip only noise query params; preserve significant ones (#52 defect #1).
+      stripNoiseParams(u);
       const normalized = u.toString();
       if (!isSameEffectiveOrigin(normalized, ctx.resolvedOrigin || project.url)) continue;
-      const pathPattern = extractPathPattern(normalized);
+      // robots.txt compliance (#53) — skip disallowed paths
+      if (!isAllowed(normalized, ctx.robotsRules)) continue;
+      // Use param-aware pattern so /products?category=A and ?category=B
+      // are treated as distinct pages (#52 defect #1, Devin review fix).
+      const pathPattern = extractPathPatternWithParams(normalized);
       if (ctx.pathPatternsSeen.has(pathPattern)) continue;
       await page.goto(normalized, { waitUntil: "domcontentloaded", timeout: 15000 });
       await waitForSettle(page, ctx.limits.actionTimeout);
@@ -299,11 +340,31 @@ export async function exploreStates(project, run, { signal, tuning } = {}) {
     // ── HAR capture: attach after redirect so it uses the resolved origin ──
     harCapture = createHarCapture(context, resolvedUrl);
 
+    // ── robots.txt + sitemap.xml (#53) ──────────────────────────────────────
+    const robotsRules = await loadRobotsRules(resolvedUrl);
+    ctx.robotsRules = robotsRules;
+    if (robotsRules.rules.length > 0) {
+      log(run, `🤖 robots.txt: ${robotsRules.rules.length} rule(s) loaded — restricted paths will be skipped`);
+    }
+    const sitemapUrls = await loadSitemapUrls(resolvedUrl, robotsRules.sitemaps);
+    if (sitemapUrls.length > 0) {
+      log(run, `🗺️  sitemap.xml: ${sitemapUrls.length} URL(s) discovered — seeding exploration queue`);
+    }
+
     const { fp: initialFp } = await captureState(page, ctx);
     startState = initialFp;
     ctx.queue.push({ fp: initialFp, url: resolvedUrl, depth: 0 });
     syncRunPages(run, ctx.snapshots);
     log(run, `🔍 Initial state: ${resolvedUrl} [${initialFp.slice(0, 8)}]`);
+
+    // Seed sitemap URLs into the exploration queue (#53)
+    if (sitemapUrls.length > 0) {
+      for (const smUrl of sitemapUrls) {
+        if (isSameEffectiveOrigin(smUrl, resolvedUrl) && isAllowed(smUrl, robotsRules)) {
+          enqueueIfNew(ctx, initialFp, smUrl, 1);
+        }
+      }
+    }
 
     while (ctx.queue.length > 0 && ctx.states.size < limits.maxStates) {
       throwIfAborted(signal);
@@ -336,9 +397,36 @@ export async function exploreStates(project, run, { signal, tuning } = {}) {
       }
       if (!navOk) continue;
 
-      const actions = discoverActions(ctx.snapshotsByFp.get(currentFp));
+      // Sitemap-seeded queue items carry the homepage fingerprint as a
+      // placeholder because the target page hasn't been visited yet. Detect
+      // this by comparing the snapshot URL stored for currentFp with the
+      // actual currentUrl. When they differ, capture a fresh state so
+      // discoverActions receives the correct page's DOM (#53 bug fix).
+      let activeFp = currentFp;
+      const storedSnapshot = ctx.snapshotsByFp.get(currentFp);
+      if (!storedSnapshot || storedSnapshot.url !== currentUrl) {
+        try {
+          const { snapshot: freshSnap, fp: freshFp, isNovel } = await captureState(page, ctx);
+          activeFp = freshFp;
+          // When the per-URL cap is hit, captureState returns isNovel:false
+          // without storing the snapshot in snapshotsByFp. Store it so
+          // discoverActions and downstream lookups don't receive undefined.
+          if (!ctx.snapshotsByFp.has(freshFp)) {
+            ctx.snapshotsByFp.set(freshFp, freshSnap);
+          }
+          if (isNovel && !statesEqual(freshFp, currentFp)) {
+            ctx.edges.push({ fromFp: currentFp, action: { type: "click", element: { tag: "a", text: currentUrl }, selectors: [] }, toFp: freshFp });
+            syncRunPages(run, ctx.snapshots);
+            log(run, `   📸 Captured fresh state for ${currentUrl} [${freshFp.slice(0, 8)}]`);
+          }
+        } catch (err) {
+          logWarn(run, `   Snapshot failed for sitemap URL ${currentUrl}: ${err.message}`);
+        }
+      }
+
+      const actions = discoverActions(ctx.snapshotsByFp.get(activeFp));
       const { formGroups, standalone } = groupActionsByForm(actions);
-      log(run, `🎯 [${currentFp.slice(0, 8)}] depth=${depth}: ${actions.length} actions (${formGroups.size} forms)`);
+      log(run, `🎯 [${activeFp.slice(0, 8)}] depth=${depth}: ${actions.length} actions (${formGroups.size} forms)`);
 
       for (const [formId, formActions] of formGroups) {
         throwIfAborted(signal);
@@ -351,7 +439,7 @@ export async function exploreStates(project, run, { signal, tuning } = {}) {
         // standard form filler. This lets Sentri complete flows that would
         // otherwise be blocked by an email verification step.
         let executedActions = [];
-        const currentSnapshot = ctx.snapshotsByFp.get(currentFp);
+        const currentSnapshot = ctx.snapshotsByFp.get(activeFp);
         if (detectSignupIntent(currentSnapshot, formActions)) {
           log(run, `   📧 Signup form detected — using disposable email flow`);
           let mailbox = null;
@@ -414,9 +502,9 @@ export async function exploreStates(project, run, { signal, tuning } = {}) {
           }
           try {
             const { fp: resultFp, isNovel } = await captureState(page, ctx);
-            if (!statesEqual(resultFp, currentFp)) {
+            if (!statesEqual(resultFp, activeFp)) {
               // Record an edge only for actions that were actually executed
-              for (const act of executedActions) ctx.edges.push({ fromFp: currentFp, action: act, toFp: resultFp });
+              for (const act of executedActions) ctx.edges.push({ fromFp: activeFp, action: act, toFp: resultFp });
               if (isNovel) { enqueueIfNew(ctx, resultFp, ctx.snapshotsByFp.get(resultFp).url, depth + 1); syncRunPages(run, ctx.snapshots); log(run, `   ✨ New state: ${ctx.snapshotsByFp.get(resultFp).url} [${resultFp.slice(0, 8)}]`); }
             }
           } catch (err) { logWarn(run, `   Snapshot failed after form: ${err.message}`); }
@@ -441,15 +529,15 @@ export async function exploreStates(project, run, { signal, tuning } = {}) {
         explored++;
         try {
           const { fp: resultFp, isNovel } = await captureState(page, ctx);
-          if (!statesEqual(resultFp, currentFp)) {
-            ctx.edges.push({ fromFp: currentFp, action, toFp: resultFp });
+          if (!statesEqual(resultFp, activeFp)) {
+            ctx.edges.push({ fromFp: activeFp, action, toFp: resultFp });
             if (isNovel) { enqueueIfNew(ctx, resultFp, ctx.snapshotsByFp.get(resultFp).url, depth + 1); syncRunPages(run, ctx.snapshots); log(run, `   ✨ New state: ${ctx.snapshotsByFp.get(resultFp).url} [${resultFp.slice(0, 8)}]`); }
           }
         } catch (err) { logWarn(run, `   Snapshot failed after action: ${err.message}`); }
         await restorePage(page, beforeUrl, currentUrl, limits.actionTimeout);
       }
 
-      await crawlLinks(page, currentFp, currentUrl, depth, project, ctx, run, signal);
+      await crawlLinks(page, activeFp, currentUrl, depth, project, ctx, run, signal);
     }
     await page.close().catch(() => {});
 

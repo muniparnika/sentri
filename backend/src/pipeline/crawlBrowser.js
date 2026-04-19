@@ -8,12 +8,13 @@
  */
 
 import { throwIfAborted } from "../utils/abortHelper.js";
-import { SmartCrawlQueue, fingerprintStructure, extractPathPattern } from "./smartCrawl.js";
+import { SmartCrawlQueue, fingerprintStructure, extractPathPattern, stripNoiseParams } from "./smartCrawl.js";
 import { takeSnapshot } from "./pageSnapshot.js";
 import { log, logWarn, logSuccess } from "../utils/runLogger.js";
 import { decryptCredentials } from "../utils/credentialEncryption.js";
 import { createHarCapture, summariseApiEndpoints } from "./harCapture.js";
 import { launchBrowser } from "../runner/config.js";
+import { loadRobotsRules, isAllowed, loadSitemapUrls } from "../utils/robotsSitemap.js";
 
 const MAX_PAGES = parseInt(process.env.CRAWL_MAX_PAGES, 10) || 30;
 const MAX_DEPTH = parseInt(process.env.CRAWL_MAX_DEPTH, 10) || 3;
@@ -95,12 +96,34 @@ export async function crawlPages(project, run, { signal } = {}) {
     // ── HAR capture: attach AFTER redirect so it uses the resolved origin ──
     harCapture = createHarCapture(context, resolvedOrigin);
 
+    // ── robots.txt + sitemap.xml (#53) ──────────────────────────────────────
+    const robotsRules = await loadRobotsRules(resolvedOrigin);
+    if (robotsRules.rules.length > 0) {
+      log(run, `🤖 robots.txt: ${robotsRules.rules.length} rule(s) loaded — restricted paths will be skipped`);
+    }
+    const sitemapUrls = await loadSitemapUrls(resolvedOrigin, robotsRules.sitemaps);
+    if (sitemapUrls.length > 0) {
+      log(run, `🗺️  sitemap.xml: ${sitemapUrls.length} URL(s) discovered — seeding crawl queue`);
+      for (const sitemapUrl of sitemapUrls) {
+        if (isSameEffectiveOrigin(sitemapUrl, resolvedOrigin) && isAllowed(sitemapUrl, robotsRules)) {
+          crawlQueue.enqueue(sitemapUrl, 1);
+        }
+      }
+    }
+
     // ── Crawl loop ──────────────────────────────────────────────────────────
     while (crawlQueue.hasMore() && crawlQueue.visitedCount < MAX_PAGES) {
       if (signal?.aborted) { throwIfAborted(signal); }
       const item = crawlQueue.dequeue();
       if (!item) break;
       const { url, depth } = item;
+
+      // robots.txt compliance (#53) — skip disallowed paths
+      // Check BEFORE markVisited so disallowed URLs don't consume crawl budget.
+      if (!isAllowed(url, robotsRules)) {
+        log(run, `🚫 Skipping (robots.txt): ${url}`);
+        continue;
+      }
 
       crawlQueue.markVisited(url);
 
@@ -218,11 +241,13 @@ export async function crawlPages(project, run, { signal } = {}) {
             try {
               const u = new URL(href, url);
               u.hash = "";
-              u.search = "";
+              // Strip only noise query params; preserve significant ones (#52)
+              stripNoiseParams(u);
               const normalized = u.toString();
-              if (isSameEffectiveOrigin(normalized, resolvedOrigin)) {
-                crawlQueue.enqueue(normalized, depth + 1);
-              }
+              if (!isSameEffectiveOrigin(normalized, resolvedOrigin)) continue;
+              // robots.txt compliance (#53) — skip disallowed before enqueuing
+              if (!isAllowed(normalized, robotsRules)) continue;
+              crawlQueue.enqueue(normalized, depth + 1);
             } catch {}
           }
         }

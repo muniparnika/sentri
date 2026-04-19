@@ -11,7 +11,7 @@ import { classifyElement, classifyPage, buildUserJourneys } from "../src/pipelin
 import { hashTest, scoreTest, deduplicateTests, deduplicateAcrossRuns } from "../src/pipeline/deduplicator.js";
 import { hasStrongAssertions, hasWeakAssertions, hasNoAssertions, enhanceTest } from "../src/pipeline/assertionEnhancer.js";
 import { classifyFailure, detectFlakiness } from "../src/pipeline/feedbackLoop.js";
-import { scoreUrl, fingerprintStructure, extractPathPattern, SmartCrawlQueue } from "../src/pipeline/smartCrawl.js";
+import { scoreUrl, fingerprintStructure, extractPathPattern, extractPathPatternWithParams, stripNoiseParams, SmartCrawlQueue } from "../src/pipeline/smartCrawl.js";
 import { fingerprintState, statesEqual } from "../src/pipeline/stateFingerprint.js";
 import { validateTest } from "../src/pipeline/testValidator.js";
 
@@ -361,6 +361,39 @@ test("extractPathPattern normalizes numeric IDs", () => {
   assert.equal(p1, p2, "Different product IDs should produce same pattern");
 });
 
+test("extractPathPatternWithParams includes significant query params", () => {
+  const p1 = extractPathPatternWithParams("http://example.com/products?category=electronics&sort=price");
+  const p2 = extractPathPatternWithParams("http://example.com/products?category=books&sort=price");
+  assert.notEqual(p1, p2, "Different category params should produce different patterns");
+});
+
+test("extractPathPatternWithParams ignores noise params", () => {
+  const p1 = extractPathPatternWithParams("http://example.com/products?utm_source=google&category=electronics");
+  const p2 = extractPathPatternWithParams("http://example.com/products?utm_source=twitter&category=electronics");
+  assert.equal(p1, p2, "UTM params should not affect the pattern");
+});
+
+test("extractPathPatternWithParams normalizes numeric IDs like extractPathPattern", () => {
+  const p1 = extractPathPatternWithParams("http://example.com/users/123?tab=settings");
+  const p2 = extractPathPatternWithParams("http://example.com/users/456?tab=settings");
+  assert.equal(p1, p2, "Numeric IDs should be normalised even with query params");
+});
+
+test("extractPathPatternWithParams sorts params deterministically", () => {
+  const p1 = extractPathPatternWithParams("http://example.com/page?sort=price&category=books");
+  const p2 = extractPathPatternWithParams("http://example.com/page?category=books&sort=price");
+  assert.equal(p1, p2, "Param order should not matter — sorted alphabetically");
+});
+
+test("stripNoiseParams removes UTM and session params", () => {
+  const u = new URL("http://example.com/page?utm_source=google&category=books&session_id=abc&sort=price");
+  stripNoiseParams(u);
+  assert.equal(u.searchParams.has("utm_source"), false, "utm_source should be stripped");
+  assert.equal(u.searchParams.has("session_id"), false, "session_id should be stripped");
+  assert.equal(u.searchParams.get("category"), "books", "category should be preserved");
+  assert.equal(u.searchParams.get("sort"), "price", "sort should be preserved");
+});
+
 test("fingerprintStructure produces same hash for same structure", () => {
   const snap1 = { forms: 1, h1: "Login", elements: [{ tag: "input", type: "email" }, { tag: "button", type: "" }] };
   const snap2 = { forms: 1, h1: "Sign In", elements: [{ tag: "input", type: "email" }, { tag: "button", type: "" }] }; // different h1, same structure
@@ -479,6 +512,106 @@ test("fingerprintState ignores timestamps in title", () => {
 test("statesEqual compares fingerprint strings", () => {
   assert.equal(statesEqual("abc", "abc"), true);
   assert.equal(statesEqual("abc", "def"), false);
+});
+
+// ── #52 defect #1: Significant query params included in fingerprint ──────────
+
+console.log("\n🔑 Layer 7b: State Fingerprint — query params (#52)");
+
+test("fingerprintState distinguishes different category query params", () => {
+  const base = { elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "", title: "Products" };
+  const fp1 = fingerprintState({ ...base, url: "http://ex.com/products?category=electronics&sort=price" });
+  const fp2 = fingerprintState({ ...base, url: "http://ex.com/products?category=books&sort=price" });
+  assert.notEqual(fp1, fp2, "Different category params should produce different fingerprints");
+});
+
+test("fingerprintState ignores utm tracking params", () => {
+  const base = { elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "", title: "Page" };
+  const fp1 = fingerprintState({ ...base, url: "http://ex.com/page?utm_source=google" });
+  const fp2 = fingerprintState({ ...base, url: "http://ex.com/page?utm_source=twitter" });
+  assert.equal(fp1, fp2, "UTM params should be stripped from fingerprint");
+});
+
+test("fingerprintState ignores session/token params", () => {
+  const base = { elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "", title: "Page" };
+  const fp1 = fingerprintState({ ...base, url: "http://ex.com/page?session_id=abc123" });
+  const fp2 = fingerprintState({ ...base, url: "http://ex.com/page?session_id=def456" });
+  assert.equal(fp1, fp2, "Session params should be stripped from fingerprint");
+});
+
+// ── #52 defect #2: Route param pattern normalisation ─────────────────────────
+
+test("fingerprintState treats /users/123 and /users/456 as same route", () => {
+  const base = { elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "", title: "User" };
+  const fp1 = fingerprintState({ ...base, url: "http://ex.com/users/123" });
+  const fp2 = fingerprintState({ ...base, url: "http://ex.com/users/456" });
+  assert.equal(fp1, fp2, "Numeric path segments should be normalised to :id");
+});
+
+test("fingerprintState distinguishes /users/:id from /posts/:id", () => {
+  const base = { elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "", title: "Detail" };
+  const fp1 = fingerprintState({ ...base, url: "http://ex.com/users/123" });
+  const fp2 = fingerprintState({ ...base, url: "http://ex.com/posts/456" });
+  assert.notEqual(fp1, fp2, "Different path prefixes should produce different fingerprints");
+});
+
+// ── #52 defect #3: Component inventory in fingerprint ────────────────────────
+
+test("fingerprintState differs when sidebar visibility changes", () => {
+  const base = { url: "http://ex.com/page", title: "Page", elements: [
+    { tag: "button", text: "Home", visible: true, role: "button" },
+    { tag: "button", text: "About", visible: true, role: "button" },
+  ], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "" };
+  const fp1 = fingerprintState({ ...base, hasSidebar: true });
+  const fp2 = fingerprintState({ ...base, hasSidebar: false });
+  assert.notEqual(fp1, fp2, "Sidebar visibility should affect fingerprint");
+});
+
+test("fingerprintState differs when dropdown is open vs closed", () => {
+  const base = { url: "http://ex.com/page", title: "Page", elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "" };
+  const fp1 = fingerprintState({ ...base, hasDropdown: true });
+  const fp2 = fingerprintState({ ...base, hasDropdown: false });
+  assert.notEqual(fp1, fp2, "Dropdown state should affect fingerprint");
+});
+
+// ── #52 defect #4: SPA framework detection in fingerprint ────────────────────
+
+test("fingerprintState includes SPA framework marker", () => {
+  const base = { url: "http://ex.com/page", title: "Page", elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "" };
+  const fp1 = fingerprintState({ ...base, spaFramework: "react" });
+  const fp2 = fingerprintState({ ...base, spaFramework: "vue" });
+  assert.notEqual(fp1, fp2, "Different SPA frameworks should produce different fingerprints");
+});
+
+test("fingerprintState differs for loading vs error state", () => {
+  const base = { url: "http://ex.com/page", title: "Page", elements: [], hasModals: false, hasTabs: false, formStructures: [], forms: 0, h1: "" };
+  const fp1 = fingerprintState({ ...base, hasSpinner: true, hasErrorState: false });
+  const fp2 = fingerprintState({ ...base, hasSpinner: false, hasErrorState: true });
+  assert.notEqual(fp1, fp2, "Loading vs error state should produce different fingerprints");
+});
+
+// ── #52 defect #5: Dynamic content normalisation ─────────────────────────────
+
+test("fingerprintState ignores order number changes in button text", () => {
+  const mkSnap = (text) => ({
+    url: "http://ex.com/orders", title: "Orders", hasModals: false, hasTabs: false,
+    formStructures: [], forms: 0, h1: "",
+    elements: [{ tag: "button", text, visible: true, role: "button" }],
+  });
+  const fp1 = fingerprintState(mkSnap("Order #12345"));
+  const fp2 = fingerprintState(mkSnap("Order #12346"));
+  assert.equal(fp1, fp2, "Order numbers in button text should be normalised");
+});
+
+test("fingerprintState ignores item count changes in link text", () => {
+  const mkSnap = (text) => ({
+    url: "http://ex.com/cart", title: "Cart", hasModals: false, hasTabs: false,
+    formStructures: [], forms: 0, h1: "",
+    elements: [{ tag: "a", text, visible: true, role: "link" }],
+  });
+  const fp1 = fingerprintState(mkSnap("2 items"));
+  const fp2 = fingerprintState(mkSnap("3 items"));
+  assert.equal(fp1, fp2, "Item counts in link text should be normalised");
 });
 
 // ── Layer 8: Test Validator — syntax check (PR #66) ──────────────────────────
