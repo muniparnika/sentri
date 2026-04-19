@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-04-19
+
 ### Added
 - **API**: All routes versioned under `/api/v1/` — legacy `/api/*` paths 308-redirect to `/api/v1/*` for backward compatibility during migration window; 308 preserves HTTP method so POST/PATCH/DELETE requests are not downgraded to GET (INF-005) (#94)
 - **AI**: Provider fallback chain on rate limits — when the primary AI provider returns a rate-limit error, `generateText()` automatically retries with the next configured provider in detection order before giving up; per-provider circuit breaker disables a provider for 5 minutes after 3 consecutive rate-limit failures (FEA-003) (#94)
