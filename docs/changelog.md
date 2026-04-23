@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] — 2026-04-23
+
 ### Added
 - **Tests**: Stale test detection and cleanup — approved tests not run in 90 days (configurable via `STALE_TEST_DAYS`) are automatically flagged as stale by a weekly background job; `isStale` badge shown in test lists; filter by stale tests in the Tests page; manual trigger via stale detector utility (AUTO-013) (#99)
 - **Tests**: Flaky test detection and reporting — after each test run, a flaky score (0–100) is computed from the pass/fail balance ratio across the last 20 runs and persisted to `tests.flakyScore`; dashboard includes a top-10 flaky tests panel; tests with `flakyScore > 0` receive a flaky badge (DIF-004) (#99)
