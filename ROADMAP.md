@@ -78,55 +78,56 @@ The following diagram shows the dependency tree for Phase 2. All blockers must c
 
 ## Completed Work Summary
 
-The following items have been verified complete against the codebase and are **not** detailed below.
-See the [Archive](#archive--completed-items) section to view full details if needed.
+The following items have been verified complete against the codebase and are **not** detailed in the sections below.
 
-| ID | Title | PR / Commit |
-|----|-------|-------------|
-| S3-02 | Shadow DOM support in crawler | PR #55 |
-| S3-04 | DOM stability wait before snapshot | PR #55 |
-| S3-08 | Disposable email address filter | PR #55 |
-| ENH-004 | Persist AI provider keys encrypted in database | PR #80 |
-| ENH-005 | Global API rate limiting (three-tier) | PR #78 |
-| ENH-006 | Test scheduling engine (cron + timezone) | PR #86 |
-| ENH-007 | Signed URL tokens for artifact serving | PR #79 |
-| ENH-008 | Move `runs.logs` to append-only `run_logs` table | PR #86 |
-| ENH-010 | Pagination on all list API endpoints | PR #78 |
-| ENH-011 | CI/CD webhook receiver + GitHub Actions integration | PR #86 |
-| ENH-013 | Persist password reset tokens in the database | PR #78 |
-| ENH-020 | Soft-delete with recycle bin for tests, projects, runs | PR #81 |
-| ENH-021 | `userId` + `userName` on activities for full audit trail | PR #78 |
-| ENH-024 | Frontend code splitting (React.lazy + Suspense) | PR #78 |
-| ENH-027 | Global React Error Boundary with crash reporting | PR #79 |
-| ENH-029 | Diff view for AI-regenerated test code | PR #81 |
-| ENH-030 | Secrets scanning in CI pipeline (Gitleaks) | PR #79 |
-| ENH-034 | Empty crawl result `completed_empty` status | PR #86 |
-| ENH-035 | No-provider-configured global banner (ProviderBanner) | PR #85 |
-| MAINT-010 | Semantic deduplication via TF-IDF + fuzzy matching | PR #55 |
-| MAINT-011 | Feature-sliced frontend component architecture | PR #81 |
-| MAINT-012 | Deep test validation (locator, action, assertion) | PR #57 |
-| MAINT-013 | Graceful shutdown with in-flight run draining | PR #86 |
-| MAINT-016 | Renovate for automated dependency updates | Renovate |
-| SEC-001 | Email verification on registration | PR #87 |
-| INF-001 | PostgreSQL support with SQLite fallback | PR #87 |
-| INF-002 | Redis for rate limiting, token revocation, and SSE pub/sub | PR #87 |
-| INF-003 | BullMQ job queue for durable run execution | PR #92 |
-| FEA-001 | Teams / email / webhook failure notifications | PR #92 |
-| SEC-002 | Nonce-based Content Security Policy | PR #92 |
-| SEC-003 | GDPR / CCPA account data export and deletion | PR #92 |
-| INF-005 | API versioning (`/api/v1/`) with 308 redirects | PR #94 |
-| FEA-003 | AI provider fallback chain + circuit breaker | PR #94 |
-| DIF-003 | Mobile viewport / device emulation | PR #94 |
-| DIF-011 | Coverage heatmap on site graph | PR #94 |
-| DIF-014 | Cursor overlay on live browser view | PR #94 |
-| DIF-016 | Step-level timing and per-step screenshots | PR #94 |
-| AUTO-013 | Stale test detection and cleanup | PR #99 |
-| MNT-007 | ARIA live regions for real-time updates | PR #99 |
-| DIF-004 | Flaky test detection and reporting | PR #99 |
-| MNT-009 | Tiered prompt system for local models (Ollama) | PR #100 |
-| MNT-010 | Re-run button on Run Detail page for crawl/generate runs | PR #100 |
-| INF-004 | OpenAPI specification and Swagger UI | PR #101 |
-| AUTO-007 | Geolocation / locale / timezone testing | PR #101 |
+| ID | Title | Status | Effort | PR / Commit |
+|----|-------|--------|--------|-------------|
+| S3-02 | Shadow DOM support in crawler | ✅ | S | PR #55 |
+| S3-04 | DOM stability wait before snapshot | ✅ | S | PR #55 |
+| S3-08 | Disposable email address filter | ✅ | S | PR #55 |
+| ENH-004 | Persist AI provider keys encrypted in database | ✅ | M | PR #80 |
+| ENH-005 | Global API rate limiting (three-tier) | ✅ | M | PR #78 |
+| ENH-006 | Test scheduling engine (cron + timezone) | ✅ | M | PR #86 |
+| ENH-007 | Signed URL tokens for artifact serving | ✅ | M | PR #79 |
+| ENH-008 | Move `runs.logs` to append-only `run_logs` table | ✅ | M | PR #86 |
+| ENH-010 | Pagination on all list API endpoints | ✅ | M | PR #78 |
+| ENH-011 | CI/CD webhook receiver + GitHub Actions integration | ✅ | M | PR #86 |
+| ENH-013 | Persist password reset tokens in the database | ✅ | S | PR #78 |
+| ENH-020 | Soft-delete with recycle bin for tests, projects, runs | ✅ | M | PR #81 |
+| ENH-021 | `userId` + `userName` on activities for full audit trail | ✅ | S | PR #78 |
+| ENH-024 | Frontend code splitting (React.lazy + Suspense) | ✅ | M | PR #78 |
+| ENH-027 | Global React Error Boundary with crash reporting | ✅ | M | PR #79 |
+| ENH-029 | Diff view for AI-regenerated test code | ✅ | M | PR #81 |
+| ENH-030 | Secrets scanning in CI pipeline (Gitleaks) | ✅ | S | PR #79 |
+| ENH-034 | Empty crawl result `completed_empty` status | ✅ | S | PR #86 |
+| ENH-035 | No-provider-configured global banner (ProviderBanner) | ✅ | S | PR #85 |
+| MAINT-010 | Semantic deduplication via TF-IDF + fuzzy matching | ✅ | M | PR #55 |
+| MAINT-011 | Feature-sliced frontend component architecture | ✅ | M | PR #81 |
+| MAINT-012 | Deep test validation (locator, action, assertion) | ✅ | M | PR #57 |
+| MAINT-013 | Graceful shutdown with in-flight run draining | ✅ | M | PR #86 |
+| MAINT-016 | Renovate for automated dependency updates | ✅ | S | Renovate |
+| SEC-001 | Email verification on registration | ✅ | M | PR #87 |
+| SEC-002 | Nonce-based Content Security Policy | ✅ | M | PR #92 |
+| SEC-003 | GDPR / CCPA account data export and deletion | ✅ | M | PR #92 |
+| INF-001 | PostgreSQL support with SQLite fallback | ✅ | XL | PR #87 |
+| INF-002 | Redis for rate limiting, token revocation, and SSE pub/sub | ✅ | L | PR #87 |
+| INF-003 | BullMQ job queue for durable run execution | ✅ | L | PR #92 |
+| INF-004 | OpenAPI specification and Swagger UI | ✅ | M | PR #101 |
+| INF-005 | API versioning (`/api/v1/`) with 308 redirects | ✅ | S | PR #94 |
+| ACL-001 | Multi-tenancy: workspace ownership on all entities | ✅ | L | PR #87 |
+| ACL-002 | Role-based access control (Admin / QA Lead / Viewer) | ✅ | M | PR #92 |
+| FEA-001 | Teams / email / webhook failure notifications | ✅ | M | PR #92 |
+| FEA-003 | AI provider fallback chain + circuit breaker | ✅ | M | PR #94 |
+| DIF-003 | Mobile viewport / device emulation | ✅ | S | PR #94 |
+| DIF-004 | Flaky test detection and reporting | ✅ | M | PR #99 |
+| DIF-011 | Coverage heatmap on site graph | ✅ | S | PR #94 |
+| DIF-014 | Cursor overlay on live browser view | ✅ | S | PR #94 |
+| DIF-016 | Step-level timing and per-step screenshots | ✅ | M | PR #94 |
+| AUTO-007 | Geolocation / locale / timezone testing | ✅ | S | PR #101 |
+| AUTO-013 | Stale test detection and cleanup | ✅ | S | PR #99 |
+| MNT-007 | ARIA live regions for real-time updates | ✅ | S | PR #99 |
+| MNT-009 | Tiered prompt system for local models (Ollama) | ✅ | M | PR #100 |
+| MNT-010 | Re-run button on Run Detail page for crawl/generate runs | ✅ | S | PR #100 |
 
 ---
 
@@ -242,7 +243,7 @@ See the [Archive](#archive--completed-items) section to view full details if nee
 - ✅ Logged-out users cannot reuse tokens after server restart
 - ✅ Rate limiting enforced across all instances
 - ✅ SSE events broadcast to all connected clients regardless of instance
-- ✅ Redis pub/sub pub/sub handles 1000+ concurrent connections
+- ✅ Redis pub/sub handles 1000+ concurrent connections
 
 **Files Changed:**
 - `backend/src/utils/redisClient.js` — shared ioredis client
@@ -960,34 +961,6 @@ See the [Archive](#archive--completed-items) section to view full details if nee
 
 ---
 
-## Archive — Completed Items
-
-The items below are complete and archived. Full details available upon request.
-
-| ID | Title | Status | Effort |
-|----|-------|--------|--------|
-| SEC-001 | Email verification on registration | ✅ | M |
-| SEC-002 | Nonce-based Content Security Policy | ✅ | M |
-| SEC-003 | GDPR / CCPA account data export and deletion | ✅ | M |
-| INF-001 | PostgreSQL support with SQLite fallback | ✅ | XL |
-| INF-002 | Redis for rate limiting and token revocation | ✅ | L |
-| INF-003 | BullMQ job queue for run execution | ✅ | L |
-| INF-004 | OpenAPI specification and Swagger UI | ✅ | M |
-| INF-005 | API versioning (`/api/v1/`) | ✅ | S |
-| ACL-001 | Multi-tenancy: workspace ownership | ✅ | L |
-| ACL-002 | Role-based access control | ✅ | M |
-| FEA-001 | Teams / email / webhook notifications | ✅ | M |
-| FEA-003 | AI provider fallback chain | ✅ | M |
-| DIF-003 | Mobile viewport / device emulation | ✅ | S |
-| DIF-004 | Flaky test detection and reporting | ✅ | M |
-| DIF-011 | Coverage heatmap on site graph | ✅ | S |
-| DIF-014 | Cursor overlay on live browser view | ✅ | S |
-| DIF-016 | Step-level timing and per-step screenshots | ✅ | M |
-| AUTO-007 | Geolocation / locale / timezone testing | ✅ | S |
-| AUTO-013 | Stale test detection and cleanup | ✅ | S |
-
----
-
 ## Resource & Risk Matrix
 
 | Phase | Team Size | Sprint Velocity | Estimated Sprints | Risk Level | Mitigation |
@@ -998,30 +971,4 @@ The items below are complete and archived. Full details available upon request.
 
 ---
 
-## Deprecation Schedule
-
-| Feature | Deprecation Date | Removal Date | Migration Path |
-|---------|------------------|--------------|-----------------|
-| SQLite in production | Jun 2026 | Sep 2026 | [PostgreSQL Migration Guide](MIGRATION_GUIDE.md) |
-| `/api/*` (non-versioned routes) | Jun 2026 | Sep 2026 | Use `/api/v1/*`; 308 redirects active until removal |
-| `POST /api/auth/register` email param | Jun 2026 | Sep 2026 | Email verification now required; no unverified accounts |
-
----
-
-## Contributing & Process
-
-- **Issue tracker:** [GitHub Issues](https://github.com/RameshBabuPrudhvi/sentri/issues)
-- **Contribution guide:** [CONTRIBUTING.md](CONTRIBUTING.md)
-- **PR template:** Use the provided [PR template](.github/PULL_REQUEST_TEMPLATE.md)
-- **Acceptance criteria checklist:** Each roadmap item includes acceptance criteria; PRs must check all boxes
-
----
-
-## Feedback & Changes
-
-This roadmap is living. To propose changes:
-1. Open a [GitHub Discussion](https://github.com/RameshBabuPrudhvi/sentri/discussions)
-2. Tag with `[ROADMAP]` prefix
-3. Include: impact (why), effort (how long), risk (what could go wrong), priority (when)
-
-Major changes require consensus from maintainers (@RameshBabuPrudhvi, @contributors).
+**End of Roadmap. Last updated April 23, 2026.**
