@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.4] — 2026-04-24
+
 ### Added
 - **Runner**: Cross-browser test execution with Firefox and WebKit (DIF-002) — `POST /api/v1/projects/:id/run` accepts an optional `browser` field (`"chromium"` default, `"firefox"`, `"webkit"`). A new browser-engine selector in the Run Regression modal surfaces the choice. Each run record persists the browser name (migration 009) so the Run Detail page can display a per-run badge. Crawl, recorder, and live browser view remain Chromium-only by design (they depend on CDP). Docker images install all three engines by default; set `BUILD_SKIP_FIREFOX_WEBKIT=1` for a chromium-only build (~400MB smaller).
 - **Dev**: `ALLOW_PRIVATE_URLS=true` env flag lets `POST /api/v1/test-connection` probe `http://localhost:<port>` and other private/internal hostnames — unblocks the "Test" button in the New Project form during local development without loosening production SSRF defaults. Off by default; never set in production (#103).
