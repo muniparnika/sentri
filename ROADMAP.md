@@ -361,7 +361,7 @@ The following items have been verified complete against the codebase and are **n
 
 ### DIF-001 — Visual regression testing with baseline diffing 🟢 Differentiator
 
-**Status:** 🔄 In Progress | **Effort:** L | **Source:** Competitive
+**Status:** ✅ Complete | **Effort:** L | **Source:** Competitive
 
 **Problem:** Sentri detects functional failures (wrong text, broken navigation, missing elements) but not visual regressions — layout shifts, colour changes, component repositioning. Mabl and Testim both offer visual diffing natively. Screenshot capture already runs on every test step; the diff layer is the missing piece.
 
@@ -381,7 +381,13 @@ The following items have been verified complete against the codebase and are **n
 
 ### DIF-002 — Cross-browser testing (Firefox, WebKit / Safari) 🟢 Differentiator
 
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Competitive
+**Status:** ✅ Complete | **Effort:** M | **Source:** Competitive
+
+> **Intentional scope boundaries (documented during #XXX, captured as follow-on IDs DIF-002b and DIF-002c below):**
+> - Visual baselines (DIF-001) are keyed by `(testId, stepNumber)` only, not by browser. Running the same test under Firefox and Chromium against a Chromium-recorded baseline will produce spurious pixel diffs from font-rendering differences. → **DIF-002b**
+> - Cross-browser CI smoke coverage is not yet wired. Only `resolveBrowser()` is unit-tested; live-launch verification of firefox/webkit still relies on manual testing. → **DIF-002b**
+> - Run Detail, Runs list, and Run History UIs do not yet render a per-run browser badge. The data (`run.browser`) is persisted and returned by the API; the frontend just doesn't surface it. → **DIF-002b**
+> - Crawler (`crawlBrowser.js`, `stateExplorer.js`), interactive recorder (`recorder.js`), and the live CDP screencast (`screencast.js`) are pinned to Chromium because they rely on CDP / shadow-DOM APIs not available in Firefox or WebKit. Firefox/WebKit crawling is out of scope. → **DIF-002c**
 
 **Problem:** Only Chromium is supported. Playwright natively supports Firefox and WebKit — this is a configuration gap, not a technical limitation. Many enterprise customers require Safari compatibility testing and will ask about it during evaluation.
 
@@ -394,6 +400,56 @@ The following items have been verified complete against the codebase and are **n
 - `frontend/src/pages/RunDetail.jsx` — browser icon per result
 
 **Dependencies:** None
+
+---
+
+### DIF-002b — Cross-browser polish: browser-aware baselines, UI badges, CI coverage 🔵 Medium
+
+**Status:** 🔲 Planned | **Effort:** M | **Source:** Follow-on from DIF-002
+
+**Problem:** DIF-002 landed the core cross-browser dispatch (`resolveBrowser()`, per-run `browser` field, migration 009, Run Regression modal dropdown) but left three visible gaps that prevent firefox/webkit from feeling like first-class citizens:
+
+1. **Visual baselines are browser-agnostic.** `visualDiff.js` keys baselines by `(testId, stepNumber)`. Running the same test under Firefox against a Chromium baseline produces spurious pixel diffs from font-rendering differences — users will hit this the first time they click the new Browser dropdown on a test that has a baseline.
+2. **No CI smoke coverage for firefox/webkit.** `backend/tests/cross-browser.test.js` unit-tests `resolveBrowser()` without actually launching firefox or webkit. A Playwright API regression (e.g. an option name change in an engine-specific path) would only surface in production.
+3. **Run Detail / Runs list / Run History show no browser badge.** `run.browser` is persisted and returned via the API but no UI component reads it. Users can pick firefox in the modal but can't tell which browser a completed run used without opening its logs.
+
+**Fix:**
+- Extend the `baseline_screenshots` PK from `(testId, stepNumber)` to `(testId, stepNumber, browser)`. Change `visualDiff.js` paths to `artifacts/baselines/<testId>/<browser>/step-<N>.png`. Update `backend/src/routes/tests.js` baseline accept/delete endpoints to accept `browser` as a route param or query string. Backfill existing baselines as `browser = "chromium"` in the migration.
+- Add a CI job to `.github/workflows/ci.yml` that installs all three Playwright engines and runs a minimal 1-test smoke against each (asserts that `launchBrowser({ browser })` succeeds and the test executes). Gate on test duration — firefox/webkit double the CI time, so run them only on PRs touching `runner/config.js` or on nightly cron.
+- Add a browser badge component (`<BrowserBadge browser={run.browser} />`) rendering a lucide icon + text. Consume it in `frontend/src/pages/RunDetail.jsx` header, `Runs.jsx` list rows, and the Run Regression history view. Fall back to "chromium" for pre-migration-009 rows where `run.browser` is null.
+
+**Files to change:**
+- `backend/src/database/migrations/010_baseline_browser.sql` — new PK
+- `backend/src/database/repositories/baselineRepo.js` — accept `browser` param
+- `backend/src/runner/visualDiff.js` — rekey baseline paths
+- `backend/src/routes/tests.js` — baseline CRUD accepts `browser`
+- `.github/workflows/ci.yml` — cross-browser smoke job
+- New `frontend/src/components/shared/BrowserBadge.jsx`
+- `frontend/src/pages/RunDetail.jsx`, `frontend/src/pages/Runs.jsx` — render the badge
+
+**Dependencies:** None (DIF-002 already complete)
+
+---
+
+### DIF-002c — Cross-browser crawl and recorder support 🔲 Backlog
+
+**Status:** 🔲 Planned | **Effort:** XL | **Source:** Follow-on from DIF-002
+
+**Problem:** Crawler (`pipeline/crawlBrowser.js`, `pipeline/stateExplorer.js`), interactive recorder (`runner/recorder.js`), and the live CDP screencast (`runner/screencast.js`) are pinned to Chromium in DIF-002. They use Playwright's CDP APIs directly — `page.context().newCDPSession()`, `Page.startScreencast`, shadow-DOM tree walkers via CDP `DOM.getFlattenedDocument` — which Firefox has no equivalent for and WebKit implements only partially via WebDriver BiDi. Users who want to crawl/record a Safari-only issue or test a WebKit rendering quirk during authoring have no path.
+
+**Fix (high-level; deliberately deferred until there is customer demand):**
+- Replace CDP screencast with Playwright's cross-browser `page.screenshot()` polling at ~8-12 fps. Lower quality but engine-agnostic. Keep CDP path for chromium as a fast fallback.
+- Replace the CDP-based shadow-DOM tree walker in `crawlBrowser.js` with Playwright's `page.locator()` + `{ strict: false }` serialisation. Slower but engine-agnostic.
+- Add a browser param to `POST /projects/:id/record` and `POST /projects/:id/crawl` routes; pass through to the relevant pipeline modules.
+- Accept that crawl quality will degrade for firefox/webkit relative to chromium until Playwright's BiDi API stabilises.
+
+**Files to change:**
+- `backend/src/pipeline/crawlBrowser.js`, `stateExplorer.js` — accept `browser` param, swap CDP calls for cross-engine equivalents
+- `backend/src/runner/recorder.js` — accept `browser`, swap screencast impl
+- `backend/src/runner/screencast.js` — dual-path (CDP for chromium, screenshot poll fallback)
+- `frontend/src/components/run/RecorderModal.jsx`, `frontend/src/components/run/CrawlProjectModal.jsx` — browser selector
+
+**Dependencies:** DIF-002 ✅, DIF-002b (baselines must be browser-aware before crawler variability amplifies diff noise)
 
 ---
 
@@ -452,7 +508,10 @@ The following items have been verified complete against the codebase and are **n
 
 ### DIF-015 — Interactive browser recorder for test creation 🟡 High
 
-**Status:** 🔄 In Progress | **Effort:** L | **Source:** Competitive (BearQ)
+**Status:** ✅ Complete | **Effort:** L | **Source:** Competitive (BearQ)
+
+> **Intentional scope boundary (captured as follow-on DIF-015b below):**
+> - The injected `bestSelector()` in `backend/src/runner/recorder.js:102-112` is a 5-strategy fallback chain (data-testid → role+name → id → name attr → tag.class). Playwright's own `codegen` uses a significantly more sophisticated selector-generation algorithm with scoring, disambiguation for duplicate matches, and iframe/shadow-DOM handling. We can't reuse `codegen` directly because it opens a desktop Inspector window with no cross-origin SaaS deployment story, but we **can** import Playwright's internal `selectorGenerator` module to get the same quality while keeping our server-side-browser + SSE-screencast architecture. → **DIF-015b**
 
 **Problem:** Sentri requires users to either write a plain-English description or wait for a full-site crawl to create tests. BearQ's primary UX is a visual recorder: click through the app, and the AI records and enhances the test. Users who cannot articulate a test scenario in text have no path to test creation. This is the single biggest UX barrier vs BearQ.
 
@@ -465,6 +524,45 @@ The following items have been verified complete against the codebase and are **n
 - `frontend/src/pages/Tests.jsx` — "Record a test" button alongside existing Crawl and Generate
 
 **Dependencies:** None (reuses existing CDP screencast and self-healing transform infrastructure)
+
+---
+
+### DIF-015b — Recorder selector quality: adopt Playwright's selectorGenerator 🔵 Medium
+
+**Status:** 🔲 Planned | **Effort:** S | **Source:** Follow-on from DIF-015
+
+**Problem:** The DIF-015 recorder captures user interactions correctly but the selectors it emits are noticeably lower-quality than what Playwright's own `codegen` tool produces. Three concrete gaps:
+
+1. **No disambiguation for duplicate matches.** Our `bestSelector()` at `backend/src/runner/recorder.js:102-112` produces `button.btn-primary` — fine when there's one on the page, but if the page has three, the recorded `safeClick(page, 'button.btn-primary')` picks the first visible one instead of the exact one the user clicked. Codegen emits `button.btn-primary >> nth=2` or disambiguates via nearest text/role.
+2. **Weak scoring when multiple strategies fit.** For a button with both `data-testid="submit"` and accessible name "Save changes", we pick data-testid; codegen's scorer weights semantic roles higher in some cases (e.g. if the testid is auto-generated `data-testid="el_abc123"` it falls back to role+name). Our heuristic has no notion of "good" vs "noise" data-testids.
+3. **No iframe / shadow DOM handling.** Clicking inside an iframe or shadow root produces a selector scoped to the main document, which then fails at replay. Codegen emits the full `frameLocator(…) >> locator(…)` chain automatically.
+
+Using Playwright's own `codegen` tool isn't an option — it's a CLI that opens a desktop Inspector window (`chromium.launch({ devtools: true })`) with no way to stream the browser to a web UI. The recorder architecture has to stay server-side with CDP screencast. But the selector-generation algorithm itself lives at `node_modules/playwright-core/lib/server/injected/selectorGenerator.js` and is pure DOM code with no CLI dependencies.
+
+**Fix:** Replace the hand-rolled `bestSelector()` in `RECORDER_SCRIPT` (`backend/src/runner/recorder.js:97-160`) with a call into Playwright's internal `generateSelector()`. The algorithm:
+- Prefers role+name with proper ARIA semantics.
+- Handles CSS ambiguity by appending `>> nth=N` when the primary selector matches multiple elements.
+- Emits the correct `internal:label=` / `internal:role=` tokens that the replay engine understands.
+- Knows about `iframe` and shadow-root boundaries and prefixes the selector accordingly.
+
+Because it's marked internal, import risk is real — the path or signature could change in any Playwright minor release. Mitigate with:
+- A thin wrapper in `backend/src/runner/selectorGenerator.js` that tries the internal import first and falls back to the existing `bestSelector()` on failure, logged as a warning.
+- A unit test (`backend/tests/recorder-selector.test.js`) that asserts the import resolves and produces output for a fixture HTML snippet — catches breakage the moment Renovate bumps Playwright.
+
+**Files to change:**
+- New `backend/src/runner/selectorGenerator.js` — import Playwright's `selectorGenerator` with fallback
+- `backend/src/runner/recorder.js` — swap `RECORDER_SCRIPT`'s `bestSelector()` for a call into the wrapper (the wrapper runs in Node; the recorder passes target-element metadata to it via the `__sentriRecord` binding instead of generating the selector in page context)
+- New `backend/tests/recorder-selector.test.js` — fixture-based assertion that the wrapper produces expected Playwright selectors
+- `backend/tests/run-tests.js` — register the new test file
+- `docs/changelog.md` — `### Changed` entry documenting the improved selector quality
+
+**Acceptance criteria:**
+- Recorded click on a page with three identical `button.btn-primary` elements produces a disambiguated selector that replays correctly.
+- Recorded interaction inside an `<iframe>` produces a `frameLocator(…).locator(…)` chain.
+- If the internal import fails (Playwright patch release changed the path), the recorder falls back to `bestSelector()` and logs a single warning — does not crash.
+- `backend/tests/recorder.test.js` tests still pass unchanged (the action-to-code transformation in `actionsToPlaywrightCode` is independent of selector generation).
+
+**Dependencies:** DIF-015 ✅
 
 ---
 
@@ -1267,7 +1365,7 @@ The following items have been verified complete against the codebase and are **n
 | Multi-provider LLM | ✅ Anthropic/OpenAI/Google/Ollama | ❌ | ❌ | ❌ | ❌ |
 | Parallel execution | ✅ 1–10 workers | ✅ Cloud | ✅ Cloud | ✅ Cloud | ✅ CLI sharding |
 | Visual regression | ❌ → DIF-001 | ✅ Native | ✅ Native | ✅ VisualTest | Via plugins |
-| Cross-browser | ❌ → DIF-002 | ✅ Chrome+Firefox | ✅ Chrome+Firefox | ✅ All | ✅ All 3 |
+| Cross-browser | ✅ DIF-002 | ✅ Chrome+Firefox | ✅ Chrome+Firefox | ✅ All | ✅ All 3 |
 | Mobile / device emulation | ✅ DIF-003 | ✅ | ✅ | ✅ | ✅ Native |
 | Failure notifications | ✅ Teams/email/webhook | ✅ Slack/email | ✅ Slack/email | ✅ | N/A |
 | Multi-tenancy / RBAC | ✅ ACL-001/ACL-002 | ✅ | ✅ | ✅ | N/A |
@@ -1292,12 +1390,12 @@ The following items have been verified complete against the codebase and are **n
 | Infrastructure | 5 | 5 | 0 | 0 | — |
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 3 | 2 | 0 | 1 | FEA-002 |
-| Differentiators | 16 | 5 | 2 | 9 | DIF-002, 005, 006, 007, 008, 009, 010, 012, 013 |
+| Differentiators | 19 | 6 | 2 | 11 | DIF-002b, 002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b |
 | Autonomous Intelligence | 22 | 2 | 0 | 20 | AUTO-001–006, 008–012, 014–022 |
 | Maintenance | 11 | 3 | 0 | 8 | MNT-001–006, 008, 011 |
-| **Totals** | **64** | **22** | **2** | **40** | |
+| **Totals** | **67** | **23** | **2** | **42** | |
 
-**Total tracked items:** 64 across 7 categories — **22 complete** (34%), **2 in progress** (DIF-001, DIF-015), **40 remaining**
+**Total tracked items:** 67 across 7 categories — **23 complete** (34%), **2 in progress** (DIF-001, DIF-015), **42 remaining**
 
 **Blockers (must ship before team deployment):**
 ~~SEC-001 (email verification)~~ ✅ · ~~INF-001 (PostgreSQL)~~ ✅ · ~~INF-002 (Redis)~~ ✅ · ~~ACL-001 (multi-tenancy)~~ ✅ · ~~ACL-002 (RBAC)~~ ✅
@@ -1305,10 +1403,10 @@ The following items have been verified complete against the codebase and are **n
 **All blockers resolved.** ✅
 
 **Recommended PR order (next):**
-`DIF-015` (browser recorder — #1 UX gap vs BearQ, 🟡 High) → `DIF-001` (visual regression) + `DIF-002` (cross-browser) → `DIF-006` (Playwright export)
+`DIF-006` (Playwright export — biggest lock-in objection handler) → `AUTO-005` (test retry with flake isolation — complements DIF-004 flaky detection) → `AUTO-016` (accessibility via axe-core) → `MNT-006` (S3 object storage — production prerequisite)
 
 **Lowest effort / highest immediate value:**
-DIF-006 (M) · DIF-002 (M) · DIF-015 (L) · DIF-001 (L)
+MNT-011 (S) · AUTO-007 (S) ✅ · DIF-006 (M) · AUTO-005 (M)
 
 ---
 

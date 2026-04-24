@@ -26,6 +26,25 @@ WORKDIR /app
 
 COPY backend/package.json backend/package-lock.json* ./
 RUN npm install --omit=dev
+
+# DIF-002: Cross-browser support. Chromium uses the apt-installed system
+# binary (via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH above). Firefox and WebKit
+# are downloaded from Playwright's CDN with their bundled binaries. The explicit
+# `playwright install` runs after npm install because PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+# skipped the postinstall hook. Adds ~400MB to the image; skip both engines
+# with BUILD_SKIP_FIREFOX_WEBKIT=1 for slimmer chromium-only builds.
+#
+# Use the `playwright` runtime package's bundled CLI directly rather than
+# `npx playwright`. The `@playwright/test` package (which ships the `playwright`
+# bin on $PATH) is a devDependency and was omitted by `npm install --omit=dev`
+# above — so `npx playwright` fails with "playwright: not found" in the image.
+# The runtime `playwright` package does ship `node_modules/playwright/cli.js`
+# which exposes the same `install` subcommand.
+ARG BUILD_SKIP_FIREFOX_WEBKIT=0
+RUN if [ "$BUILD_SKIP_FIREFOX_WEBKIT" != "1" ]; then \
+      node node_modules/playwright/cli.js install firefox webkit; \
+    fi
+
 COPY backend/src/ ./src/
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]

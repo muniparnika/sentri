@@ -24,9 +24,10 @@ import { runGeneratedCode, runApiTestCode, getExpect } from "./codeExecutor.js";
 import { startScreencast } from "./screencast.js";
 import { waitForStable, captureDomSnapshot, captureScreenshot, captureBoundingBoxes } from "./pageCapture.js";
 import { persistHealingEvents } from "./healingPersistence.js";
-import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, NAVIGATION_TIMEOUT, API_TEST_TIMEOUT, BROWSER_TEST_TIMEOUT, VIDEOS_DIR, resolveDevice } from "./config.js";
+import { VIEWPORT_WIDTH, VIEWPORT_HEIGHT, NAVIGATION_TIMEOUT, API_TEST_TIMEOUT, BROWSER_TEST_TIMEOUT, VIDEOS_DIR, SHOTS_DIR, resolveDevice } from "./config.js";
 import { formatLogLine } from "../utils/logFormatter.js";
 import { injectCursorOverlay } from "./cursorOverlay.js";
+import { diffScreenshot } from "./visualDiff.js";
 
 
 // ─── Non-visual action detection (S3-06) ──────────────────────────────────────
@@ -175,6 +176,7 @@ function formatTestError(err) {
  * @param {number}  stepIndex
  * @param {number}  runStart     - `Date.now()` when the run started.
  * @param {Object}  [opts]
+ * @param {string}  [opts.browser]    - DIF-002: `"chromium" | "firefox" | "webkit"` (used only to stamp `result.browser`; the Playwright Browser is already launched by the caller).
  * @param {string}  [opts.device]     - DIF-003: Playwright device name (e.g. `"iPhone 14"`).
  * @param {string}  [opts.locale]     - AUTO-007: BCP 47 locale (e.g. `"fr-FR"`).
  * @param {string}  [opts.timezoneId] - AUTO-007: IANA timezone (e.g. `"Europe/Paris"`).
@@ -287,6 +289,8 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
     boundingBoxes: [],
     stepCaptures: [],   // DIF-016: per-step screenshots
     stepTimings: [],    // DIF-016: per-step timing data
+    visualDiff: null,   // DIF-001: final-screenshot visual-regression result
+    browser: opts.browser || "chromium", // DIF-002: browser engine this test ran under
   };
 
   const start = Date.now();
@@ -330,7 +334,19 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
           onStepCapture: async (stepNumber, _page) => {
             try {
               const shot = await captureScreenshot(_page, runId, stepIndex, { stepNumber });
-              return { screenshot: shot.base64, screenshotPath: shot.artifactPath };
+              // DIF-001: per-step visual regression check against the stored baseline.
+              // Best-effort — any failure (missing baseline dir, decode error) is swallowed
+              // because a step capture must never break test execution.
+              let visualDiff = null;
+              try {
+                visualDiff = diffScreenshot({
+                  runId,
+                  testId: test.id,
+                  stepNumber,
+                  pngBuffer: Buffer.from(shot.base64, "base64"),
+                });
+              } catch { /* ignore */ }
+              return { screenshot: shot.base64, screenshotPath: shot.artifactPath, visualDiff };
             } catch { return null; }
           },
         });
@@ -373,6 +389,17 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
         const shot = await captureScreenshot(page, runId, stepIndex);
         result.screenshot = shot.base64;
         result.screenshotPath = shot.artifactPath;
+
+        // DIF-001: Diff the final screenshot against the test's baseline
+        // (stepNumber 0 is reserved for the end-of-test capture).
+        try {
+          result.visualDiff = diffScreenshot({
+            runId,
+            testId: test.id,
+            stepNumber: 0,
+            pngBuffer: Buffer.from(shot.base64, "base64"),
+          });
+        } catch { /* visual diff is best-effort */ }
 
         result.boundingBoxes = await captureBoundingBoxes(page);
       }

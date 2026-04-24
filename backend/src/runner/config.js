@@ -15,7 +15,7 @@
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { chromium, devices } from "playwright";
+import { chromium, firefox, webkit, devices } from "playwright";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,9 +31,45 @@ export const API_TEST_TIMEOUT  = parseInt(process.env.API_TEST_TIMEOUT, 10) || 3
 // prevent runaway tests from hanging overnight runs).
 export const BROWSER_TEST_TIMEOUT = parseInt(process.env.BROWSER_TEST_TIMEOUT, 10) || 120000;
 
+// ── DIF-002: Cross-browser support ────────────────────────────────────────────
+// Centralised browser selector. Accepts `"chromium"`, `"firefox"`, or `"webkit"`.
+// Invalid or empty values fall back to chromium — the safe default, since it's
+// the only browser with guaranteed CDP / screencast / shadow-DOM support
+// (used by the crawler, live browser view, and recorder).
+//
+// Per-run override flows through `runTests({ browser })` → `launchBrowser({ browser })`,
+// mirroring how `device` / `locale` / `timezoneId` are already threaded.
+export const BROWSER_PRESETS = [
+  { label: "Chromium (default)", value: "chromium" },
+  { label: "Firefox",            value: "firefox"  },
+  { label: "WebKit (Safari)",    value: "webkit"   },
+];
+const BROWSER_ENGINES = { chromium, firefox, webkit };
+export const DEFAULT_BROWSER = (() => {
+  const raw = (process.env.BROWSER_DEFAULT || "chromium").toLowerCase();
+  return BROWSER_ENGINES[raw] ? raw : "chromium";
+})();
+
+/**
+ * Resolve a browser name string to a Playwright BrowserType.
+ * Unknown values fall back to chromium so a typo doesn't crash a run.
+ * Non-string truthy inputs (numbers, objects, booleans) are treated as
+ * unknown rather than throwing — the route layer can pass `req.body.browser`
+ * straight through without a `typeof` guard.
+ *
+ * @param {*} [name] - One of `"chromium"`, `"firefox"`, `"webkit"`. Case-insensitive. Non-string values fall back to chromium.
+ * @returns {{ engine: Object, name: string }} The Playwright BrowserType and its canonical name.
+ */
+export function resolveBrowser(name) {
+  const key = typeof name === "string" ? name.toLowerCase() : "";
+  if (BROWSER_ENGINES[key]) return { engine: BROWSER_ENGINES[key], name: key };
+  return { engine: BROWSER_ENGINES[DEFAULT_BROWSER], name: DEFAULT_BROWSER };
+}
+
 // ── Shared Chromium launch args ───────────────────────────────────────────────
-// Centralised so crawlBrowser, stateExplorer, and testRunner all use the same
-// config. Avoids drift when adding new flags (e.g. --disable-gpu).
+// Only applied when launching chromium — firefox and webkit reject these
+// flags. Centralised so crawlBrowser, stateExplorer, and testRunner all use
+// the same config when they do launch chromium.
 export const BROWSER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
@@ -41,20 +77,35 @@ export const BROWSER_ARGS = [
 ];
 
 /**
- * Launch a Chromium browser with the shared config.
- * All modules that need a browser should call this instead of `chromium.launch()`
- * directly, so launch args and env overrides stay in one place.
+ * Launch a browser with the shared config.
+ * All modules that need a browser should call this instead of
+ * `chromium.launch()` / `firefox.launch()` / `webkit.launch()` directly, so
+ * launch args, env overrides, and the cross-browser selector stay in one
+ * place.
  *
- * @param {Object} [overrides] — Playwright LaunchOptions merged on top
+ * The browser-specific `executablePath` env var is only applied when its
+ * engine is selected — e.g. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` has no
+ * effect when launching firefox, where Playwright bundles its own binary.
+ *
+ * @param {Object} [overrides]        — Playwright LaunchOptions merged on top
+ * @param {string} [overrides.browser] — `"chromium" | "firefox" | "webkit"`
  * @returns {Promise<Object>} Playwright Browser instance
  */
 export async function launchBrowser(overrides = {}) {
-  return chromium.launch({
+  const { browser: browserName, ...playwrightOpts } = overrides;
+  const { engine, name } = resolveBrowser(browserName);
+  const launchOpts = {
     headless: BROWSER_HEADLESS,
-    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-    args: BROWSER_ARGS,
-    ...overrides,
-  });
+    ...playwrightOpts,
+  };
+  // Chromium-specific: sandbox / shm flags + env executable path.
+  // Firefox and webkit reject `--no-sandbox` and have their own bundled
+  // binaries so we don't expose PLAYWRIGHT_*_EXECUTABLE_PATH for them here.
+  if (name === "chromium") {
+    launchOpts.executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined;
+    launchOpts.args = playwrightOpts.args || BROWSER_ARGS;
+  }
+  return engine.launch(launchOpts);
 }
 
 // ── Parallel execution ────────────────────────────────────────────────────────
@@ -77,10 +128,28 @@ export const ARTIFACTS_DIR = path.join(__dirname, "..", "..", "artifacts");
 export const VIDEOS_DIR    = path.join(ARTIFACTS_DIR, "videos");
 export const TRACES_DIR    = path.join(ARTIFACTS_DIR, "traces");
 export const SHOTS_DIR     = path.join(ARTIFACTS_DIR, "screenshots");
+export const BASELINES_DIR = path.join(ARTIFACTS_DIR, "baselines");
+export const DIFFS_DIR     = path.join(ARTIFACTS_DIR, "diffs");
 
-[ARTIFACTS_DIR, VIDEOS_DIR, TRACES_DIR, SHOTS_DIR].forEach((d) => {
+[ARTIFACTS_DIR, VIDEOS_DIR, TRACES_DIR, SHOTS_DIR, BASELINES_DIR, DIFFS_DIR].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
+
+// ── DIF-001: Visual regression ────────────────────────────────────────────────
+// Pixel difference threshold above which a step is flagged as a visual regression.
+// Expressed as a fraction of total pixels (0.02 = 2%). Per-pixel match tolerance
+// is governed by VISUAL_DIFF_PIXEL_TOLERANCE (pixelmatch `threshold` arg, 0..1).
+// Parse a float env var with a default, accepting `0` (which `|| default`
+// would reject) but rejecting `NaN` from non-numeric strings (which would
+// silently disable regression detection because `diffRatio > NaN` is always
+// false).
+function parseFloatEnv(raw, def) {
+  if (raw == null || raw === "") return def;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : def;
+}
+export const VISUAL_DIFF_THRESHOLD       = parseFloatEnv(process.env.VISUAL_DIFF_THRESHOLD, 0.02);
+export const VISUAL_DIFF_PIXEL_TOLERANCE = parseFloatEnv(process.env.VISUAL_DIFF_PIXEL_TOLERANCE, 0.1);
 
 // ── DIF-003: Device emulation ─────────────────────────────────────────────────
 // Playwright ships 50+ device profiles. We expose a curated subset for the

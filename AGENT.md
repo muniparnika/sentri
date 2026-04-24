@@ -20,7 +20,7 @@ backend/           Node.js 20+ ESM server (Express 4, Playwright, LLM SDKs)
       sqlite.js            SQLite singleton (WAL mode, auto-schema)
       schema.sql           Table definitions, indexes, counter seeds
       migrate.js           One-time JSON → SQLite migration
-      repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, runLogRepo, activityRepo, healingRepo, passwordResetTokenRepo, verificationTokenRepo, webhookTokenRepo, scheduleRepo, workspaceRepo, notificationSettingsRepo, accountRepo, apiKeyRepo)
+      repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, runLogRepo, activityRepo, healingRepo, passwordResetTokenRepo, verificationTokenRepo, webhookTokenRepo, scheduleRepo, workspaceRepo, notificationSettingsRepo, accountRepo, apiKeyRepo, baselineRepo)
     aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/Ollama)
     selfHealing.js         Adaptive selector waterfall + healing history
     crawler.js             Link-crawl orchestrator
@@ -426,7 +426,7 @@ Sentri supports **SQLite** (default, via `better-sqlite3`) and **PostgreSQL** (v
 Both adapters expose the same interface (`prepare`, `exec`, `transaction`, `pragma`, `close`, `dialect`) so all repository modules work unchanged. The adapter is selected at startup by `database/sqlite.js` (the module name is kept for backward compatibility).
 
 - **Repository pattern**: All DB access goes through repository modules in `backend/src/database/repositories/`. Never write raw SQL in route handlers.
-- **Repositories**: `projectRepo`, `testRepo`, `runRepo`, `runLogRepo`, `activityRepo`, `healingRepo`, `userRepo`, `counterRepo`, `passwordResetTokenRepo`, `verificationTokenRepo`, `webhookTokenRepo`, `scheduleRepo`, `workspaceRepo`, `notificationSettingsRepo`, `accountRepo`, `apiKeyRepo` — each in `backend/src/database/repositories/`.
+- **Repositories**: `projectRepo`, `testRepo`, `runRepo`, `runLogRepo`, `activityRepo`, `healingRepo`, `userRepo`, `counterRepo`, `passwordResetTokenRepo`, `verificationTokenRepo`, `webhookTokenRepo`, `scheduleRepo`, `workspaceRepo`, `notificationSettingsRepo`, `accountRepo`, `apiKeyRepo`, `baselineRepo` — each in `backend/src/database/repositories/`.
 - **JSON columns**: `steps`, `tags`, `results`, `testQueue`, `credentials`, etc. are stored as JSON strings and auto-serialized/deserialized by the repository layer. Note: `logs` was moved from a JSON column on `runs` to a dedicated `run_logs` table (ENH-008) — `runRepo.getById()` hydrates `run.logs` from `run_logs` automatically.
 - **Boolean columns**: `isJourneyTest`, `assertionEnhanced`, `isApiTest` are stored as `0`/`1` integers and converted to `true`/`false` by `testRepo`.
 - **ID generation**: Atomic counters in the `counters` table via `counterRepo.next("test")` → `TC-1`, `TC-2`, etc.
@@ -642,6 +642,46 @@ test("SQL query contains WHERE usedAt IS NULL", () => { … });
 ### Frontend
 
 Tests live in `frontend/tests/` and also use plain Node `assert`. Run with `npm test` from `frontend/`.
+
+### Testing DIF-001 (visual regression) and DIF-015 (recorder)
+
+Feature-specific testing notes for `runner/visualDiff.js`, `runner/recorder.js`, `StepResultsView.jsx`, and the `baseline_screenshots` table.
+
+**Recorder needs a headed Playwright window — `BROWSER_HEADLESS=true` silently breaks it.** This is the single most important gotcha. With the default (`true`), the `RecorderModal`'s live CDP screencast still renders a frame, so the UI *looks* wired up — but no click in that pane reaches the headless recorded page. `Stop & Save` then returns HTTP 400 `no actions were captured` and the saved Draft has zero steps. Always start the backend with `BROWSER_HEADLESS=false` before reaching for the Record-a-test button, and interact with the external Playwright window that opens on the desktop — the modal's `LiveBrowserView` is display-only by design.
+
+**Deterministic target page.** Pixel diffs are only meaningful against a page that won't drift between runs. Serve a static HTML with stable `data-testid` attributes via `python3 -m http.server 8080` from e.g. `/home/ubuntu/target/index.html`. For a controlled >2 % diff, change multiple CSS values at once:
+
+```bash
+sed -i 's/background: #fff/background: #d62828/; s/color: #111/color: #fff/; s/color: #1f7ae0/color: #ffd166/' /home/ubuntu/target/index.html
+```
+
+**Shell path for the visual-diff lifecycle.** The recorder is UI-only (that's DIF-015), but the DIF-001 baseline → regression → accept → re-run cycle can be driven from the shell once any test exists. Reliable fallback when the browser is flaky:
+
+```bash
+# Log in, capture CSRF
+curl -sc /tmp/c.txt -X POST http://127.0.0.1:3001/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"...","password":"..."}'
+CSRF=$(grep _csrf /tmp/c.txt | awk '{print $7}')
+
+# B1 — first run auto-creates baselines at backend/artifacts/baselines/$TID/step-*.png
+curl -sb /tmp/c.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:3001/api/v1/tests/$TID/run -d '{}'
+
+# B2 — clean re-run: every stepCaptures[*].visualDiff must be { status: "match", diffRatio: 0 }
+# B3 — mutate page, re-run: every stepCaptures[*].visualDiff must be { status: "regression", diffRatio > threshold }
+# B4 — accept the mutated screenshot as the new baseline
+curl -sb /tmp/c.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:3001/api/v1/tests/$TID/baselines/1/accept -d "{\"runId\":\"$RUN\"}"
+# B5 — re-run with the page STILL mutated: must report match again
+```
+
+`visualDiff` shape in `runs.results[*].stepCaptures[*].visualDiff`: `{ status, diffPixels, totalPixels, diffRatio, threshold, baselinePath, diffPath }`. `status` is one of `baseline_created | match | regression | error`, matching the four badge variants in `StepResultsView.jsx`.
+
+**Accept must rewrite the PNG, not just the DB row.** A silent no-op failure mode is updating only `baseline_screenshots` without touching disk. The only assertion that catches this is B5 — re-running with the page still mutated. Always check `stat`/`md5sum` on `backend/artifacts/baselines/$TID/step-*.png` before and after Accept.
+
+**Visual tab visibility.** The `🖼️ Visual` tab only renders when the **currently selected step** has a `visualDiff` attached. On a run-detail page, click into an individual step in the Activity Log first; the tab is hidden on the top-level `Test Case` row when every step matched the baseline. Check all three toggles (`Baseline`, `Current`, `Diff`) render distinct images — this proves all three artifact URLs are correctly signed by `ARTIFACT_SIGNING_SECRET`.
+
+**Known unrelated flake:** `safeClick` on a plain `<button onclick="…">` sometimes fails with "Element not found using any strategy" even with a correct selector. Don't let a red test status distract from the visual-diff assertions — baselines for the steps before the failure are still captured and compared correctly.
 
 ---
 
@@ -960,6 +1000,7 @@ The following are **not yet implemented** but should be addressed before product
 | `SMTP_PASS` | No | — | SMTP password |
 | `EMAIL_FROM` | No | `Sentri <noreply@sentri.dev>` | Sender address for transactional emails |
 | `SKIP_EMAIL_VERIFICATION` | No | `false` | When `"true"`, registration auto-verifies users (dev/CI only — never set in production) |
+| `ALLOW_PRIVATE_URLS` | No | `false` | When `"true"`, `POST /api/v1/test-connection` skips its SSRF guard so developers can test against `http://localhost:3000`, Docker services, or internal staging hostnames. **Never set in production** — permits requests to cloud metadata (169.254.169.254) and local-network databases. |
 | `MAX_WORKERS` | No | `2` | Global concurrency limit for BullMQ run execution (INF-003). Ignored when Redis/BullMQ is not available. |
 | `APP_URL` | No | `CORS_ORIGIN` fallback | Base URL for deep links in notification emails and webhook payloads (e.g. `https://sentri.example.com`). Falls back to `CORS_ORIGIN`, then `http://localhost:3000`. |
 | `SPA_INDEX_PATH` | No | auto-detect | Path to the Vite-built `index.html` for CSP nonce injection (SEC-002). Only needed when the frontend dist is not at the default location. In Docker, set to `/usr/share/frontend/index.html` (shared volume). |
@@ -969,6 +1010,11 @@ The following are **not yet implemented** but should be addressed before product
 | `DEMO_DAILY_GENERATIONS` | No | `5` | Max AI test generations per user per day in demo mode |
 | `STALE_TEST_DAYS` | No | `90` | Days since last run before an approved test is flagged stale (AUTO-013) |
 | `FEEDBACK_TIMEOUT_MS` | No | `180000` | Maximum time (ms) the AI feedback loop is allowed to run before being abandoned |
+| `VISUAL_DIFF_THRESHOLD` | No | `0.02` | Fraction of differing pixels above which a step is flagged as a visual regression (DIF-001). Set to `0` for zero-tolerance. |
+| `VISUAL_DIFF_PIXEL_TOLERANCE` | No | `0.1` | Per-pixel colour-match tolerance passed to `pixelmatch` (0..1). Higher values ignore anti-aliasing jitter. |
+| `MAX_RECORDING_MS` | No | `1800000` (30 min) | Safety-net timeout for an interactive recorder session (DIF-015). Abandoned sessions are force-torn-down after this elapses. Min `60000`. |
+| `RECORDER_COMPLETED_TTL_MS` | No | `120000` (2 min) | Lifetime of the in-memory cache that preserves a recorder's generated test after the `MAX_RECORDING_MS` auto-teardown. Allows "Stop & Save" to recover from the TOCTOU race. Min `10000`. |
+| `BROWSER_DEFAULT` | No | `chromium` | Default browser engine for test execution (DIF-002). One of `chromium`, `firefox`, `webkit`. Per-run overrides via the Run Regression modal or `POST /api/v1/projects/:id/run { browser }`. Invalid values fall back to chromium. |
 
 ---
 
