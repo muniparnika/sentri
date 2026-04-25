@@ -105,9 +105,21 @@ app.post("/api/projects/:id/run", async (req, res) => {
   };
   db.runs[runId] = run;
 
-  const { headed } = req.body || {};
+  const { headed, browser, retries, device, viewport, colorScheme, locale, geolocation, selfHeal } = req.body || {};
 
-  runTests(project, tests, run, db, { headed: !!headed }).catch((err) => {
+  const runOptions = {
+    headed: !!headed,
+    browser: browser || undefined,
+    retries: retries ?? 1,
+    device: device || undefined,
+    viewport: viewport || undefined,
+    colorScheme: colorScheme || undefined,
+    locale: locale || undefined,
+    geolocation: geolocation || undefined,
+    selfHeal: selfHeal !== false,
+  };
+
+  runTests(project, tests, run, db, runOptions).catch((err) => {
     run.status = "failed";
     run.error = err.message;
     run.finishedAt = new Date().toISOString();

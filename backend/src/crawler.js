@@ -32,31 +32,104 @@ function normalizeUrl(href, base) {
   }
 }
 
-// ─── DOM snapshot ─────────────────────────────────────────────────────────────
+// ─── Enhanced DOM snapshot ────────────────────────────────────────────────────
 
 async function takeSnapshot(page) {
   return page.evaluate(() => {
     const interactable = [];
-    const elements = document.querySelectorAll(
-      "a, button, input, select, textarea, [role='button'], [role='link'], form"
-    );
+
+    // Expanded selector list to capture more interactive element types
+    const selectors = [
+      "a", "button", "input", "select", "textarea",
+      "[role='button']", "[role='link']", "[role='tab']", "[role='menuitem']",
+      "[role='checkbox']", "[role='radio']", "[role='switch']", "[role='slider']",
+      "[role='combobox']", "[role='listbox']", "[role='dialog']", "[role='alertdialog']",
+      "form", "details", "summary",
+      "[draggable='true']", "[contenteditable='true']",
+      "[data-testid]", "[data-test]", "[data-cy]",
+    ];
+
+    const elements = document.querySelectorAll(selectors.join(", "));
     elements.forEach((el) => {
       const tag = el.tagName.toLowerCase();
       const text = (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || "")
         .trim()
-        .slice(0, 80);
+        .slice(0, 120);
       const type = el.getAttribute("type") || "";
       const href = el.getAttribute("href") || "";
       const id = el.id || "";
       const name = el.getAttribute("name") || "";
-      interactable.push({ tag, text, type, href, id, name });
+      const role = el.getAttribute("role") || "";
+      const testId = el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-cy") || "";
+      const ariaLabel = el.getAttribute("aria-label") || "";
+      const ariaExpanded = el.getAttribute("aria-expanded");
+      const ariaHaspopup = el.getAttribute("aria-haspopup") || "";
+      const disabled = el.disabled || el.getAttribute("aria-disabled") === "true";
+      const required = el.required || el.getAttribute("aria-required") === "true";
+      const draggable = el.draggable || el.getAttribute("draggable") === "true";
+      const pattern = el.getAttribute("pattern") || "";
+
+      interactable.push({
+        tag, text, type, href, id, name, role,
+        testId, ariaLabel, ariaExpanded, ariaHaspopup,
+        disabled, required, draggable, pattern,
+      });
     });
+
+    // Detect iframes
+    const iframeCount = document.querySelectorAll("iframe").length;
+    const iframeDetails = Array.from(document.querySelectorAll("iframe")).slice(0, 10).map((f) => ({
+      id: f.id || "",
+      name: f.name || "",
+      src: f.src || "",
+      title: f.title || "",
+    }));
+
+    // Detect shadow DOM roots
+    let shadowRootCount = 0;
+    const allElements = document.querySelectorAll("*");
+    for (const el of allElements) {
+      if (el.shadowRoot) shadowRootCount++;
+      if (shadowRootCount >= 20) break;
+    }
+
+    // Detect dialogs/modals
+    const dialogCount = document.querySelectorAll(
+      "dialog, [role='dialog'], [role='alertdialog'], .modal, [class*='modal'], [class*='dialog']"
+    ).length;
+
+    // Detect draggable elements
+    const draggableCount = document.querySelectorAll("[draggable='true']").length;
+
+    // Detect media elements
+    const mediaCount = document.querySelectorAll("video, audio, canvas").length;
+
+    // Detect file inputs
+    const fileInputCount = document.querySelectorAll("input[type='file']").length;
+
+    // Detect tables
+    const tableCount = document.querySelectorAll("table").length;
+
+    // Detect navigation landmarks
+    const navCount = document.querySelectorAll("nav, [role='navigation']").length;
+
     return {
       title: document.title,
       url: location.href,
-      elements: interactable.slice(0, 60),
+      elements: interactable.slice(0, 80),
       h1: Array.from(document.querySelectorAll("h1")).map((h) => h.innerText).join(" | "),
       forms: Array.from(document.querySelectorAll("form")).length,
+      iframes: iframeCount,
+      iframeDetails,
+      shadowRoots: shadowRootCount,
+      dialogs: dialogCount,
+      draggableCount,
+      mediaCount,
+      fileInputCount,
+      tableCount,
+      navCount,
+      metaDescription: document.querySelector('meta[name="description"]')?.content || "",
+      hasServiceWorker: !!navigator.serviceWorker?.controller,
     };
   });
 }
@@ -77,7 +150,7 @@ export async function crawlAndGenerateTests(project, run, db) {
   const queue = [{ url: project.url, depth: 0 }];
   const pageSnapshots = [];
 
-  log(run, `🕷️  Starting crawl of ${project.url}`);
+  log(run, `Starting crawl of ${project.url}`);
 
   // Handle login if credentials provided
   if (project.credentials) {
@@ -91,10 +164,10 @@ export async function crawlAndGenerateTests(project, run, db) {
         await loginPage.fill(passwordSelector, password);
         await loginPage.click(submitSelector);
         await loginPage.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-        log(run, `🔑 Logged in as ${username}`);
+        log(run, `Logged in as ${username}`);
       }
     } catch (e) {
-      log(run, `⚠️  Login attempt failed: ${e.message}`);
+      log(run, `Login attempt failed: ${e.message}`);
     }
     await loginPage.close();
   }
@@ -106,9 +179,9 @@ export async function crawlAndGenerateTests(project, run, db) {
 
     const page = await context.newPage();
     try {
-      log(run, `📄 Visiting (depth ${depth}): ${url}`);
+      log(run, `Visiting (depth ${depth}): ${url}`);
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
-      await page.waitForTimeout(1000);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
 
       const snapshot = await takeSnapshot(page);
       pageSnapshots.push(snapshot);
@@ -124,18 +197,18 @@ export async function crawlAndGenerateTests(project, run, db) {
         }
       }
     } catch (err) {
-      log(run, `⚠️  Failed to visit ${url}: ${err.message}`);
+      log(run, `Failed to visit ${url}: ${err.message}`);
     } finally {
       await page.close();
     }
   }
 
   await browser.close();
-  log(run, `✅ Crawl complete. Found ${pageSnapshots.length} pages. Generating tests with AI...`);
+  log(run, `Crawl complete. Found ${pageSnapshots.length} pages. Generating tests with AI...`);
 
   // Generate tests per page using the provider abstraction
   for (const snapshot of pageSnapshots) {
-    log(run, `🤖 Generating tests for: ${snapshot.url}`);
+    log(run, `Generating tests for: ${snapshot.url}`);
     try {
       const generatedTests = await generateTests(snapshot, project.url);
       for (const t of generatedTests) {
@@ -151,13 +224,13 @@ export async function crawlAndGenerateTests(project, run, db) {
         };
         run.tests.push(testId);
       }
-      log(run, `  → Generated ${generatedTests.length} tests`);
+      log(run, `  Generated ${generatedTests.length} tests`);
     } catch (err) {
-      log(run, `  ⚠️  AI generation failed for ${snapshot.url}: ${err.message}`);
+      log(run, `  AI generation failed for ${snapshot.url}: ${err.message}`);
     }
   }
 
   run.status = "completed";
   run.finishedAt = new Date().toISOString();
-  log(run, `🎉 Done! Generated ${run.tests.length} total tests.`);
+  log(run, `Done! Generated ${run.tests.length} total tests.`);
 }
