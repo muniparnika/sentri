@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.6] — 2026-04-25
+
 ### Fixed
 - **Pipeline**: Advanced Playwright flows are now handled more safely end-to-end. `validateActions()` accepts `request.dispose()` to prevent false-positive API test rejection, `runGeneratedCode()` now exposes a scoped `request.newContext()` fixture for hybrid UI+API tests (with guaranteed context disposal), and `testFix` no longer pre-applies healing transforms (transforms are applied once at execution time) (#109).
 - **Self-healing**: Transform coverage now includes text-based `locator.dragTo(...)` patterns and additional upload variants (`getByRole(...).setInputFiles(...)`), and `safeClick` guards `waitForLoadState` calls for non-Page roots (#109).
