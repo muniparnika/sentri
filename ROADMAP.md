@@ -73,6 +73,8 @@ The following items have been verified complete against the codebase and are **n
 | DIF-004 | Flaky test detection and reporting | PR #99 |
 | MNT-009 | Tiered prompt system for local models (Ollama) | PR #100 |
 | MNT-010 | Re-run button on Run Detail page for crawl/generate runs | PR #100 |
+| FEA-002 | TanStack React Query data layer | PR #107 |
+| MNT-011 | Persist crawl/generate dialsConfig on run record | Verified in PR #107 (fix landed in an earlier untracked commit) |
 
 ---
 
@@ -267,7 +269,7 @@ The following items have been verified complete against the codebase and are **n
 
 ### FEA-002 — TanStack React Query data layer 🔵 Medium
 
-**Status:** 🔲 Planned | **Effort:** L | **Source:** Audit
+**Status:** ✅ Complete | **Effort:** L | **Source:** Audit
 
 **Problem:** All data fetching uses manual `useEffect` + `useState` patterns with no cache, no background refresh, no optimistic updates, and no retry. `useProjectData` exports `invalidateProjectDataCache` which callers must manually invoke — multiple components fail to do so, producing stale UI after mutations.
 
@@ -405,7 +407,9 @@ The following items have been verified complete against the codebase and are **n
 
 ### DIF-002b — Cross-browser polish: browser-aware baselines, UI badges, CI coverage 🔵 Medium
 
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Follow-on from DIF-002
+**Status:** 🔄 In Progress | **Effort:** M | **Source:** Follow-on from DIF-002
+
+**Progress (PR #107):** Gap 3 (browser badge) shipped — new `BrowserBadge` component renders the Playwright engine on Run Detail header (test runs only) and Runs list rows (compact, non-chromium only). Gap 1 (browser-aware visual baselines) and gap 2 (firefox/webkit CI smoke job) still outstanding.
 
 **Problem:** DIF-002 landed the core cross-browser dispatch (`resolveBrowser()`, per-run `browser` field, migration 009, Run Regression modal dropdown) but left three visible gaps that prevent firefox/webkit from feeling like first-class citizens:
 
@@ -1312,19 +1316,17 @@ Because it's marked internal, import risk is real — the path or signature coul
 
 ### MNT-011 — Persist crawl/generate dialsConfig on run record 🔵 Medium
 
-**Status:** 🔲 Planned | **Effort:** S | **Source:** PR #100 Devin review
+**Status:** ✅ Complete | **Effort:** S | **Source:** PR #100 Devin review
 
-**Problem:** The "Re-run" button on `RunDetail.jsx` (MNT-010) calls `api.crawl(projectId)` without passing any configuration body. The original crawl was started from `CrawlProjectModal.jsx` with `api.crawl(projectId, { dialsConfig })`, where `dialsConfig` includes the explore mode, explorer tuning parameters, test count, approach, format, and other dials. Without this config, the re-run uses server defaults — silently switching from state exploration back to link crawl mode, using different test counts, and producing completely different results than the original run.
+**Resolution:** Verified during PR #107 review that the fix is already in main. MNT-010 (PR #100) shipped only the bare re-run button — the dialsConfig wiring was added later in an untracked commit (no changelog entry, no roadmap update). Current code achieves the same behaviour the original fix proposed without needing the new `dialsConfig` column: the run-create handlers store the validated dials inside the existing `generateInput` JSON column, and `handleRerun` reads them from there.
 
-**Fix:** Store the `dialsConfig` on the run record in the backend when the crawl is initiated. Add a `dialsConfig` TEXT (JSON) column to the `runs` table. Populate it in `routes/runs.js` when creating the run. On re-run, `RunDetail.jsx` reads `run.dialsConfig` and passes it to `api.crawl(projectId, { dialsConfig: run.dialsConfig })`. Same pattern for generate runs with `run.generateInput`.
+**Verified at:**
+- `backend/src/routes/runs.js:79` — crawl run persists `generateInput: { dialsConfig: validatedDials }`
+- `backend/src/routes/tests.js:441` — generate run persists `generateInput: { name, description, dialsConfig: validatedGenDials }`
+- `frontend/src/pages/RunDetail.jsx:183` — re-run reads `input.dialsConfig` for crawl
+- `frontend/src/pages/RunDetail.jsx:198` — re-run reads `input.dialsConfig` for generate
 
-**Files to change:**
-- `backend/src/database/migrations/` — add `dialsConfig` TEXT column to `runs`
-- `backend/src/database/repositories/runRepo.js` — add `dialsConfig` to `JSON_FIELDS` and `INSERT_COLS`
-- `backend/src/routes/runs.js` — store `dialsConfig` on the run record at creation time
-- `frontend/src/pages/RunDetail.jsx` — pass `run.dialsConfig` in `handleRerun`
-
-**Dependencies:** MNT-010 (re-run button must exist first)
+**Dependencies:** MNT-010 ✅
 
 ---
 
@@ -1389,13 +1391,13 @@ Because it's marked internal, import risk is real — the path or signature coul
 | Security & Compliance | 5 | 3 | 0 | 2 | SEC-004, SEC-005 |
 | Infrastructure | 5 | 5 | 0 | 0 | — |
 | Access Control | 2 | 2 | 0 | 0 | — |
-| Platform Features | 3 | 2 | 0 | 1 | FEA-002 |
-| Differentiators | 19 | 6 | 2 | 11 | DIF-002b, 002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b |
+| Platform Features | 3 | 3 | 0 | 0 | — |
+| Differentiators | 19 | 6 | 1 | 12 | DIF-002b (in progress), 002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b |
 | Autonomous Intelligence | 22 | 2 | 0 | 20 | AUTO-001–006, 008–012, 014–022 |
-| Maintenance | 11 | 3 | 0 | 8 | MNT-001–006, 008, 011 |
-| **Totals** | **67** | **23** | **2** | **42** | |
+| Maintenance | 11 | 4 | 0 | 7 | MNT-001–006, 008 |
+| **Totals** | **67** | **25** | **1** | **41** | |
 
-**Total tracked items:** 67 across 7 categories — **23 complete** (34%), **2 in progress** (DIF-001, DIF-015), **42 remaining**
+**Total tracked items:** 67 across 7 categories — **25 complete** (37%), **1 in progress** (DIF-002b), **41 remaining**
 
 **Blockers (must ship before team deployment):**
 ~~SEC-001 (email verification)~~ ✅ · ~~INF-001 (PostgreSQL)~~ ✅ · ~~INF-002 (Redis)~~ ✅ · ~~ACL-001 (multi-tenancy)~~ ✅ · ~~ACL-002 (RBAC)~~ ✅
@@ -1406,7 +1408,7 @@ Because it's marked internal, import risk is real — the path or signature coul
 `DIF-006` (Playwright export — biggest lock-in objection handler) → `AUTO-005` (test retry with flake isolation — complements DIF-004 flaky detection) → `AUTO-016` (accessibility via axe-core) → `MNT-006` (S3 object storage — production prerequisite)
 
 **Lowest effort / highest immediate value:**
-MNT-011 (S) · AUTO-007 (S) ✅ · DIF-006 (M) · AUTO-005 (M)
+~~MNT-011 (S)~~ ✅ · ~~AUTO-007 (S)~~ ✅ · DIF-006 (M) · AUTO-005 (M) · DIF-013 (S — telemetry)
 
 ---
 
