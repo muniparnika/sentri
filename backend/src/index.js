@@ -120,11 +120,15 @@ app.post("/api/projects/:id/run", async (req, res) => {
   };
 
   runTests(project, tests, run, db, runOptions).catch((err) => {
+    // Full stack lands in the run log for server-side debugging; the API
+    // response surface gets a generic message so we don't leak internals.
+    const ts = new Date().toISOString();
+    console.error(`[${ts}] FATAL run ${run.id}:`, err);
     run.status = "failed";
-    run.error = err.message;
-    run.finishedAt = new Date().toISOString();
-    run.logs.push(`[${new Date().toISOString()}] FATAL: ${err.message}`);
-    runEvents.emit(`log:${run.id}`, `[${new Date().toISOString()}] FATAL: ${err.message}`);
+    run.error = "Internal server error";
+    run.finishedAt = ts;
+    run.logs.push(`[${ts}] FATAL: ${err.message}`);
+    runEvents.emit(`log:${run.id}`, `[${ts}] FATAL: ${err.message}`);
     runEvents.emit(`complete:${run.id}`, run);
   });
 

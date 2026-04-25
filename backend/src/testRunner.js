@@ -2,6 +2,7 @@ import { chromium, firefox, webkit } from "playwright";
 import { expect } from "@playwright/test";
 import fs from "fs";
 import path from "path";
+import vm from "vm";
 import { fileURLToPath } from "url";
 import { EventEmitter } from "events";
 import { validateTest } from "./aiProvider.js";
@@ -32,17 +33,50 @@ function log(run, msg) {
   runEvents.emit(`log:${run.id}`, entry);
 }
 
+/**
+ * Reduce a raw error to a short, client-safe summary. The full message is
+ * still logged server-side via `log()`; only the first line and at most 200
+ * characters are returned so we don't leak stack traces, file paths, or
+ * SDK internals through API responses.
+ *
+ * @param {unknown} err - The thrown error or value.
+ * @returns {string} Sanitised single-line error summary.
+ */
+function sanitiseError(err) {
+  const raw = err instanceof Error ? err.message : String(err);
+  const firstLine = raw.split("\n")[0].trim();
+  return firstLine.length > 200 ? `${firstLine.slice(0, 197)}...` : firstLine;
+}
+
 // ─── Dynamic Playwright code execution ────────────────────────────────────────
 
+/**
+ * Execute AI-generated Playwright code inside a Node `vm` sandbox.
+ *
+ * The sandbox exposes only `page`, `expect`, and `context`. Globals such as
+ * `process`, `require`, `globalThis`, and the filesystem are not reachable
+ * from generated code, mitigating the risk of prompt-injected exfiltration
+ * or destructive calls. The code itself is wrapped as the body of an async
+ * IIFE so callers can `await` completion.
+ *
+ * @param {import("playwright").Page}           page           - Active Playwright page.
+ * @param {string}                              playwrightCode - AI-generated function body.
+ * @param {import("playwright").BrowserContext} context        - Active Playwright context.
+ * @returns {Promise<void>} Resolves when the generated code completes.
+ * @throws {Error} Propagates any error raised by the generated code.
+ */
 async function executeDynamicCode(page, playwrightCode, context) {
-  const wrappedCode = `
-    return (async () => {
-      ${playwrightCode}
-    })();
-  `;
+  const wrappedCode = `(async () => {\n${playwrightCode}\n})()`;
 
-  const fn = new Function("page", "expect", "context", wrappedCode);
-  await fn(page, expect, context);
+  // Minimal sandbox: no process, no require, no globalThis access.
+  const sandbox = { page, expect, context };
+  const vmContext = vm.createContext(sandbox, {
+    name: "sentri-dynamic-test",
+    codeGeneration: { strings: false, wasm: false },
+  });
+
+  const script = new vm.Script(wrappedCode, { filename: "ai-generated-test.js" });
+  await script.runInContext(vmContext, { timeout: 60000 });
 }
 
 // ─── Fallback static test execution ───────────────────────────────────────────
@@ -135,9 +169,16 @@ async function executeTest(test, context, screenshotDir, run, options = {}) {
   const start = Date.now();
   const maxRetries = options.retries ?? 1;
 
+  const hasDynamicCode = !!(test.playwrightCode
+    && typeof test.playwrightCode === "string"
+    && test.playwrightCode.trim().length > 0);
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     result.retryCount = attempt;
     try {
+      // Clear any route handlers registered on a prior attempt so they don't stack.
+      await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+
       // Set up network interception if test requires it
       if (test.type === "network" && test.mockRoutes) {
         for (const mock of test.mockRoutes) {
@@ -151,15 +192,18 @@ async function executeTest(test, context, screenshotDir, run, options = {}) {
         }
       }
 
-      // Navigate to the page
-      await page.goto(test.sourceUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: options.navigationTimeout ?? 20000,
-      });
-      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      // Skip the runner-level navigation when dynamic code is present — the
+      // AI-generated body is expected to call page.goto() itself, and double
+      // navigation just adds latency and confuses error attribution.
+      if (!hasDynamicCode) {
+        await page.goto(test.sourceUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: options.navigationTimeout ?? 20000,
+        });
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      }
 
-      // Execute AI-generated Playwright code if available
-      if (test.playwrightCode && typeof test.playwrightCode === "string" && test.playwrightCode.trim().length > 0) {
+      if (hasDynamicCode) {
         result.executionMode = "dynamic";
         await executeDynamicCode(page, test.playwrightCode, context);
         result.status = "passed";
@@ -178,6 +222,9 @@ async function executeTest(test, context, screenshotDir, run, options = {}) {
 
       break; // success, no retry needed
     } catch (err) {
+      // Record full error server-side; sanitised summary is exposed to clients.
+      log(run, `    error in ${test.name}: ${err.stack || err.message}`);
+
       if (attempt < maxRetries) {
         log(run, `    Retry ${attempt + 1}/${maxRetries} for: ${test.name}`);
         await page.goto("about:blank").catch(() => {});
@@ -185,7 +232,7 @@ async function executeTest(test, context, screenshotDir, run, options = {}) {
       }
 
       result.status = "failed";
-      result.error = err.message;
+      result.error = sanitiseError(err);
       try {
         const screenshotFile = path.join(screenshotDir, `${test.id}.png`);
         await page.screenshot({ path: screenshotFile, type: "png", fullPage: true });
@@ -289,7 +336,9 @@ export async function runTests(project, tests, run, db, options = {}) {
     },
   };
 
-  // Apply viewport / device emulation
+  // Apply viewport / device emulation. When both are supplied, the device
+  // profile wins (matches Playwright's own precedence), but we warn so the
+  // override isn't silent.
   if (options.viewport) {
     contextOptions.viewport = options.viewport;
   }
@@ -297,7 +346,12 @@ export async function runTests(project, tests, run, db, options = {}) {
     const { devices } = await import("playwright");
     const deviceConfig = devices[options.device];
     if (deviceConfig) {
+      if (options.viewport) {
+        log(run, `Warning: device "${options.device}" overrides supplied viewport`);
+      }
       Object.assign(contextOptions, deviceConfig);
+    } else {
+      log(run, `Warning: unknown device "${options.device}" — falling back to default viewport`);
     }
   }
   if (options.colorScheme) {
@@ -328,7 +382,8 @@ export async function runTests(project, tests, run, db, options = {}) {
   if (options.device) log(run, `Device emulation: ${options.device}`);
   if (options.retries) log(run, `Retries per test: ${options.retries}`);
 
-  const selfHealEnabled = options.selfHeal !== false && !!process.env.ANTHROPIC_API_KEY || !!process.env.GEMINI_API_KEY || !!process.env.OPENAI_API_KEY;
+  const hasAiKey = !!process.env.ANTHROPIC_API_KEY || !!process.env.GEMINI_API_KEY || !!process.env.OPENAI_API_KEY;
+  const selfHealEnabled = options.selfHeal !== false && hasAiKey;
 
   for (const test of tests) {
     log(run, `  Running: ${test.name} [${test.type}]`);
@@ -364,15 +419,15 @@ export async function runTests(project, tests, run, db, options = {}) {
       }
     } catch (err) {
       run.failed++;
+      log(run, `    FAILED (exception): ${err.stack || err.message}`);
       run.results.push({
         testId: test.id,
         testName: test.name,
         status: "failed",
-        error: err.message,
+        error: sanitiseError(err),
         durationMs: 0,
         executionMode: "error",
       });
-      log(run, `    FAILED (exception): ${err.message}`);
     }
   }
 

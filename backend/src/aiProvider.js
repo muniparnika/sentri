@@ -211,6 +211,15 @@ Return ONLY a valid JSON array. No markdown fences, no explanation, no extra tex
 
 // ─── Validation Prompt ────────────────────────────────────────────────────────
 
+/**
+ * Build a prompt that asks the LLM to diagnose a failed test and return a
+ * corrected version. Used by the self-healing pipeline.
+ *
+ * @param {string} testCode - The Playwright code that failed.
+ * @param {string} error    - Sanitised error message from the failed run.
+ * @param {Object} snapshot - DOM snapshot of the current page state.
+ * @returns {string} Prompt string ready to send to a provider.
+ */
 export function buildValidationPrompt(testCode, error, snapshot) {
   return `You are an expert Playwright debugging engineer. A generated test has failed during execution. Analyze the failure and produce a corrected version.
 
@@ -251,6 +260,15 @@ Return ONLY valid JSON. No markdown fences, no explanation.`;
 
 // ─── Debugging Prompt ─────────────────────────────────────────────────────────
 
+/**
+ * Build a prompt that asks the LLM for a deep diagnosis of a test failure,
+ * including a structured root-cause category and self-healing suggestions.
+ *
+ * @param {string}  testCode        - The Playwright code under analysis.
+ * @param {string}  executionLog    - Full execution log for context.
+ * @param {boolean} [screenshot]    - Whether a screenshot is available.
+ * @returns {string} Prompt string ready to send to a provider.
+ */
 export function buildDebuggingPrompt(testCode, executionLog, screenshot) {
   return `You are a Playwright test debugging specialist. Analyze this test execution and provide a detailed diagnosis.
 
@@ -297,6 +315,16 @@ function parseResponse(raw) {
   }
 }
 
+/**
+ * Parse a raw LLM response that should contain a single JSON object.
+ *
+ * Strips surrounding markdown code fences (```json ... ```), then runs
+ * `JSON.parse`. Returns `null` if the input is not valid JSON, so callers
+ * can branch without a try/catch.
+ *
+ * @param {string} raw - Raw text from the provider.
+ * @returns {Object|null} Parsed object, or `null` on parse failure.
+ */
 export function parseJsonResponse(raw) {
   try {
     const cleaned = raw.trim().replace(/^```json\n?/, "").replace(/^```\n?/, "").replace(/\n?```$/, "");
@@ -358,6 +386,15 @@ export async function generateTests(snapshot, projectUrl) {
   return parseResponse(raw);
 }
 
+/**
+ * Ask the configured provider to diagnose and correct a failed test.
+ *
+ * @param {string} testCode - The Playwright code that failed.
+ * @param {string} error    - Sanitised error message from the failed run.
+ * @param {Object} snapshot - DOM snapshot of the current page state.
+ * @returns {Promise<Object|null>} Parsed `{ fixedCode, diagnosis, ... }` or `null` on parse failure.
+ * @throws {Error} If `AI_PROVIDER` is unknown.
+ */
 export async function validateTest(testCode, error, snapshot) {
   const providerName = (process.env.AI_PROVIDER || "anthropic").toLowerCase();
   const providerFn = PROVIDERS[providerName];
@@ -371,6 +408,15 @@ export async function validateTest(testCode, error, snapshot) {
   return parseJsonResponse(raw);
 }
 
+/**
+ * Ask the configured provider for a deep failure analysis.
+ *
+ * @param {string}  testCode     - The Playwright code under analysis.
+ * @param {string}  executionLog - Full execution log for context.
+ * @param {boolean} [screenshot] - Whether a screenshot is available.
+ * @returns {Promise<Object|null>} Parsed `{ rootCause, category, ... }` or `null` on parse failure.
+ * @throws {Error} If `AI_PROVIDER` is unknown.
+ */
 export async function debugTest(testCode, executionLog, screenshot) {
   const providerName = (process.env.AI_PROVIDER || "anthropic").toLowerCase();
   const providerFn = PROVIDERS[providerName];
