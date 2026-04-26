@@ -9,6 +9,16 @@
 
 ---
 
+## ⚡ Agent fast path
+
+> **Working on the next PR? Read [`NEXT.md`](./NEXT.md) instead — it has the current item spec, files to change, and acceptance criteria. You do not need to read further in this file.**
+>
+> Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
+>
+> **Current sprint:** `DIF-006` — Standalone Playwright export · **Blockers:** none ✅ · **Remaining:** 39 items
+
+---
+
 ## How to Read This Document
 
 | Symbol | Meaning |
@@ -28,6 +38,8 @@
 ## Completed Work Summary
 
 The following items have been verified complete against the codebase and are **not** repeated below.
+
+> **Naming note:** Items numbered `MAINT-*` are legacy from prior roadmap versions. The current convention is `MNT-*`. Old IDs are preserved in PR descriptions and git history — do not rename them. Use `MNT-*` for all new maintenance items.
 
 | ID | Title | PR / Commit |
 |----|-------|-------------|
@@ -75,6 +87,14 @@ The following items have been verified complete against the codebase and are **n
 | MNT-010 | Re-run button on Run Detail page for crawl/generate runs | PR #100 |
 | FEA-002 | TanStack React Query data layer | PR #107 |
 | MNT-011 | Persist crawl/generate dialsConfig on run record | Verified in PR #107 (fix landed in an earlier untracked commit) |
+| ACL-001 | Multi-tenancy: workspace ownership on all entities | PR #87 |
+| ACL-002 | Role-based access control (Admin / QA Lead / Viewer) | PR #87 |
+| INF-004 | OpenAPI specification and Swagger UI | PR #94 |
+| DIF-001 | Visual regression testing with baseline diffing | PR #94 |
+| DIF-002 | Cross-browser testing (Firefox, WebKit / Safari) | PR #94 |
+| DIF-002b | Cross-browser polish: browser-aware baselines, UI badges, CI coverage | PR #107, PR #110 |
+| DIF-015 | Interactive browser recorder for test creation | PR #94 |
+| AUTO-007 | Geolocation / locale / timezone testing | PR #94 |
 
 ---
 
@@ -83,7 +103,7 @@ The following items have been verified complete against the codebase and are **n
 | Phase | Scope | Status | Est. Duration |
 |-------|-------|--------|---------------|
 | Phase 1 — Production Hardening | Security, reliability, data integrity | ✅ Complete | — |
-| Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | 🔄 In Progress | 8–10 weeks |
+| Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | ✅ Mostly complete (SEC-004 deferred) | 8–10 weeks |
 | Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔲 Planned | 10–12 weeks |
 | Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔲 Planned | 14–18 weeks |
 | Ongoing — Maintenance & Platform Health | Healing AI, DX, exports, accessibility | 🔄 Continuous | — |
@@ -308,6 +328,8 @@ The following items have been verified complete against the codebase and are **n
 
 **Status:** ✅ Complete | **Effort:** S | **Source:** Audit
 
+> **Historical note:** Originally scoped as Medium priority but pulled forward in PR #94 to unblock INF-004 (OpenAPI spec needs stable versioned routes). In hindsight this should have been 🟡 High — keep priority labels in mind for similar foundational dependencies.
+
 **Problem:** All routes are mounted at `/api/*` with no version prefix. Any breaking API change will immediately break all consumers — CI/CD integrations, GitHub Actions, external webhooks — with no safe migration path.
 
 **Fix:** Mount all routers under `/api/v1/`. Update `API_BASE` in the frontend. Add 308 redirects from `/api/*` to `/api/v1/*` for backward compatibility during the transition window (308 preserves HTTP method on redirect).
@@ -352,6 +374,25 @@ The following items have been verified complete against the codebase and are **n
 - `frontend/src/pages/Settings.jsx` — MFA setup and management
 
 **Dependencies:** ACL-001 (multi-tenancy first allows for per-workspace MFA policy)
+
+---
+
+### SEC-005 — SAML / OIDC SSO federation 🔵 Medium
+
+**Status:** 🔲 Planned | **Effort:** L | **Source:** Competitive (BearQ, enterprise)
+
+**Problem:** Sentri supports email/password + GitHub/Google OAuth, and SEC-004 covers TOTP MFA, but there is no SAML 2.0 or OIDC federation support. Enterprise procurement teams require SSO integration with their identity provider (Okta, Azure AD, OneLogin, Ping). BearQ inherits SmartBear's enterprise SSO. This is a distinct requirement from MFA — SSO replaces the login flow entirely rather than adding a second factor.
+
+**Fix:** Integrate `openid-client` for OIDC and `@node-saml/passport-saml` for SAML 2.0. Add a per-workspace SSO configuration (metadata URL, client ID, certificate). When SSO is enabled, redirect login to the IdP. Map IdP attributes to Sentri user fields. Auto-provision users on first SSO login. Add SSO configuration UI in Settings → Authentication.
+
+**Files to change:**
+- `backend/src/middleware/authenticate.js` — add `saml` and `oidc` auth strategies
+- `backend/src/routes/auth.js` — SSO callback endpoints, IdP-initiated login
+- `backend/src/database/migrations/` — `sso_configurations` table per workspace
+- `frontend/src/pages/Settings.jsx` — SSO configuration panel
+- `backend/package.json` — add `openid-client`, `@node-saml/passport-saml`
+
+**Dependencies:** ACL-001 (workspaces must exist for per-workspace SSO configuration)
 
 ---
 
@@ -754,6 +795,8 @@ Because it's marked internal, import risk is real — the path or signature coul
 
 *Goal: Advance Sentri beyond triggered QA into a genuinely autonomous system that makes intelligent decisions about what to test, when to test, and what failures mean. Items in this phase are post-Phase 3 and can be prioritised individually based on customer demand.*
 
+> **Note:** Some Phase 4 items have already shipped opportunistically alongside other work and appear in the Completed Work Summary above (e.g. `AUTO-007`, `AUTO-013`). The remaining ~20 items are scoped here and ready to start.
+
 ---
 
 ### AUTO-001 — Intelligent test selection (risk-based run ordering) 🟢 Differentiator
@@ -1138,25 +1181,6 @@ Because it's marked internal, import risk is real — the path or signature coul
 
 ---
 
-### SEC-005 — SAML / OIDC SSO federation 🔵 Medium
-
-**Status:** 🔲 Planned | **Effort:** L | **Source:** Competitive (BearQ, enterprise)
-
-**Problem:** Sentri supports email/password + GitHub/Google OAuth, and SEC-004 covers TOTP MFA, but there is no SAML 2.0 or OIDC federation support. Enterprise procurement teams require SSO integration with their identity provider (Okta, Azure AD, OneLogin, Ping). BearQ inherits SmartBear's enterprise SSO. This is a distinct requirement from MFA — SSO replaces the login flow entirely rather than adding a second factor.
-
-**Fix:** Integrate `openid-client` for OIDC and `@node-saml/passport-saml` for SAML 2.0. Add a per-workspace SSO configuration (metadata URL, client ID, certificate). When SSO is enabled, redirect login to the IdP. Map IdP attributes to Sentri user fields. Auto-provision users on first SSO login. Add SSO configuration UI in Settings → Authentication.
-
-**Files to change:**
-- `backend/src/middleware/authenticate.js` — add `saml` and `oidc` auth strategies
-- `backend/src/routes/auth.js` — SSO callback endpoints, IdP-initiated login
-- `backend/src/database/migrations/` — `sso_configurations` table per workspace
-- `frontend/src/pages/Settings.jsx` — SSO configuration panel
-- `backend/package.json` — add `openid-client`, `@node-saml/passport-saml`
-
-**Dependencies:** ACL-001 (workspaces must exist for per-workspace SSO configuration)
-
----
-
 ## Ongoing Maintenance & Platform Health
 
 *These items are not phase-bounded. Address them incrementally alongside feature work, prioritising MNT-006 (object storage) before any cloud deployment.*
@@ -1395,12 +1419,12 @@ Because it's marked internal, import risk is real — the path or signature coul
 | Infrastructure | 5 | 5 | 0 | 0 | — |
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 3 | 3 | 0 | 0 | — |
-| Differentiators | 19 | 7 | 0 | 12 | DIF-002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b |
+| Differentiators | 19 | 9 | 0 | 10 | DIF-002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b |
 | Autonomous Intelligence | 22 | 2 | 0 | 20 | AUTO-001–006, 008–012, 014–022 |
 | Maintenance | 11 | 4 | 0 | 7 | MNT-001–006, 008 |
-| **Totals** | **67** | **26** | **0** | **41** | |
+| **Totals** | **67** | **28** | **0** | **39** | |
 
-**Total tracked items:** 67 across 7 categories — **26 complete** (39%), **0 in progress**, **41 remaining**
+**Total tracked items:** 67 across 7 categories — **28 complete** (42%), **0 in progress**, **39 remaining**
 
 **Blockers (must ship before team deployment):**
 ~~SEC-001 (email verification)~~ ✅ · ~~INF-001 (PostgreSQL)~~ ✅ · ~~INF-002 (Redis)~~ ✅ · ~~ACL-001 (multi-tenancy)~~ ✅ · ~~ACL-002 (RBAC)~~ ✅
