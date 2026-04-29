@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.8] — 2026-04-29
+
 ### Fixed
 - **Recorder**: The browser-in-browser canvas in the Recorder modal is now interactive. Previously the canvas was a read-only screencast — pointer clicks, scrolls, and keystrokes never reached the headless browser, so "Stop & Save" always returned "no actions were captured" with `BROWSER_HEADLESS=true` (the default). Pointer + keyboard + wheel events are now scaled from CSS pixels to the server viewport coordinates and forwarded to the headless Chromium via a new `POST /api/v1/projects/:id/record/:sessionId/input` route that translates DOM events into CDP `Input.dispatch*` commands (DIF-015) (#118).
 - **Recorder**: SSE screencast frames were being silently dropped because `RecorderModal` listened for a named `frame` event, but the backend emits unnamed `data:` lines. Routed SSE consumption through a new `useSseStream` hook that uses `onmessage` and parses the `type` from the JSON payload, so the canvas paints reliably as soon as the recorder launches (#118).
