@@ -27,6 +27,7 @@ import { createRequire } from "module";
 import { AUTH_COOKIE } from "./authenticate.js";
 import { redis, isRedisAvailable } from "../utils/redisClient.js";
 import { formatLogLine } from "../utils/logFormatter.js";
+import { isS3Storage, signS3ArtifactUrl, s3PublicOrigin } from "../utils/objectStorage.js";
 
 // Load .env before reading any env vars below (CORS_ORIGIN, etc.).
 // ESM imports execute before module-level code in index.js, so the
@@ -59,14 +60,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// MNT-006: When STORAGE_BACKEND=s3, pre-signed artifact URLs point to a
+// different origin (e.g. https://bucket.s3.us-east-1.amazonaws.com or a
+// custom S3-compatible endpoint). Without explicitly allowlisting that
+// origin in `imgSrc` / `mediaSrc` / `connectSrc`, the browser blocks every
+// screenshot, video, and trace artifact. `s3PublicOrigin()` returns the
+// scheme+host of the configured store, or `null` in local mode.
+const _s3Origin = s3PublicOrigin();
+const _s3ImgSrc = _s3Origin ? [_s3Origin] : [];
+const _s3MediaSrc = _s3Origin ? [_s3Origin] : [];
+const _s3ConnectSrc = _s3Origin ? [_s3Origin] : [];
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:     ["'self'"],
       scriptSrc:      ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
       styleSrc:       ["'self'", "'unsafe-inline'"],   // inline styles used throughout the SPA
-      imgSrc:         ["'self'", "data:", "blob:"],    // data: for canvas favicons, blob: for screenshots
-      connectSrc:     ["'self'"],                      // API + SSE calls — same origin only
+      imgSrc:         ["'self'", "data:", "blob:", ..._s3ImgSrc],    // data: for canvas favicons, blob: for screenshots; S3 origin (MNT-006) when STORAGE_BACKEND=s3
+      mediaSrc:       ["'self'", "blob:", ..._s3MediaSrc],           // <video> playback for run recordings; S3 origin (MNT-006) when STORAGE_BACKEND=s3
+      connectSrc:     ["'self'", ..._s3ConnectSrc],                  // API + SSE; S3 origin (MNT-006) for fetch()-based artifact downloads (e.g. trace viewer)
       fontSrc:        ["'self'", "data:"],
       frameSrc:       ["'self'"],                      // Playwright trace viewer iframes
       workerSrc:      ["'self'", "blob:"],             // Web Workers for PDF generation
@@ -410,6 +423,13 @@ const ARTIFACT_TOKEN_TTL_MS = parseInt(process.env.ARTIFACT_TOKEN_TTL_MS ?? "", 
  * @returns {string} The full artifact URL with `?token=…&exp=…` appended.
  */
 export function signArtifactUrl(artifactPath) {
+  // In s3 mode, all artifact write paths route through writeArtifactBuffer()
+  // (which dual-writes to local disk for backward compatibility), so it is
+  // safe to emit pre-signed S3 URLs for every artifact type — screenshots,
+  // videos, traces, baselines, and diff PNGs.
+  if (isS3Storage()) {
+    return signS3ArtifactUrl(artifactPath, ARTIFACT_TOKEN_TTL_MS);
+  }
   const exp = Date.now() + ARTIFACT_TOKEN_TTL_MS;
   const mac = crypto
     .createHmac("sha256", ARTIFACT_SECRET)

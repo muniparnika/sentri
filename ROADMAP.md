@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `MNT-006` — Object storage for artifacts (S3 / R2) · **Blockers:** `INF-006` (hosted-deploy DB persistence — see below) · **Remaining:** 36 items (DIF-015b Gaps 2+3 tracked as sub-items, not separate IDs; AUTO-016 backend slice ✅ shipped in PR #121, frontend `CrawlView` panel tracked as AUTO-016b)
+> **Current sprint:** `AUTO-016b` — Frontend CrawlView accessibility panel · **Blockers:** `INF-006` (hosted-deploy DB persistence — see below) · **Remaining:** 35 items (MNT-006 ✅ shipped in PR #122; DIF-015b Gaps 2+3 tracked as sub-items, not separate IDs)
 
 ---
 
@@ -101,6 +101,7 @@ The following items have been verified complete against the codebase and are **n
 | AUTO-006 | Network condition simulation (slow 3G / offline) | PR #3 |
 | DIF-015b (partial) | Recorder selector quality: naming alignment + nth=N disambiguation | PR #3, PR #120 (Gap 1 only — Gaps 2+3 still 🔲 Planned) |
 | AUTO-016 (backend) | Accessibility testing — axe-core crawl scan + persistence (frontend `CrawlView` panel tracked as AUTO-016b) | PR #121 |
+| MNT-006 | Object storage abstraction — local-disk default + S3/R2 pre-signed URLs for screenshots, visual-diff baselines, and diffs (dual-write to local disk in s3 mode) | PR #122 |
 
 ---
 
@@ -1448,19 +1449,18 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ---
 
-### MNT-006 — Object storage for artifacts (S3 / R2) 🟡 High
+### MNT-006 — Object storage for artifacts (S3 / R2) ✅ Complete (PR #122)
 
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Audit (M-03)
+**Status:** Shipped in PR #122. `backend/src/utils/objectStorage.js` provides a local-disk default and S3-compatible adapter (raw AWS V4 signing, no SDK). `STORAGE_BACKEND=s3` switches modes; path-style addressing is used for custom `S3_ENDPOINT` (R2/MinIO) so the bucket is included in both URL and canonical signing URI. `writeArtifactBuffer()` routes screenshots, visual-diff baselines, visual-diff PNGs, videos, and traces through the adapter, dual-writing to local disk in s3 mode so baseline acceptance and downstream code paths keep working. `signArtifactUrl()` emits S3 pre-signed URLs for all artifact types.
 
-**Problem:** Screenshots, videos, and Playwright traces are stored on local disk (`data/screenshots/`, `data/videos/`). In a Docker or multi-instance deployment, these are lost on container restart and cannot be shared across instances. This is acknowledged in the README production checklist.
+**Follow-up (deferred):** route screencast writes (`backend/src/runner/screencast.js`) through `writeArtifactBuffer()` if durable screencast frames are needed in S3.
 
-**Fix:** Add an `objectStorage` abstraction with a local-disk adapter (current behaviour) and an S3/R2 adapter (using `@aws-sdk/client-s3`). Switch based on `STORAGE_BACKEND=s3`. Update all artifact read/write paths. Update `signArtifactUrl()` to produce pre-signed S3 URLs when using the S3 backend.
 
-**Files to change:**
-- `backend/src/runner/pageCapture.js` — use storage abstraction
-- `backend/src/runner/screencast.js` — use storage abstraction
-- New `backend/src/utils/objectStorage.js` — local + S3/R2 adapter
-- `backend/.env.example` — document `STORAGE_BACKEND`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`
+
+
+
+
+
 
 ---
 
