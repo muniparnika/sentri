@@ -23,6 +23,8 @@ const files = [
   "tests/feedback-loop.test.js",
   "tests/pipeline-orchestrator.test.js",
   "tests/chat-window.test.js",
+  "tests/test-edit-prompt.test.js",
+  "tests/test-edit-chat.test.js",
   "tests/password-reset-token.test.js",
   "tests/security-hardening.test.js",
   "tests/artifact-signing.test.js",

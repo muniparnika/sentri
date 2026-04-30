@@ -26,6 +26,7 @@ import playwrightToCurl from "../utils/playwrightToCurl.js";
 import splitCodeBySteps from "../utils/splitCodeBySteps.js";
 import InlineCodeEditor from "../components/test/InlineCodeEditor.jsx";
 import CodePreviewPanel from "../components/test/CodePreviewPanel.jsx";
+import AiTestEditor from "../components/test/AiTestEditor.jsx";
 import TablePagination, { PAGE_SIZE } from "../components/shared/TablePagination.jsx";
 
 // ── Run status icon (used in Recent Test Runs table) ─────────────────────────
@@ -130,6 +131,7 @@ export default function TestDetail() {
 
   // ── AI fix panel state ──────────────────────────────────────────────────
   const [showFixPanel, setShowFixPanel] = useState(false);
+  const [showAiEditor, setShowAiEditor] = useState(false);
 
   // ── Code regeneration review state ──────────────────────────────────────
   const [codePreview, setCodePreview] = useState(null); // { generatedCode, originalCode }
@@ -404,6 +406,11 @@ export default function TestDetail() {
               <button className="btn btn-ghost btn-sm" onClick={startEditing}>
                 <Edit2 size={14} /> Edit Test
               </button>
+              {test.playwrightCode && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowAiEditor(v => !v)}>
+                  <Wand2 size={14} /> {showAiEditor ? "Hide AI Editor" : "Edit with AI"}
+                </button>
+              )}
               {/* Show "Fix with AI" when the test's lastResult is "failed" OR
                   when the most recent run result for this test is "failed" (covers
                   the case where the page was loaded before lastResult was flushed
@@ -521,6 +528,17 @@ export default function TestDetail() {
 
           {/* Test Steps card */}
           <div className="card" style={{ padding: 24 }}>
+            {showAiEditor && (
+              <AiTestEditor
+                test={test}
+                testId={testId}
+                onApplied={(updated) => {
+                  setTest(updated);
+                  setShowAiEditor(false);
+                  setStepsView("source");
+                }}
+              />
+            )}
             {/* ── Card header with Steps / Source tab toggle ── */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
               <div style={{
