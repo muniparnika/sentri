@@ -28,6 +28,7 @@ import { classifyError } from "../utils/errorClassifier.js";
 import { formatLogLine, shouldLog } from "../utils/logFormatter.js";
 import { MAX_CONVERSATION_TURNS } from "../runner/config.js";
 import { hasActiveRunForProvider } from "../utils/activeRuns.js";
+import { buildTestEditPrompt } from "./testEdit.js";
 
 const router = Router();
 
@@ -338,7 +339,7 @@ router.post("/chat", async (req, res) => {
     });
   }
 
-  const { messages: rawMessages } = req.body;
+  const { messages: rawMessages, context = null } = req.body;
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     return res.status(400).json({ error: "messages array is required." });
   }
@@ -359,38 +360,48 @@ router.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "Last message must be from the user." });
   }
 
-  const userContent = history
+  let userContent = history
     ? `Previous conversation:\n${history}\n\nUser: ${lastMessage.content}`
     : lastMessage.content;
 
-  // Build system prompt with live workspace context + deep entity details.
-  // Use lean run queries — chat context only needs scalar fields + results
-  // for failure analysis. Skipping logs/testQueue/videoSegments saves ~10-50×
-  // in JSON parse time.
   const isLocal = isLocalProvider();
-  const projects = projectRepo.getAll(req.workspaceId);
-  const projectIds = projects.map((p) => p.id);
-  const tests = testRepo.getAllByProjectIds(projectIds);
-  const runs = runRepo.getWithResultsByProjectIds(projectIds);
-  const projectsById = {};
-  for (const p of projects) projectsById[p.id] = p;
-  const testsById = {};
-  for (const t of tests) testsById[t.id] = t;
-  const runsById = {};
-  for (const r of runs) runsById[r.id] = r;
-  const ctx = { projects, tests, runs, projectsById, testsById, runsById };
+  let systemPrompt;
 
-  // For local models (Ollama 7B) the combined system+user prompt must fit
-  // within a small context window (~4K tokens). Entity context (TC-*, RUN-*)
-  // is always included so users can ask about specific tests, but:
-  //   - The heavy workspace summary (all projects, runs, pass rate) is skipped
-  //   - Entity details use compact mode (shorter code/error caps)
-  const workspaceContext = isLocal ? "" : buildWorkspaceContext(ctx);
-  const entityContext = buildEntityContext(ctx, lastMessage.content, { compact: isLocal });
-  const contextParts = [workspaceContext, entityContext].filter(Boolean).join("\n\n");
-  const systemPrompt = contextParts
-    ? `${BASE_SYSTEM_PROMPT}\n\n${contextParts}`
-    : BASE_SYSTEM_PROMPT;
+  if (context?.mode === "test_edit") {
+    // Test-edit mode supplies its own self-contained prompt; the workspace
+    // snapshot and entity context would be discarded, so skip the expensive
+    // DB queries (especially `getWithResultsByProjectIds`, which parses
+    // every run's JSON results) entirely.
+    ({ systemPrompt, userContent } = buildTestEditPrompt(context, lastMessage));
+  } else {
+    // Build system prompt with live workspace context + deep entity details.
+    // Use lean run queries — chat context only needs scalar fields + results
+    // for failure analysis. Skipping logs/testQueue/videoSegments saves ~10-50×
+    // in JSON parse time.
+    const projects = projectRepo.getAll(req.workspaceId);
+    const projectIds = projects.map((p) => p.id);
+    const tests = testRepo.getAllByProjectIds(projectIds);
+    const runs = runRepo.getWithResultsByProjectIds(projectIds);
+    const projectsById = {};
+    for (const p of projects) projectsById[p.id] = p;
+    const testsById = {};
+    for (const t of tests) testsById[t.id] = t;
+    const runsById = {};
+    for (const r of runs) runsById[r.id] = r;
+    const ctx = { projects, tests, runs, projectsById, testsById, runsById };
+
+    // For local models (Ollama 7B) the combined system+user prompt must fit
+    // within a small context window (~4K tokens). Entity context (TC-*, RUN-*)
+    // is always included so users can ask about specific tests, but:
+    //   - The heavy workspace summary (all projects, runs, pass rate) is skipped
+    //   - Entity details use compact mode (shorter code/error caps)
+    const workspaceContext = isLocal ? "" : buildWorkspaceContext(ctx);
+    const entityContext = buildEntityContext(ctx, lastMessage.content, { compact: isLocal });
+    const contextParts = [workspaceContext, entityContext].filter(Boolean).join("\n\n");
+    systemPrompt = contextParts
+      ? `${BASE_SYSTEM_PROMPT}\n\n${contextParts}`
+      : BASE_SYSTEM_PROMPT;
+  }
 
   // Log prompt metadata at info level (always visible) and full prompt at debug
   const promptCharCount = systemPrompt.length + userContent.length;

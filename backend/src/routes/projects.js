@@ -8,6 +8,7 @@
  * | `POST`   | `/api/v1/projects`                | Create a project                                       |
  * | `GET`    | `/api/v1/projects`                | List all non-deleted projects                          |
  * | `GET`    | `/api/v1/projects/:id`            | Get a single project                                   |
+ * | `PATCH`  | `/api/v1/projects/:id`            | Update project name / URL / credentials                |
  * | `DELETE` | `/api/v1/projects/:id`            | Soft-delete project + cascade soft-delete its data     |
  * | `GET`    | `/api/v1/projects/:id/schedule`   | Get the cron schedule for a project                    |
  * | `PATCH`  | `/api/v1/projects/:id/schedule`   | Create or update the cron schedule for a project       |
@@ -28,7 +29,7 @@ import * as scheduleRepo from "../database/repositories/scheduleRepo.js";
 import { getDatabase } from "../database/sqlite.js";
 import { generateProjectId, generateScheduleId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { encryptCredentials } from "../utils/credentialEncryption.js";
+import { encryptCredentials, decryptCredentials } from "../utils/credentialEncryption.js";
 import { validateProjectPayload, sanitise } from "../utils/validate.js";
 import { actor } from "../utils/actor.js";
 import { sanitiseProjectForClient } from "../utils/projectSanitiser.js";
@@ -40,6 +41,33 @@ import { validateUrl } from "../utils/ssrfGuard.js";
 import cron from "node-cron";
 
 const router = Router();
+
+
+function validateQualityGates(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "qualityGates must be an object";
+  const gates = {};
+  if (payload.minPassRate != null) {
+    if (!Number.isFinite(payload.minPassRate) || payload.minPassRate < 0 || payload.minPassRate > 100) return "minPassRate must be between 0 and 100";
+    gates.minPassRate = payload.minPassRate;
+  }
+  if (payload.maxFlakyPct != null) {
+    if (!Number.isFinite(payload.maxFlakyPct) || payload.maxFlakyPct < 0 || payload.maxFlakyPct > 100) return "maxFlakyPct must be between 0 and 100";
+    gates.maxFlakyPct = payload.maxFlakyPct;
+  }
+  if (payload.maxFailures != null) {
+    if (!Number.isInteger(payload.maxFailures) || payload.maxFailures < 0) return "maxFailures must be a non-negative integer";
+    gates.maxFailures = payload.maxFailures;
+  }
+  // Reject empty payloads — without at least one gate field, the stored
+  // `{}` would render as "Active" in the UI and cause the evaluator to
+  // return `{ passed: true }` for every run despite no thresholds being
+  // configured. Clients clearing all gates should use DELETE instead.
+  if (Object.keys(gates).length === 0) {
+    return "qualityGates must contain at least one gate field (minPassRate, maxFlakyPct, maxFailures)";
+  }
+  return gates;
+}
+
 
 // ─── Project CRUD ─────────────────────────────────────────────────────────────
 
@@ -79,6 +107,73 @@ router.get("/:id", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
   res.json(sanitiseProjectForClient(project));
+});
+
+/**
+ * PATCH /api/projects/:id
+ * Update a project's name, URL, and/or credentials.
+ *
+ * Credentials handling:
+ *   - `credentials: null` clears stored credentials entirely.
+ *   - If `credentials` is an object with blank `username` or `password`,
+ *     the existing encrypted value for that field is preserved. This lets
+ *     the edit form round-trip without requiring the user to re-type secrets
+ *     (which the server never sends back — see `projectSanitiser.js`).
+ */
+router.patch("/:id", requireRole("qa_lead"), (req, res) => {
+  const existing = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!existing) return res.status(404).json({ error: "not found" });
+
+  const validationErr = validateProjectPayload(req.body);
+  if (validationErr) return res.status(400).json({ error: validationErr });
+
+  const name = sanitise(req.body.name, 200);
+  const url  = req.body.url?.trim() || "";
+
+  const fields = { name, url };
+
+  if (req.body.credentials === null) {
+    fields.credentials = null;
+  } else if (req.body.credentials) {
+    // Merge: any blank secret falls back to the existing stored value so the
+    // client can PATCH without re-sending the password.
+    //
+    // We normalise `existing.credentials` through `decryptCredentials()` first
+    // so legacy unencrypted rows (no `_encrypted` flag, pre-dating the
+    // encryption module) and current encrypted rows are both handled
+    // uniformly. Then the merged plaintext object is passed through
+    // `encryptCredentials()` exactly once — no post-hoc copy of raw stored
+    // fields into a `_encrypted: true` object, which would mix plaintext
+    // values into an "encrypted" envelope and permanently corrupt the row
+    // (next `decryptCredentials()` call throws and returns `null`).
+    //
+    // Selectors fall back to existing values when the client omits or blanks
+    // them, so editing a legacy explicit-selector project doesn't silently
+    // wipe its login strategy. The new frontend only sends username +
+    // password (selectors are auto-detected at crawl time); without this
+    // fallback any project rename/credential rotation would clobber the
+    // saved selectors.
+    const incoming = req.body.credentials;
+    const existingDecrypted = decryptCredentials(existing.credentials) || {};
+    const merged = {
+      usernameSelector: incoming.usernameSelector ?? existingDecrypted.usernameSelector ?? "",
+      passwordSelector: incoming.passwordSelector ?? existingDecrypted.passwordSelector ?? "",
+      submitSelector:   incoming.submitSelector   ?? existingDecrypted.submitSelector   ?? "",
+      username: incoming.username || existingDecrypted.username || "",
+      password: incoming.password || existingDecrypted.password || "",
+    };
+    fields.credentials = encryptCredentials(merged);
+  }
+
+  projectRepo.update(req.params.id, fields);
+
+  logActivity({ ...actor(req),
+    type: "project.update", projectId: req.params.id, projectName: name,
+    detail: `Project updated — "${name}" (${url})`,
+  });
+
+  const updated = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  res.json(sanitiseProjectForClient(updated));
 });
 
 router.delete("/:id", requireRole("admin"), (req, res) => {
@@ -135,6 +230,30 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
     destroyedTokens: existingTokens.length,
     destroyedSchedule: !!existingSchedule,
   });
+});
+
+
+router.get("/:id/quality-gates", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  res.json({ qualityGates: project.qualityGates || null });
+});
+
+router.patch("/:id/quality-gates", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const validated = validateQualityGates(req.body?.qualityGates ?? req.body);
+  if (typeof validated === "string") return res.status(400).json({ error: validated });
+  projectRepo.update(req.params.id, { qualityGates: validated });
+  const updated = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  res.json({ qualityGates: updated.qualityGates || null });
+});
+
+router.delete("/:id/quality-gates", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  projectRepo.update(req.params.id, { qualityGates: null });
+  res.json({ ok: true, qualityGates: null });
 });
 
 // ─── Schedule endpoints ───────────────────────────────────────────────────────

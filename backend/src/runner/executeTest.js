@@ -29,6 +29,7 @@ import { formatLogLine } from "../utils/logFormatter.js";
 import { injectCursorOverlay } from "./cursorOverlay.js";
 import { diffScreenshot } from "./visualDiff.js";
 import { applyNetworkCondition } from "./networkConditions.js";
+import { writeArtifactBuffer } from "../utils/objectStorage.js";
 
 
 // ─── Non-visual action detection (S3-06) ──────────────────────────────────────
@@ -352,7 +353,7 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
               // because a step capture must never break test execution.
               let visualDiff = null;
               try {
-                visualDiff = diffScreenshot({
+                visualDiff = await diffScreenshot({
                   runId,
                   testId: test.id,
                   browser: browserName,
@@ -400,23 +401,38 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
       if (!skipVisualArtifacts) {
         result.domSnapshot = await captureDomSnapshot(page);
 
-        const shot = await captureScreenshot(page, runId, stepIndex);
-        result.screenshot = shot.base64;
-        result.screenshotPath = shot.artifactPath;
+        // Success-path artifact capture is best-effort: a transient S3
+        // upload failure inside captureScreenshot (or any other artifact
+        // helper) must not flip an otherwise-passing test to "failed".
+        // Each block is guarded independently so one failure doesn't
+        // cascade into the next.
+        let shot = null;
+        try {
+          shot = await captureScreenshot(page, runId, stepIndex);
+          result.screenshot = shot.base64;
+          result.screenshotPath = shot.artifactPath;
+        } catch (shotErr) {
+          console.warn(formatLogLine("warn", null,
+            `[executeTest] Success-path screenshot capture failed for step ${stepIndex}: ${shotErr.message}`));
+        }
 
         // DIF-001: Diff the final screenshot against the test's baseline
         // (stepNumber 0 is reserved for the end-of-test capture).
-        try {
-          result.visualDiff = diffScreenshot({
-            runId,
-            testId: test.id,
-            browser: browserName,
-            stepNumber: 0,
-            pngBuffer: Buffer.from(shot.base64, "base64"),
-          });
-        } catch { /* visual diff is best-effort */ }
+        if (shot) {
+          try {
+            result.visualDiff = await diffScreenshot({
+              runId,
+              testId: test.id,
+              browser: browserName,
+              stepNumber: 0,
+              pngBuffer: Buffer.from(shot.base64, "base64"),
+            });
+          } catch { /* visual diff is best-effort */ }
+        }
 
-        result.boundingBoxes = await captureBoundingBoxes(page);
+        try {
+          result.boundingBoxes = await captureBoundingBoxes(page);
+        } catch { /* bounding-box capture is best-effort */ }
       }
     })();
 
@@ -486,8 +502,30 @@ export async function executeTest(test, browser, runId, stepIndex, runStart, opt
           const src = path.join(testVideoDir, files[0]);
           const videoName = `${runId}-step${stepIndex}.webm`;
           const dst = path.join(VIDEOS_DIR, videoName);
-          fs.renameSync(src, dst);
-          result.videoPath = `/artifacts/videos/${videoName}`;
+          // writeArtifactBuffer always persists to local disk first
+          // (objectStorage.js:62-63), so if the optional S3 upload fails
+          // the artifact is still available via the local path. Mirror the
+          // trace handling pattern in testRunner.js: swallow upload errors
+          // here so cleanup and videoPath assignment still run.
+          try {
+            await writeArtifactBuffer({
+              artifactPath: `/artifacts/videos/${videoName}`,
+              absolutePath: dst,
+              buffer: fs.readFileSync(src),
+              contentType: "video/webm",
+            });
+          } catch (uploadErr) {
+            // If writeArtifactBuffer threw before the local write completed,
+            // dst won't exist — preserve src by renaming it as a last-resort
+            // fallback so we don't lose the only copy of the video.
+            if (!fs.existsSync(dst)) {
+              try { fs.renameSync(src, dst); } catch { /* ignore */ }
+            }
+            console.warn(formatLogLine("warn", null,
+              `[executeTest] S3 video upload failed for step ${stepIndex}, falling back to local path: ${uploadErr.message}`));
+          }
+          if (fs.existsSync(src)) fs.unlinkSync(src);
+          if (fs.existsSync(dst)) result.videoPath = `/artifacts/videos/${videoName}`;
         }
         fs.rmSync(testVideoDir, { recursive: true, force: true });
       } catch (videoErr) {

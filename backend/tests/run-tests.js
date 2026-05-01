@@ -10,6 +10,8 @@ const files = [
   "tests/self-healing.test.js",
   "tests/pipeline.test.js",
   "tests/api-flow.test.js",
+  "tests/project-edit.test.js",
+  "tests/auto-login.test.js",
   "tests/integration-routes.test.js",
   "tests/auth-cookies.test.js",
   "tests/utils.test.js",
@@ -23,6 +25,8 @@ const files = [
   "tests/feedback-loop.test.js",
   "tests/pipeline-orchestrator.test.js",
   "tests/chat-window.test.js",
+  "tests/test-edit-prompt.test.js",
+  "tests/test-edit-chat.test.js",
   "tests/password-reset-token.test.js",
   "tests/security-hardening.test.js",
   "tests/artifact-signing.test.js",
@@ -58,6 +62,11 @@ const files = [
   "tests/test-retry.test.js",
   "tests/telemetry.test.js",
   "tests/network-conditions.test.js",
+  "tests/accessibility-migration.test.js",
+  "tests/accessibility-repo.test.js",
+  "tests/object-storage.test.js",
+  "tests/ephemeral-storage-warning.test.js",
+  "tests/quality-gates.test.js",
 ];
 
 let passed = 0;

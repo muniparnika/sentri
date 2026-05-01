@@ -124,6 +124,12 @@ export const api = {
   getProjects:   ()     => req("GET",  "/projects"),
   /** @param {string} id - Project ID (e.g. `"PRJ-1"`). */
   getProject:    (id)   => req("GET",  `/projects/${id}`),
+  /**
+   * Update a project's name, URL, and/or credentials.
+   * @param {string} id   - Project ID.
+   * @param {Object} data - `{ name, url, credentials? }`.
+   */
+  updateProject: (id, data) => req("PATCH", `/projects/${id}`, data),
   /** @param {string} id - Deletes project and all its tests, runs, and history. */
   deleteProject: (id)   => req("DELETE", `/projects/${id}`),
 
@@ -325,6 +331,30 @@ export const api = {
    * @param {string} tokenId
    */
   deleteTriggerToken: (projectId, tokenId) => req("DELETE", `/projects/${projectId}/trigger-tokens/${tokenId}`),
+
+  // ── Quality Gates (AUTO-012) ────────────────────────────────────────────────
+  /**
+   * Get the quality-gate config for a project, or null if unconfigured.
+   * Viewer+ can read.
+   * @param {string} projectId
+   * @returns {Promise<{qualityGates: {minPassRate?: number, maxFlakyPct?: number, maxFailures?: number} | null}>}
+   */
+  getQualityGates: (projectId) => req("GET", `/projects/${projectId}/quality-gates`),
+  /**
+   * Create or update the quality-gate config (qa_lead+).
+   * Server validates ranges (`minPassRate`/`maxFlakyPct` ∈ [0,100], `maxFailures` ≥ 0 integer).
+   * @param {string} projectId
+   * @param {{minPassRate?: number, maxFlakyPct?: number, maxFailures?: number}} gates
+   * @returns {Promise<{qualityGates: Object|null}>}
+   */
+  updateQualityGates: (projectId, gates) =>
+    req("PATCH", `/projects/${projectId}/quality-gates`, { qualityGates: gates }),
+  /**
+   * Clear the quality-gate config (qa_lead+) — runs will report `gateResult: null`.
+   * @param {string} projectId
+   * @returns {Promise<{ok: boolean, qualityGates: null}>}
+   */
+  deleteQualityGates: (projectId) => req("DELETE", `/projects/${projectId}/quality-gates`),
 
   // ── Notifications (FEA-001) ──────────────────────────────────────────────────
   /**
@@ -703,14 +733,14 @@ export const api = {
    * @param   {AbortSignal}            [signal] - Optional abort signal to cancel the stream.
    * @returns {Promise<void>}
    */
-  chat: async (messages, onToken, onError, signal) => {
+  chat: async (messages, onToken, onError, signal, context = null) => {
     const res = await fetch(`${BASE}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-CSRF-Token": getCsrfToken(),
       },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, context }),
       credentials: "include",
       signal,
     });

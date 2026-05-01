@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Map, List } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import SiteGraph from "./SiteGraph.jsx";
+import AccessibilityViolationsPanel from "./AccessibilityViolationsPanel.jsx";
 import useLogBuffer from "../../hooks/useLogBuffer.js";
 import PipelineCard from "../run/PipelineCard.jsx";
 import GenerationSuccessBanner from "../generate/GenerationSuccessBanner.jsx";
@@ -195,6 +196,7 @@ export default function CrawlView({ run, isRunning }) {
                     + Generate test
                   </button>
                 </div>
+                <AccessibilityViolationsPanel violations={selectedPage.accessibilityViolations} />
               </div>
             )}
           </div>

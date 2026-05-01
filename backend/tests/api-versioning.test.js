@@ -1,11 +1,12 @@
 /**
  * @module tests/api-versioning
- * @description Integration tests for INF-005 API versioning and DIF-011 testsByUrl.
+ * @description Integration tests for INF-005 API versioning, DIF-011 testsByUrl, and AUTO-016b dashboard rollups.
  *
  * Verifies:
  * - Legacy /api/* paths are 308-redirected to /api/v1/*
  * - Versioned /api/v1/* endpoints respond correctly
  * - Dashboard response includes testsByUrl (DIF-011)
+ * - Dashboard response includes topAccessibilityOffenders (AUTO-016b)
  */
 
 import assert from "node:assert/strict";
@@ -98,6 +99,63 @@ async function main() {
       const out = await req(base, "/api/v1/dashboard", { token });
       assert.equal(out.res.status, 200);
       assert.deepEqual(out.json.testsByUrl, {}, "testsByUrl should be empty with no approved tests");
+    });
+
+    console.log("\n🧪 AUTO-016b: topAccessibilityOffenders in dashboard response");
+
+    await test("dashboard response includes topAccessibilityOffenders array", async () => {
+      const out = await req(base, "/api/v1/dashboard", { token });
+      assert.equal(out.res.status, 200);
+      assert.ok("topAccessibilityOffenders" in out.json, "Expected topAccessibilityOffenders key in dashboard response");
+      assert.equal(Array.isArray(out.json.topAccessibilityOffenders), true, "topAccessibilityOffenders should be an array");
+    });
+
+    await test("topAccessibilityOffenders aggregates per project, sorts desc, caps at 5", async () => {
+      // Register a fresh user and seed data in their workspace so the dashboard
+      // (scoped by req.workspaceId) returns the seeded offenders.
+      const seeder = await t.registerAndLogin(base, {
+        name: "Offender Seeder",
+        email: `offender-${Date.now()}@test.local`,
+        password: "Password123!",
+      });
+      const workspaceId = seeder.payload.workspaceId;
+      assert.ok(workspaceId, "test user should have a workspaceId in JWT");
+
+      const db = t.getDatabase();
+      const accessibilityViolationRepo = await import(
+        "../src/database/repositories/accessibilityViolationRepo.js"
+      );
+
+      // Seed 6 projects with descending violation counts to exercise both
+      // the desc sort and the slice(0, 5) cap.
+      const now = new Date().toISOString();
+      const counts = [60, 50, 40, 30, 20, 10];
+      for (let i = 0; i < counts.length; i++) {
+        const projectId = `PRJ-A11Y-${i}`;
+        const runId = `RUN-A11Y-${i}`;
+        db.prepare(
+          "INSERT INTO projects (id, name, url, createdAt, status, workspaceId) VALUES (?, ?, ?, ?, 'idle', ?)"
+        ).run(projectId, `A11y Project ${i}`, "https://example.com", now, workspaceId);
+        db.prepare(
+          "INSERT INTO runs (id, projectId, type, status, startedAt, workspaceId) VALUES (?, ?, 'crawl', 'completed', ?, ?)"
+        ).run(runId, projectId, now, workspaceId);
+        const rows = Array.from({ length: counts[i] }, (_, k) => ({
+          runId, pageUrl: "https://example.com", ruleId: `rule-${k}`,
+          impact: "minor", wcagCriterion: null, help: "", description: "", nodesJson: "[]",
+        }));
+        accessibilityViolationRepo.bulkCreate(rows);
+      }
+
+      const out = await req(base, "/api/v1/dashboard", { token: seeder.token });
+      assert.equal(out.res.status, 200);
+      const list = out.json.topAccessibilityOffenders;
+      assert.equal(list.length, 5, "should be capped at 5 entries");
+      assert.deepEqual(
+        list.map((o) => o.violations),
+        [60, 50, 40, 30, 20],
+        "should be sorted by violation count descending",
+      );
+      assert.equal(list[0].projectName, "A11y Project 0");
     });
 
   } finally {
