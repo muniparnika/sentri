@@ -379,7 +379,7 @@ export default function NewProject() {
               <div className="np-auth-hint">
                 <ShieldCheck size={14} className="np-auth-hint__icon" />
                 <span>
-                  Sentri detects login form fields automatically — just enter your test credentials.
+                  Login form fields are detected automatically — just enter your test credentials.
                 </span>
               </div>
 
