@@ -236,29 +236,76 @@ export default function NewProject() {
           </div>
         </div>
 
-        {/* Step pills */}
-        {!isEdit && (
-          <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
-            {["Application details", "Auth (optional)", "Create"].map((s, i) => (
-              <div key={s} style={{
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "4px 12px", borderRadius: 999,
-                background: i === 0 ? "var(--accent-bg)" : "var(--bg2)",
-                border: `1px solid ${i === 0 ? "var(--accent)" : "var(--border)"}`,
-                fontSize: "0.72rem", fontWeight: 500,
-                color: i === 0 ? "var(--accent)" : "var(--text3)",
-              }}>
-                <span style={{
-                  width: 16, height: 16, borderRadius: "50%", display: "inline-flex",
-                  alignItems: "center", justifyContent: "center", fontSize: "0.65rem",
-                  background: i === 0 ? "var(--accent)" : "var(--bg3)", color: i === 0 ? "#fff" : "var(--text3)",
-                  fontWeight: 700,
-                }}>{i + 1}</span>
-                {s}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Step pills — derived from form state, not hardcoded.
+            Step 1 (Application details) is complete when name + a valid URL
+            are present. Step 2 (Auth) is complete when the user has either
+            opted out (hasAuth=false) or filled in all auth fields.
+            Step 3 (Create) is active once both prior steps complete. */}
+        {!isEdit && (() => {
+          let urlValid = false;
+          if (form.url.trim()) {
+            try {
+              const parsed = new URL(form.url.trim());
+              urlValid = ["http:", "https:"].includes(parsed.protocol);
+            } catch { /* invalid URL */ }
+          }
+          const step1Complete = Boolean(form.name.trim()) && urlValid;
+          const authFieldsFilled = form.hasAuth
+            && form.usernameSelector.trim()
+            && form.passwordSelector.trim()
+            && form.submitSelector.trim()
+            && form.username.trim()
+            && form.password.trim();
+          // hasAuth=false counts as "complete" — auth is genuinely optional.
+          const step2Complete = !form.hasAuth || Boolean(authFieldsFilled);
+          const stepStates = [
+            step1Complete ? "complete" : "active",
+            step1Complete ? (step2Complete ? "complete" : "active") : "pending",
+            step1Complete && step2Complete ? "active" : "pending",
+          ];
+          const styles = {
+            complete: {
+              bg: "var(--green-bg)", border: "var(--green)", text: "var(--green)",
+              numBg: "var(--green)", numFg: "#fff",
+            },
+            active: {
+              bg: "var(--accent-bg)", border: "var(--accent)", text: "var(--accent)",
+              numBg: "var(--accent)", numFg: "#fff",
+            },
+            pending: {
+              bg: "var(--bg2)", border: "var(--border)", text: "var(--text3)",
+              numBg: "var(--bg3)", numFg: "var(--text3)",
+            },
+          };
+          return (
+            <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
+              {["Application details", "Auth (optional)", "Create"].map((s, i) => {
+                const state = stepStates[i];
+                const c = styles[state];
+                return (
+                  <div key={s} style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "4px 12px", borderRadius: 999,
+                    background: c.bg,
+                    border: `1px solid ${c.border}`,
+                    fontSize: "0.72rem", fontWeight: 500,
+                    color: c.text,
+                    transition: "all 0.15s",
+                  }}>
+                    <span style={{
+                      width: 16, height: 16, borderRadius: "50%", display: "inline-flex",
+                      alignItems: "center", justifyContent: "center", fontSize: "0.65rem",
+                      background: c.numBg, color: c.numFg, fontWeight: 700,
+                    }}>
+                      {state === "complete" ? <CheckCircle2 size={11} /> : i + 1}
+                    </span>
+                    {s}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 16 }}>
