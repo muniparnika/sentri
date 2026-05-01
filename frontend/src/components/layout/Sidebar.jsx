@@ -226,27 +226,12 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
         overflowX: "hidden",
       }}
     >
-      {/* ── Logo + collapse toggle ── */}
+      {/* ── Logo ── */}
       <div style={{
         padding: "18px 16px 16px", borderBottom: "1px solid var(--border)",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        display: "flex", alignItems: "center",
       }}>
         <AppLogo size={28} variant="full" />
-        <button
-          onClick={() => onToggleCollapsed?.()}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 26, height: 26, borderRadius: "var(--radius)",
-            border: "none", background: "transparent", color: "var(--text3)",
-            cursor: "pointer", flexShrink: 0, transition: "background 0.12s",
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-        >
-          <PanelLeftClose size={15} />
-        </button>
       </div>
 
       {/* ── Workspace Switcher ── */}
@@ -381,9 +366,14 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
         ))}
       </nav>
 
-      {/* ── Settings footer (admin only) ── */}
-      {isAdmin && (
-        <div style={{ padding: "10px 10px 14px", borderTop: "1px solid var(--border)" }}>
+      {/* ── Footer: Settings (admin only) + collapse toggle ── */}
+      {/* Always rendered so the collapse toggle has a consistent home —
+          mirrors the collapsed-rail footer where the expand toggle lives. */}
+      <div style={{
+        padding: "8px 10px 12px", borderTop: "1px solid var(--border)",
+        display: "flex", flexDirection: "column", gap: 2,
+      }}>
+        {isAdmin && (
           <NavLink
             to="/settings"
             className="nav-link"
@@ -400,8 +390,26 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
             <Settings size={15} strokeWidth={1.8} />
             <span>Settings</span>
           </NavLink>
-        </div>
-      )}
+        )}
+        <button
+          onClick={() => onToggleCollapsed?.()}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+          style={{
+            display: "flex", alignItems: "center", gap: 9,
+            padding: "7px 10px", borderRadius: "var(--radius)",
+            border: "none", background: "transparent",
+            color: "var(--text2)", fontSize: "0.86rem", fontWeight: 400,
+            cursor: "pointer", textAlign: "left", width: "100%",
+            transition: "background 0.12s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <PanelLeftClose size={15} strokeWidth={1.8} />
+          <span>Collapse</span>
+        </button>
+      </div>
     </aside>
   );
 }
