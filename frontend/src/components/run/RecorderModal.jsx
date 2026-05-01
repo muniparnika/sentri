@@ -1,25 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api.js";
 import { API_PATH } from "../../utils/apiBase.js";
 import { useSseStream } from "../../hooks/useSseStream.js";
 import LiveBrowserView from "./LiveBrowserView.jsx";
 
-/**
- * RecorderModal — DIF-015 interactive browser recorder.
- *
- * Opens a server-side Playwright browser at the target URL, subscribes to the
- * CDP screencast SSE channel for live frames, polls for the growing action
- * list, and on "Stop & Save" persists the capture as a Draft Playwright test.
- *
- * Props:
- *   open          — boolean
- *   onClose       — () => void, called after close regardless of outcome
- *   onSaved       — (test) => void, called with the created Draft test row
- *   projectId     — string
- *   defaultUrl    — string, pre-populated into the start-URL input
- */
 export default function RecorderModal({ open, onClose, onSaved, projectId, defaultUrl = "" }) {
-  const [phase, setPhase] = useState("idle"); // idle | starting | recording | stopping | error
+  const [phase, setPhase] = useState("idle");
   const [startUrl, setStartUrl] = useState(defaultUrl);
   const [sessionId, setSessionId] = useState(null);
   const [actions, setActions] = useState([]);
@@ -30,62 +17,33 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   const [assertValue, setAssertValue] = useState("");
   const [assertLabel, setAssertLabel] = useState("");
   const [error, setError] = useState(null);
-  // Server-reported viewport so forwarded pointer coords scale correctly on
-  // deployments that override the default 1280x720. Defaults match the
-  // runner's defaults until `recordStart` returns the actual values.
   const [viewport, setViewport] = useState({ width: 1280, height: 720 });
   const pollRef = useRef(null);
-  // Refs mirror sessionId + projectId so the unmount cleanup sees the latest
-  // values. An empty-deps cleanup closure would otherwise capture the initial
-  // `sessionId = null` and never call `recordDiscard`, leaking the server-side
-  // Chromium process when the user navigates away mid-recording.
   const sessionIdRef = useRef(null);
   const projectIdRef = useRef(projectId);
-  // Throttle mouseMoved events — sending at 60fps would flood the server.
-  // We cap forwarded move events to ~30fps (every 33ms) which is smooth
-  // enough for hover effects without overwhelming the SSE/HTTP channel.
   const lastMoveRef = useRef(0);
 
-  // Forward a canvas input event to the recorder browser via the API.
-  // mouseMoved events are throttled; all others (click, key, scroll) go
-  // through immediately so they feel instantaneous.
   const handleInput = useCallback((event) => {
     const sid = sessionIdRef.current;
     const pid = projectIdRef.current;
     if (!sid || !pid) return;
-
     if (event.type === "mouseMoved") {
       const now = Date.now();
-      if (now - lastMoveRef.current < 33) return; // ~30fps cap
+      if (now - lastMoveRef.current < 33) return;
       lastMoveRef.current = now;
     }
-
-    // Fire-and-forget — input forwarding errors are transient (page
-    // navigating, session ending) and must never block the UI or show
-    // error banners that interrupt recording flow.
     api.recordInput(pid, sid, event).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    setStartUrl(defaultUrl);
-  }, [defaultUrl]);
-
+  useEffect(() => { setStartUrl(defaultUrl); }, [defaultUrl]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
 
-  // Subscribe to the SSE screencast channel via the shared `useSseStream`
-  // primitive. The hook handles connection lifecycle, JSON parsing, and
-  // teardown — we only need to dispatch by `event.type`. This replaces the
-  // earlier hand-rolled `EventSource` + `addEventListener("frame", …)` setup
-  // that silently swallowed every frame because the backend emits generic
-  // `data:` lines, not named events. See useSseStream.js module preamble.
   const sseUrl = sessionId ? `${API_PATH}/runs/${sessionId}/events` : null;
   useSseStream(sseUrl, useCallback((event) => {
     if (event?.type === "frame" && event.data) setFrames([event.data]);
   }, []), Boolean(sessionId));
 
-  // Clean up polling AND server-side recording session on unmount.
-  // SSE teardown is owned by useSseStream's effect cleanup.
   useEffect(() => {
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -104,19 +62,12 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
       setError("Enter a valid http(s) URL to record from.");
       return;
     }
-    // If a previous handleStopAndSave failed, `sessionId` still points at a
-    // live server-side Chromium process. Fire a best-effort discard before
-    // launching a new session so clicking "Launch recorder" a second time
-    // doesn't orphan the previous browser until MAX_RECORDING_MS fires.
     const stale = sessionIdRef.current;
     if (stale) {
-      const staleProject = projectIdRef.current || projectId;
-      api.recordDiscard(staleProject, stale).catch(() => {});
+      api.recordDiscard(projectIdRef.current || projectId, stale).catch(() => {});
       sessionIdRef.current = null;
       setSessionId(null);
     }
-    // Also tear down any still-running SSE / poller from the previous
-    // attempt before they race with the new session's streams.
     teardownStreams();
     setPhase("starting");
     try {
@@ -124,22 +75,12 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
       setSessionId(sid);
       if (vp && vp.width > 0 && vp.height > 0) setViewport({ width: vp.width, height: vp.height });
       setPhase("recording");
-
-      // SSE subscription is owned by the `useSseStream` hook above — setting
-      // `sessionId` flips its `enabled` predicate and opens the connection
-      // automatically. No manual EventSource bookkeeping here.
-
-      // Poll for the captured actions so the sidebar updates as the user clicks.
       pollRef.current = setInterval(async () => {
         try {
           const status = await api.recordStatus(projectId, sid);
           setActions(status.actions || []);
         } catch (e) {
-          if (e.status === 404) {
-            // Session ended server-side — stop polling.
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          if (e.status === 404) { clearInterval(pollRef.current); pollRef.current = null; }
         }
       }, 1200);
     } catch (e) {
@@ -157,8 +98,6 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
         name: name.trim() || `Recorded flow @ ${new Date().toISOString()}`,
       });
       teardownStreams();
-      // Clear the ref so the unmount cleanup doesn't fire a redundant
-      // recordDiscard for a session we've already stopped.
       sessionIdRef.current = null;
       setSessionId(null);
       onSaved?.(result.test);
@@ -172,12 +111,10 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   async function handleAddAssertion() {
     if (!sessionId) return;
     if (assertKind !== "assertUrl" && !assertSelector.trim()) {
-      setError("Selector is required for this verification.");
-      return;
+      setError("Selector is required for this verification."); return;
     }
     if ((assertKind === "assertText" || assertKind === "assertValue" || assertKind === "assertUrl") && !assertValue.trim()) {
-      setError("Value is required for this verification.");
-      return;
+      setError("Value is required for this verification."); return;
     }
     setError(null);
     try {
@@ -194,22 +131,12 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   }
 
   function teardownStreams() {
-    // SSE teardown is automatic — clearing `sessionId` flips useSseStream's
-    // `enabled` flag and the hook's effect cleanup closes the EventSource.
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }
 
   function handleCancel() {
-    // If a session was started, tear down the browser server-side via the
-    // dedicated discard path. `recordDiscard` tells the stop endpoint not to
-    // persist a Draft test, so an abandoned recording does not leave junk
-    // rows in the DB. Best-effort — any error is swallowed.
-    if (sessionId) {
-      api.recordDiscard(projectId, sessionId).catch(() => {});
-    }
+    if (sessionId) api.recordDiscard(projectId, sessionId).catch(() => {});
     teardownStreams();
-    // Clear the ref immediately so the unmount cleanup doesn't fire a second
-    // discard for the same session we just tore down.
     sessionIdRef.current = null;
     setPhase("idle");
     setSessionId(null);
@@ -218,61 +145,164 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
 
   if (!open) return null;
 
-  return (
-    <div className="modal-backdrop" onClick={handleCancel}>
-      <div
-        className="modal-panel"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: 980, width: "95vw", padding: 0, display: "flex", flexDirection: "column", maxHeight: "90vh" }}
-      >
-        {/* Header */}
-        <div style={{
-          padding: "14px 20px", borderBottom: "1px solid var(--border)",
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
-          <span style={{ fontSize: 20 }}>🎥</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>Record a test</div>
-            <div style={{ fontSize: "0.74rem", color: "var(--text3)" }}>
-              Interact with the app in the live browser — every click, fill, and navigation is captured as a Playwright step.
-            </div>
-          </div>
-          <button className="modal-close" onClick={handleCancel} aria-label="Close">×</button>
-        </div>
+  const isIdle = phase === "idle" || phase === "error" || phase === "starting";
 
-        {/* Body */}
-        <div style={{ padding: 20, display: "grid", gridTemplateColumns: "1fr 300px", gap: 16, overflow: "auto" }}>
-          {/* Left — live browser */}
-          <div>
-            {phase === "idle" || phase === "error" ? (
+  return createPortal(
+    <div style={{
+      position: "fixed",
+      top: 0, left: 0, right: 0, bottom: 0,
+      width: "100vw", height: "100vh",
+      zIndex: 99999,
+      background: "var(--bg)",
+      display: "flex",
+      flexDirection: "column",
+      overflow: "hidden",
+      cursor: "default",
+    }}>
+
+      {/* ── Top bar ── */}
+      <div style={{
+        height: 52,
+        borderBottom: "1px solid var(--border)",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "0 20px",
+        flexShrink: 0,
+        background: "var(--bg)",
+      }}>
+        <span style={{ fontSize: 20 }}>🎥</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.2 }}>Record a test</div>
+          <div style={{ fontSize: "0.74rem", color: "var(--text3)" }}>
+            Interact with the app in the live browser — every click, fill, and navigation is captured as a Playwright step.
+          </div>
+        </div>
+        <button
+          onClick={handleCancel}
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: "6px 14px", borderRadius: 6,
+            border: "1px solid var(--border)", background: "var(--bg2)",
+            color: "var(--text)", fontSize: "0.82rem", fontWeight: 600,
+            cursor: "pointer", whiteSpace: "nowrap",
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          {phase === "recording" || phase === "stopping" ? "Discard & Exit" : "Exit"}
+        </button>
+      </div>
+
+      {/* ── IDLE: clean centred form, no repeated title ── */}
+      {isIdle && (
+        <div style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "auto",
+          background: "var(--bg)",
+        }}>
+          <div style={{ width: 560 }}>
+
+            {/* Section title */}
+            <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text)", marginBottom: 20 }}>
+              New recording
+            </div>
+
+            {/* Two fields stacked, each with its own label */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
+
+              {/* Test name */}
               <div>
-                <label className="text-sm font-semi" style={{ display: "block", marginBottom: 6 }}>Start URL</label>
+                <label style={{
+                  display: "block", fontSize: "0.82rem", fontWeight: 600,
+                  color: "var(--text)", marginBottom: 6,
+                }}>
+                  Test name
+                </label>
+                <input
+                  className="input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Login happy path"
+                  style={{ width: "100%", fontSize: "0.9rem" }}
+                />
+              </div>
+
+              {/* Starting URL */}
+              <div>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  fontSize: "0.82rem", fontWeight: 600,
+                  color: "var(--text)", marginBottom: 6,
+                }}>
+                  Starting URL
+                  <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>*</span>
+                </label>
                 <input
                   className="input"
                   value={startUrl}
                   onChange={(e) => setStartUrl(e.target.value)}
                   placeholder="https://example.com"
-                  style={{ width: "100%", marginBottom: 12 }}
+                  style={{ width: "100%", fontSize: "0.9rem" }}
+                  onKeyDown={(e) => e.key === "Enter" && handleStart()}
+                  autoFocus
                 />
-                <button className="btn btn-primary" onClick={handleStart}>
-                  Launch recorder
-                </button>
-                {error && (
-                  <div className="banner banner-error" style={{ marginTop: 12 }}>{error}</div>
-                )}
               </div>
-            ) : (
-              <LiveBrowserView
-                frames={frames}
-                label={sessionId || ""}
-                onInput={handleInput}
-                viewportW={viewport.width}
-                viewportH={viewport.height}
-              />
+            </div>
+
+            {error && (
+              <div className="banner banner-error" style={{ marginBottom: 16 }}>{error}</div>
             )}
+
+            {/* Divider */}
+            <div style={{ borderTop: "1px solid var(--border)", marginBottom: 20 }} />
+
+            {/* Actions */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={handleCancel}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleStart}
+                disabled={phase === "starting"}
+                style={{ minWidth: 148 }}
+              >
+                {phase === "starting" ? "Launching…" : "Launch recorder"}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ── RECORDING: two-column grid ── */}
+      {!isIdle && (
+        <div style={{
+          flex: 1,
+          overflow: "auto",
+          padding: 20,
+          display: "grid",
+          gridTemplateColumns: "1fr 300px",
+          gap: 16,
+          cursor: "default",
+        }}>
+          <div>
+            <LiveBrowserView
+              frames={frames}
+              label={sessionId || ""}
+              onInput={handleInput}
+              viewportW={viewport.width}
+              viewportH={viewport.height}
+            />
           </div>
 
-          {/* Right — captured actions */}
           <div style={{ display: "flex", flexDirection: "column", minHeight: 300 }}>
             <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
               Captured steps ({actions.length})
@@ -313,7 +343,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
                     className="input"
                     value={assertSelector}
                     onChange={(e) => setAssertSelector(e.target.value)}
-                    placeholder="selector (e.g. role=button[name=&quot;Checkout&quot;])"
+                    placeholder='selector (e.g. role=button[name="Checkout"])'
                     style={{ width: "100%", marginBottom: 6 }}
                   />
                 )}
@@ -356,17 +386,8 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
             )}
           </div>
         </div>
+      )}
 
-        {/* Footer */}
-        <div style={{
-          padding: "10px 20px", borderTop: "1px solid var(--border)",
-          display: "flex", justifyContent: "flex-end", gap: 8,
-        }}>
-          <button className="btn btn-ghost" onClick={handleCancel}>
-            {phase === "recording" ? "Discard" : "Close"}
-          </button>
-        </div>
-      </div>
     </div>
-  );
+  , document.body);
 }
