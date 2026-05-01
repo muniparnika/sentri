@@ -27,9 +27,9 @@ import TablePagination, { PAGE_SIZE } from "../components/shared/TablePagination
 
 function RunIcon({ status }) {
   if (status === "passed" || status === "completed")
-    return <span style={{ color: "var(--green)", fontSize: 16 }}>✓</span>;
+    return <span className="td-run-glyph td-run-glyph--pass">✓</span>;
   if (status === "failed")
-    return <span style={{ color: "var(--red)", fontSize: 16 }}>✗</span>;
+    return <span className="td-run-glyph td-run-glyph--fail">✗</span>;
   if (status === "running")
     return <RefreshCw size={14} color="var(--blue)" className="spin" />;
   return <Clock size={14} color="var(--text3)" />;
@@ -240,15 +240,17 @@ export default function TestDetail() {
   }
 
   if (loading) return (
-    <div style={{ maxWidth: 980, margin: "0 auto", padding: "0 4px" }}>
+    <div className="td-page td-page--padded">
       {[48, 200, 200].map((h, i) => (
-        <div key={i} className="skeleton" style={{ height: h, borderRadius: 12, marginBottom: 16 }} />
+        // Heights vary per skeleton row → keep the height inline; the rest
+        // (border-radius, margin) lives in `.td-skeleton`.
+        <div key={i} className="skeleton td-skeleton" style={{ height: h }} />
       ))}
     </div>
   );
 
   if (!test) return (
-    <div style={{ padding: 60, textAlign: "center", color: "var(--text2)" }}>
+    <div className="td-page--not-found">
       Test not found.{" "}
       <button className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>Go back</button>
     </div>
@@ -261,7 +263,7 @@ export default function TestDetail() {
   const showFixBtn = isFailed && test.playwrightCode && !showFixPanel;
 
   return (
-    <div className="fade-in" style={{ maxWidth: 980, margin: "0 auto" }}>
+    <div className="fade-in td-page">
 
       {/* ── Breadcrumb + toolbar ── */}
       <div className="td-toolbar">
@@ -282,7 +284,7 @@ export default function TestDetail() {
             </button>
           )}
           <ChevronRight size={13} />
-          <span style={{ color: "var(--text)" }}>Test Details</span>
+          <span className="td-breadcrumb-current">Test Details</span>
         </div>
 
         {/* ── Action buttons ── */}
@@ -351,9 +353,9 @@ export default function TestDetail() {
 
       {/* ── Page title ── */}
       {editing ? (
-        <div style={{ marginBottom: 24 }}>
+        <div className="td-title-edit">
           <input
-            className={`input td-title-input`}
+            className="input td-title-input"
             value={editName}
             onChange={e => setEditName(e.target.value)}
             placeholder="Test name"
@@ -368,8 +370,8 @@ export default function TestDetail() {
       {/* ── Regen warning ── */}
       {regenWarning && (
         <div className="td-regen-warning">
-          <span style={{ flexShrink: 0 }}>⚠</span>
-          <span style={{ flex: 1 }}>{regenWarning}</span>
+          <span className="td-regen-icon">⚠</span>
+          <span className="td-regen-message">{regenWarning}</span>
           <button className="td-regen-warning-close" onClick={() => setRegenWarning(null)}>
             <X size={14} />
           </button>
@@ -390,12 +392,11 @@ export default function TestDetail() {
             </div>
             {editing ? (
               <textarea
-                className="input"
+                className="input td-desc-textarea"
                 value={editDesc}
                 onChange={e => setEditDesc(e.target.value)}
                 placeholder="Describe what this test verifies…"
                 rows={3}
-                style={{ fontSize: "0.875rem", lineHeight: 1.7, resize: "vertical" }}
               />
             ) : (
               <p className="td-desc-text">
@@ -416,7 +417,7 @@ export default function TestDetail() {
 
             <div className="td-steps-header">
               <div className="td-card-icon"><CheckCircle2 size={14} color="var(--text2)" /></div>
-              <h2 className="td-card-title" style={{ flex: 1 }}>Test Steps</h2>
+              <h2 className="td-card-title td-card-title--flex">Test Steps</h2>
 
               {/* Steps / Source tab toggle */}
               {test.playwrightCode && (
@@ -481,10 +482,9 @@ export default function TestDetail() {
                     <div key={idx} className="td-step-editor-row">
                       <div className="td-step-num-edit">{idx + 1}</div>
                       <input
-                        className="input"
+                        className="input td-step-edit-input"
                         value={step}
                         onChange={e => updateEditStep(idx, e.target.value)}
-                        style={{ flex: 1, height: 36, fontSize: "0.82rem" }}
                       />
                       <button className="td-step-remove-btn" onClick={() => removeEditStep(idx)} title="Remove step">
                         <X size={14} />
@@ -504,8 +504,8 @@ export default function TestDetail() {
                 return (
                   <div className="td-source-list">
                     {showDiff && test.playwrightCodePrev && (
-                      <div style={{ marginBottom: 16 }}>
-                        <Suspense fallback={<div style={{ height: 60, background: "var(--bg2)", borderRadius: 6 }} />}>
+                      <div className="td-diff-block">
+                        <Suspense fallback={<div className="td-diff-fallback" />}>
                           <DiffView before={test.playwrightCodePrev} after={test.playwrightCode} />
                         </Suspense>
                       </div>
@@ -536,9 +536,9 @@ export default function TestDetail() {
               ) : (
                 (() => {
                   const stepsDiffPanel = showDiff && prevSteps ? (
-                    <div style={{ marginBottom: 16 }}>
+                    <div className="td-diff-block">
                       <div className="td-diff-section-label">Steps changes</div>
-                      <Suspense fallback={<div style={{ height: 40, background: "var(--bg2)", borderRadius: 6 }} />}>
+                      <Suspense fallback={<div className="td-diff-fallback td-diff-fallback--sm" />}>
                         <DiffView
                           before={prevSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}
                           after={(test.steps || []).map((s, i) => `${i + 1}. ${s}`).join("\n")}
@@ -617,7 +617,7 @@ export default function TestDetail() {
 
           {/* AI Fix Panel */}
           {showFixPanel && test.playwrightCode && (
-            <Suspense fallback={<div style={{ height: 120, background: "var(--bg2)", borderRadius: 8, margin: "0 0 16px" }} />}>
+            <Suspense fallback={<div className="td-fix-panel-fallback" />}>
               <AiFixPanel
                 testId={testId}
                 originalCode={test.playwrightCode}
@@ -638,7 +638,8 @@ export default function TestDetail() {
                 { icon: "✎", color: "var(--text3)",  label: "Manual" },
               ].map((item, i) => (
                 <div key={i} className="td-runs-legend-item">
-                  <span style={{ color: item.color, fontSize: 13, fontWeight: 700 }}>{item.icon}</span>
+                  {/* Per-row colour stays inline because it differs per legend entry. */}
+                  <span className="td-runs-legend-icon" style={{ color: item.color }}>{item.icon}</span>
                   {item.label}
                 </div>
               ))}
@@ -647,13 +648,13 @@ export default function TestDetail() {
             {runs.length === 0 ? (
               <div className="td-runs-empty">
                 This test hasn't been run yet.{" "}
-                <button className="btn btn-ghost btn-xs" style={{ marginLeft: 4 }} onClick={handleRunTest} disabled={running}>
+                <button className="btn btn-ghost btn-xs td-runs-empty-run-btn" onClick={handleRunTest} disabled={running}>
                   <Play size={11} /> Run now
                 </button>
               </div>
             ) : (
               <>
-                <table className="table" style={{ marginTop: 0 }}>
+                <table className="table td-runs-table-inline">
                   <thead>
                     <tr>
                       <th>Date</th><th>Status</th><th>Duration</th><th>ACU Usage</th><th></th>
@@ -665,12 +666,12 @@ export default function TestDetail() {
                       const status = result?.status || run.status;
                       const duration = result?.durationMs;
                       return (
-                        <tr key={run.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/runs/${run.id}`)}>
+                        <tr key={run.id} className="td-runs-row" onClick={() => navigate(`/runs/${run.id}`)}>
                           <td><span className="td-info-text">{fmtDateTime(run.startedAt)}</span></td>
                           <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <div className="td-runs-status-cell">
                               <RunIcon status={status} />
-                              <span className="td-info-text" style={{ textTransform: "capitalize" }}>{status || "—"}</span>
+                              <span className="td-info-text td-runs-status-text">{status || "—"}</span>
                             </div>
                           </td>
                           <td><span className="td-info-text">{duration ? (duration < 1000 ? `${duration}ms` : `${(duration/1000).toFixed(1)}s`) : "—"}</span></td>
@@ -707,9 +708,8 @@ export default function TestDetail() {
             <InfoRow label="Quality score">
               <div className="td-quality-wrap">
                 <span
-                  className={`badge ${test.qualityScore >= 70 ? "badge-green" : test.qualityScore >= 40 ? "badge-amber" : "badge-red"}`}
+                  className={`badge td-quality-score ${test.qualityScore >= 70 ? "badge-green" : test.qualityScore >= 40 ? "badge-amber" : "badge-red"}`}
                   title="AI-computed quality score (0–100)"
-                  style={{ fontFamily: "var(--font-mono)", fontWeight: 700, minWidth: 32, justifyContent: "center" }}
                 >
                   {test.qualityScore}
                 </span>
@@ -743,14 +743,14 @@ export default function TestDetail() {
             <InfoRow label="Source URL">
               <a href={test.sourceUrl} target="_blank" rel="noreferrer" className="td-source-url-link">
                 {test.sourceUrl.replace(/^https?:\/\/[^/]+/, "") || "/"}
-                <ExternalLink size={10} style={{ marginLeft: 4, verticalAlign: "middle" }} />
+                <ExternalLink size={10} className="td-source-url-icon" />
               </a>
             </InfoRow>
           )}
 
           <InfoRow label="Priority">
             {editing ? (
-              <select className="input" value={editPriority} onChange={e => setEditPriority(e.target.value)} style={{ height: 32, fontSize: "0.82rem", width: "auto" }}>
+              <select className="input td-sidebar-select" value={editPriority} onChange={e => setEditPriority(e.target.value)}>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
@@ -770,7 +770,7 @@ export default function TestDetail() {
 
           {(test.isJourneyTest || test.scenario || isBddTest(test.steps)) && (
             <InfoRow label="Tags">
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              <div className="td-sidebar-tag-row">
                 <ScenarioBadges test={test} isBddTest={isBddTest} />
               </div>
             </InfoRow>
@@ -781,18 +781,17 @@ export default function TestDetail() {
             {editingIssueKey ? (
               <div className="td-inline-edit-row">
                 <input
-                  className="input"
+                  className="input td-inline-edit-input td-inline-edit-input--mono"
                   value={issueKeyDraft}
                   onChange={e => setIssueKeyDraft(e.target.value)}
                   placeholder="PROJ-123"
-                  style={{ height: 28, fontSize: "0.78rem", flex: 1, fontFamily: "var(--font-mono)" }}
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === "Enter") api.updateTest(testId, { linkedIssueKey: issueKeyDraft.trim() }).then(t => { setTest(t); setEditingIssueKey(false); });
                     if (e.key === "Escape") setEditingIssueKey(false);
                   }}
                 />
-                <button className="btn btn-xs" style={{ background: "var(--green-bg)", color: "var(--green)", border: "1px solid #86efac" }}
+                <button className="btn btn-xs td-inline-save-btn"
                   onClick={() => api.updateTest(testId, { linkedIssueKey: issueKeyDraft.trim() }).then(t => { setTest(t); setEditingIssueKey(false); })}>
                   <Save size={10} />
                 </button>
@@ -816,11 +815,10 @@ export default function TestDetail() {
             {editingTags ? (
               <div className="td-inline-edit-row">
                 <input
-                  className="input"
+                  className="input td-inline-edit-input"
                   value={tagsDraft}
                   onChange={e => setTagsDraft(e.target.value)}
                   placeholder="smoke, regression, login"
-                  style={{ height: 28, fontSize: "0.78rem", flex: 1 }}
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === "Enter") {
@@ -830,7 +828,7 @@ export default function TestDetail() {
                     if (e.key === "Escape") setEditingTags(false);
                   }}
                 />
-                <button className="btn btn-xs" style={{ background: "var(--green-bg)", color: "var(--green)", border: "1px solid #86efac" }}
+                <button className="btn btn-xs td-inline-save-btn"
                   onClick={() => {
                     const tags = tagsDraft.split(",").map(t => t.trim()).filter(Boolean);
                     api.updateTest(testId, { tags }).then(t => { setTest(t); setEditingTags(false); });
@@ -842,7 +840,7 @@ export default function TestDetail() {
             ) : (
               <div className="td-tags-row">
                 {(test.tags || []).length > 0
-                  ? test.tags.map((tag, i) => <span key={i} className="badge badge-gray" style={{ fontSize: "0.7rem" }}>{tag}</span>)
+                  ? test.tags.map((tag, i) => <span key={i} className="badge badge-gray td-sidebar-tag-badge">{tag}</span>)
                   : <span className="td-tags-empty">No tags</span>}
                 <button className="btn btn-ghost btn-xs td-edit-inline-btn"
                   onClick={() => { setTagsDraft((test.tags || []).join(", ")); setEditingTags(true); }}>

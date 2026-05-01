@@ -61,6 +61,8 @@
 
 .td-breadcrumb-btn:hover { color: var(--text); }
 
+.td-breadcrumb-current { color: var(--text); }
+
 /* ── Action button group: primary + dropdown trigger ────────────────────────── */
 /* Split-button: Run Test primary + caret for extra options */
 .td-run-group {
@@ -255,6 +257,7 @@
   font-size: 1rem;
   margin: 0;
 }
+.td-card-title--flex { flex: 1; }
 
 .td-desc-text {
   font-size: 0.875rem;
@@ -622,6 +625,12 @@
   gap: 4px;
   font-size: 0.73rem;
   color: var(--text3);
+}
+
+.td-runs-legend-icon {
+  font-size: 13px;
+  font-weight: 700;
+  /* color set inline — varies per legend entry. */
 }
 
 .td-runs-empty {
@@ -998,6 +1007,121 @@
   border: 1px solid #2a2d3e;
   color: #6b7394;
   font-family: var(--font-mono);
+}
+
+/* ── Page shell (loading + not-found + content wrapper) ────────────────────── */
+.td-page {
+  max-width: 980px;
+  margin: 0 auto;
+}
+.td-page--padded { padding: 0 4px; }
+.td-page--not-found {
+  padding: 60px;
+  text-align: center;
+  color: var(--text2);
+}
+
+/* ── RunIcon glyph variants (✓ / ✗ in run history) ─────────────────────────── */
+.td-run-glyph {
+  font-size: 16px;
+  font-weight: 700;
+}
+.td-run-glyph--pass { color: var(--green); }
+.td-run-glyph--fail { color: var(--red); }
+
+/* ── Edit-mode title input wrapper ─────────────────────────────────────────── */
+.td-title-edit { margin-bottom: 24px; }
+
+/* ── Description textarea (edit mode) ──────────────────────────────────────── */
+.td-desc-textarea {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+/* ── Step editor row input ─────────────────────────────────────────────────── */
+.td-step-edit-input {
+  flex: 1;
+  height: 36px;
+  font-size: 0.82rem;
+}
+
+/* ── Diff section spacing (Source view + Steps view) ───────────────────────── */
+.td-diff-block { margin-bottom: 16px; }
+.td-diff-fallback {
+  height: 60px;
+  background: var(--bg2);
+  border-radius: 6px;
+}
+.td-diff-fallback--sm { height: 40px; }
+
+/* ── Suspense fallback for AiFixPanel ──────────────────────────────────────── */
+.td-fix-panel-fallback {
+  height: 120px;
+  background: var(--bg2);
+  border-radius: 8px;
+  margin: 0 0 16px;
+}
+
+/* ── Recent runs table tweaks ──────────────────────────────────────────────── */
+.td-runs-table-inline { margin-top: 0; }
+.td-runs-row { cursor: pointer; }
+.td-runs-status-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.td-runs-status-text { text-transform: capitalize; }
+.td-runs-empty-run-btn { margin-left: 4px; }
+
+/* ── Sidebar — quality score badge ─────────────────────────────────────────── */
+.td-quality-score {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  min-width: 32px;
+  justify-content: center;
+}
+
+/* ── Sidebar — source URL external icon ────────────────────────────────────── */
+.td-source-url-icon {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ── Sidebar — priority + tag badge selects (edit mode) ────────────────────── */
+.td-sidebar-select {
+  height: 32px;
+  font-size: 0.82rem;
+  width: auto;
+}
+.td-sidebar-tag-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.td-sidebar-tag-badge { font-size: 0.7rem; }
+
+/* ── Sidebar — inline edit row inputs (issue key + tags) ──────────────────── */
+.td-inline-edit-input {
+  height: 28px;
+  font-size: 0.78rem;
+  flex: 1;
+}
+.td-inline-edit-input--mono { font-family: var(--font-mono); }
+.td-inline-save-btn {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid #86efac;
+}
+
+/* ── Regen warning row icons (small inline alignment) ─────────────────────── */
+.td-regen-icon { flex-shrink: 0; }
+.td-regen-message { flex: 1; }
+
+/* ── Skeleton blocks for loading state ─────────────────────────────────────── */
+.td-skeleton {
+  border-radius: 12px;
+  margin-bottom: 16px;
 }
 
 /* ── Responsive: 900px (icon-rail sidebar breakpoint) ───────────────────────── */
