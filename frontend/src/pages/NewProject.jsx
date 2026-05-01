@@ -171,10 +171,12 @@ export default function NewProject() {
   }
 
   const FieldError = ({ name }) => fieldErrors[name]
-    ? <div style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: 5, display: "flex", alignItems: "center", gap: 4 }}>
-        <span style={{ width: 12, height: 12, borderRadius: "50%", background: "var(--red)", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.6rem", flexShrink: 0, fontWeight: 700 }}>!</span>
+    ? (
+      <div className="np-field-error">
+        <span className="np-field-error__badge">!</span>
         {fieldErrors[name]}
       </div>
+    )
     : null;
 
   // Compare against the baseline (EMPTY_FORM in create mode, loaded project
@@ -189,38 +191,34 @@ export default function NewProject() {
 
   if (loadingEdit) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 10, color: "var(--text3)" }}>
+      <div className="np-loading">
         <Loader2 size={18} className="spin" />
-        <span style={{ fontSize: "0.9rem" }}>Loading project…</span>
+        <span className="np-loading__label">Loading project…</span>
       </div>
     );
   }
 
   return (
-    <div className="fade-in" style={{ maxWidth: 620, margin: "0 auto", paddingBottom: 48 }}>
+    <div className="np fade-in">
 
       {/* Back */}
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 28, gap: 6 }} onClick={handleBack}>
+      <button className="btn btn-ghost btn-sm np__back-btn" onClick={handleBack}>
         <ArrowLeft size={14} /> Back
       </button>
 
       {/* Header */}
-      <div style={{ marginBottom: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: 12,
-            background: "var(--accent-bg)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
+      <div className="np-header">
+        <div className="np-header__row">
+          <div className="np-header__icon-wrap">
             {isEdit
               ? <Pencil size={18} color="var(--accent)" />
               : <Globe size={18} color="var(--accent)" />}
           </div>
           <div>
-            <h1 style={{ fontWeight: 700, fontSize: "1.5rem", lineHeight: 1.2 }}>
+            <h1 className="np-header__title">
               {isEdit ? "Edit Project" : "New Project"}
             </h1>
-            <p style={{ color: "var(--text2)", fontSize: "0.875rem", marginTop: 2 }}>
+            <p className="np-header__subtitle">
               {isEdit ? "Update your project configuration" : "Configure your web application for autonomous testing"}
             </p>
           </div>
@@ -250,40 +248,13 @@ export default function NewProject() {
             step1Complete ? (step2Complete ? "complete" : "active") : "pending",
             step1Complete && step2Complete ? "active" : "pending",
           ];
-          const styles = {
-            complete: {
-              bg: "var(--green-bg)", border: "var(--green)", text: "var(--green)",
-              numBg: "var(--green)", numFg: "#fff",
-            },
-            active: {
-              bg: "var(--accent-bg)", border: "var(--accent)", text: "var(--accent)",
-              numBg: "var(--accent)", numFg: "#fff",
-            },
-            pending: {
-              bg: "var(--bg2)", border: "var(--border)", text: "var(--text3)",
-              numBg: "var(--bg3)", numFg: "var(--text3)",
-            },
-          };
           return (
-            <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
+            <div className="np-steps">
               {["Application details", "Auth (optional)", "Create"].map((s, i) => {
                 const state = stepStates[i];
-                const c = styles[state];
                 return (
-                  <div key={s} style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "4px 12px", borderRadius: 999,
-                    background: c.bg,
-                    border: `1px solid ${c.border}`,
-                    fontSize: "0.72rem", fontWeight: 500,
-                    color: c.text,
-                    transition: "all 0.15s",
-                  }}>
-                    <span style={{
-                      width: 16, height: 16, borderRadius: "50%", display: "inline-flex",
-                      alignItems: "center", justifyContent: "center", fontSize: "0.65rem",
-                      background: c.numBg, color: c.numFg, fontWeight: 700,
-                    }}>
+                  <div key={s} className={`np-step np-step--${state}`}>
+                    <span className="np-step__num">
                       {state === "complete" ? <CheckCircle2 size={11} /> : i + 1}
                     </span>
                     {s}
@@ -295,58 +266,44 @@ export default function NewProject() {
         })()}
       </div>
 
-      <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <form onSubmit={submit} noValidate className="np-form">
 
         {/* ── Application Details ── */}
-        <section style={{
-          border: "1px solid var(--border)", borderRadius: "var(--radius-lg)",
-          overflow: "hidden", background: "var(--surface)",
-        }}>
-          <div style={{
-            padding: "14px 20px", borderBottom: "1px solid var(--border)",
-            display: "flex", alignItems: "center", gap: 10,
-            background: "var(--bg2)",
-          }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: 8, background: "var(--accent-bg)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
+        <section className="np-section">
+          <div className="np-section__head">
+            <div className="np-section__head-icon">
               <Globe size={14} color="var(--accent)" />
             </div>
-            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Application Details</span>
+            <span className="np-section__head-title">Application Details</span>
           </div>
 
-          <div style={{ padding: 20, display: "grid", gap: 18 }}>
+          <div className="np-section__body">
             {/* Project name */}
             <div>
-              <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                Project Name <span style={{ color: "var(--red)" }}>*</span>
+              <label className="np-label">
+                Project Name <span className="np-required">*</span>
               </label>
               <input
-                className="input"
+                className={`input${fieldErrors.name ? " np-input--error" : ""}`}
                 value={form.name}
                 onChange={set("name")}
                 placeholder="e.g. My Web App"
                 autoFocus={!isEdit}
-                style={{ borderColor: fieldErrors.name ? "var(--red)" : undefined }}
               />
               <FieldError name="name" />
             </div>
 
             {/* URL + test button */}
             <div>
-              <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                Application URL <span style={{ color: "var(--red)" }}>*</span>
+              <label className="np-label">
+                Application URL <span className="np-required">*</span>
               </label>
-              <div style={{ position: "relative" }}>
-                <div style={{
-                  position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
-                  color: "var(--text3)", pointerEvents: "none",
-                }}>
+              <div className="np-url">
+                <div className="np-url__icon">
                   <Globe size={14} />
                 </div>
                 <input
-                  className="input"
+                  className={`input np-url__input${fieldErrors.url ? " np-input--error" : ""}`}
                   value={form.url}
                   onChange={set("url")}
                   placeholder="https://example.com"
@@ -356,46 +313,26 @@ export default function NewProject() {
                       setForm(f => ({ ...f, url: "https://" + v }));
                     }
                   }}
-                  style={{
-                    paddingLeft: 36, paddingRight: 100,
-                    borderColor: fieldErrors.url ? "var(--red)" : undefined,
-                  }}
                 />
                 <button
                   type="button"
+                  className="np-url__test-btn"
                   onClick={testConnection}
                   disabled={testing}
-                  style={{
-                    position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "4px 10px", borderRadius: 6,
-                    border: "1px solid var(--border)", background: "var(--surface)",
-                    cursor: "pointer", fontSize: "0.75rem", fontWeight: 500,
-                    color: testing ? "var(--text3)" : "var(--text2)",
-                    transition: "all 0.12s",
-                  }}
                 >
                   {testing
                     ? <Loader2 size={12} className="spin" />
                     : testResult?.ok
-                      ? <Wifi size={12} style={{ color: "var(--green)" }} />
+                      ? <Wifi size={12} className="np-url__test-icon--ok" />
                       : testResult
-                        ? <WifiOff size={12} style={{ color: "var(--red)" }} />
+                        ? <WifiOff size={12} className="np-url__test-icon--err" />
                         : <Wifi size={12} />}
                   {testing ? "Testing…" : "Test"}
                 </button>
               </div>
 
-              {/* Test result pill */}
               {testResult && (
-                <div style={{
-                  marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "4px 10px", borderRadius: 999,
-                  background: testResult.ok ? "var(--green-bg)" : "var(--red-bg)",
-                  border: `1px solid ${testResult.ok ? "var(--green)" : "var(--red)"}`,
-                  fontSize: "0.73rem", fontWeight: 500,
-                  color: testResult.ok ? "var(--green)" : "var(--red)",
-                }}>
+                <div className={`np-url__result np-url__result--${testResult.ok ? "ok" : "err"}`}>
                   {testResult.ok ? <CheckCircle2 size={12} /> : <WifiOff size={12} />}
                   {testResult.msg}
                 </div>
@@ -407,108 +344,74 @@ export default function NewProject() {
         </section>
 
         {/* ── Authentication ── */}
-        <section style={{
-          border: `1px solid ${form.hasAuth ? "var(--accent)" : "var(--border)"}`,
-          borderRadius: "var(--radius-lg)", overflow: "hidden",
-          background: "var(--surface)",
-          transition: "border-color 0.15s",
-        }}>
-          <div style={{
-            padding: "14px 20px",
-            borderBottom: form.hasAuth ? "1px solid var(--border)" : "none",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: form.hasAuth ? "var(--bg2)" : "transparent",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: 8,
-                background: form.hasAuth ? "var(--accent-bg)" : "var(--bg3)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
+        <section className={`np-section np-section--${form.hasAuth ? "auth-on" : "auth-off"}`}>
+          <div className="np-section__head np-section__head--justify">
+            <div className="np-section__head-title-group">
+              <div className={`np-section__head-icon${form.hasAuth ? "" : " np-section__head-icon--muted"}`}>
                 {form.hasAuth
                   ? <ShieldCheck size={14} color="var(--accent)" />
                   : <Lock size={14} color="var(--text3)" />}
               </div>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>Authentication</div>
-                <div style={{ color: "var(--text3)", fontSize: "0.75rem" }}>
+              <div className="np-section__head-meta">
+                <div className="np-section__head-title">Authentication</div>
+                <div className="np-section__head-subtitle">
                   {form.hasAuth ? "Login credentials configured" : "Does your app require login?"}
                 </div>
               </div>
             </div>
 
             {/* Toggle switch */}
-            <label style={{
-              position: "relative", width: 42, height: 24, cursor: "pointer", flexShrink: 0,
-            }}>
+            <label className="np-toggle">
               <input
                 type="checkbox"
+                className="np-toggle__input"
                 checked={form.hasAuth}
                 onChange={toggleAuth}
-                style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
               />
-              <span style={{
-                position: "absolute", inset: 0, borderRadius: 999, transition: "background 0.2s",
-                background: form.hasAuth ? "var(--accent)" : "var(--bg3)",
-                border: `1px solid ${form.hasAuth ? "var(--accent)" : "var(--border)"}`,
-              }}>
-                <span style={{
-                  position: "absolute", top: 2, left: form.hasAuth ? 20 : 2,
-                  width: 18, height: 18, borderRadius: "50%",
-                  background: form.hasAuth ? "#fff" : "var(--text3)",
-                  transition: "left 0.2s",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                }} />
+              <span className="np-toggle__track">
+                <span className="np-toggle__thumb" />
               </span>
             </label>
           </div>
 
           {form.hasAuth && (
-            <div style={{ padding: 20, display: "grid", gap: 14 }}>
-              {/* Auto-detect hint */}
-              <div style={{
-                padding: "10px 12px", borderRadius: "var(--radius)",
-                background: "var(--accent-bg)", border: "1px solid var(--accent)",
-                fontSize: "0.78rem", color: "var(--accent)",
-                display: "flex", alignItems: "flex-start", gap: 8,
-              }}>
-                <ShieldCheck size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div className="np-section__body np-section__body--auth">
+              <div className="np-auth-hint">
+                <ShieldCheck size={14} className="np-auth-hint__icon" />
                 <span>
                   Sentri detects login form fields automatically — just enter your test credentials.
                 </span>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div className="np-auth-grid">
                 <div>
-                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                    Username / Email <span style={{ color: "var(--red)" }}>*</span>
+                  <label className="np-label">
+                    Username / Email <span className="np-required">*</span>
                   </label>
-                  <input className="input" value={form.username} onChange={set("username")}
+                  <input
+                    className={`input${fieldErrors.username ? " np-input--error" : ""}`}
+                    value={form.username}
+                    onChange={set("username")}
                     placeholder={isEdit && hasExistingCreds ? "•••••• (saved — leave blank to keep)" : "user@example.com"}
-                    style={{ borderColor: fieldErrors.username ? "var(--red)" : undefined }} />
+                  />
                   <FieldError name="username" />
                 </div>
                 <div>
-                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                    Password <span style={{ color: "var(--red)" }}>*</span>
+                  <label className="np-label">
+                    Password <span className="np-required">*</span>
                   </label>
-                  <div style={{ position: "relative" }}>
+                  <div className="np-password">
                     <input
-                      className="input"
+                      className={`input np-password__input${fieldErrors.password ? " np-input--error" : ""}`}
                       type={showPassword ? "text" : "password"}
                       value={form.password}
                       onChange={set("password")}
                       placeholder={isEdit && hasExistingCreds ? "•••••• (saved — leave blank to keep)" : "••••••••"}
-                      style={{ paddingRight: 38, borderColor: fieldErrors.password ? "var(--red)" : undefined }}
                     />
                     <button
                       type="button"
+                      className="np-password__toggle"
                       onClick={() => setShowPassword(v => !v)}
-                      style={{
-                        position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-                        background: "none", border: "none", cursor: "pointer", color: "var(--text3)",
-                        padding: 2,
-                      }}
                     >
                       {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
@@ -522,30 +425,17 @@ export default function NewProject() {
 
         {/* Error banner */}
         {error && (
-          <div style={{
-            padding: "12px 16px", borderRadius: "var(--radius)",
-            background: "var(--red-bg)", border: "1px solid var(--red)",
-            color: "var(--red)", fontSize: "0.875rem", display: "flex", alignItems: "flex-start", gap: 8,
-          }}>
-            <span style={{
-              width: 16, height: 16, borderRadius: "50%", background: "var(--red)", color: "#fff",
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              fontSize: "0.65rem", fontWeight: 700, flexShrink: 0, marginTop: 1,
-            }}>!</span>
+          <div className="np-error-banner">
+            <span className="np-error-banner__badge">!</span>
             {error}
           </div>
         )}
 
         {/* Submit */}
         <button
-          className="btn btn-primary"
+          className="btn btn-primary np-submit"
           type="submit"
           disabled={loading}
-          style={{
-            width: "100%", justifyContent: "center",
-            padding: "13px", fontSize: "0.9rem", fontWeight: 600,
-            borderRadius: "var(--radius)", gap: 8,
-          }}
         >
           {loading
             ? <Loader2 size={16} className="spin" />
