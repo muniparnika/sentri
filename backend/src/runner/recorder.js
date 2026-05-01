@@ -1018,6 +1018,24 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
           }
         }
       }
+      // Drop noisy hover actions that immediately precede a real interaction
+      // on the same selector. The in-page `HOVER_DWELL_MS` filter catches
+      // drive-by mouseovers, but a user pausing on a button before clicking
+      // it (very common — that's what "aim and click" looks like) still
+      // produces a junk `hover` action right before the `click`. Strip the
+      // trailing hover when the very next action is an interaction on the
+      // same target so the captured step list reflects user intent rather
+      // than mouse mechanics.
+      const INTERACTION_KINDS = new Set([
+        "click", "dblclick", "rightClick", "fill",
+        "select", "check", "uncheck", "upload", "press",
+      ]);
+      if (INTERACTION_KINDS.has(row.kind) && row.selector) {
+        const last = session.actions[session.actions.length - 1];
+        if (last && last.kind === "hover" && last.selector === row.selector) {
+          session.actions.pop();
+        }
+      }
       session.actions.push(row);
     });
     await context.addInitScript(RECORDER_SCRIPT);
