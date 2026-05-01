@@ -18,12 +18,13 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   // Collapsed rail mode (Collabplace-style icon-only sidebar). Persisted across
   // sessions in localStorage so the layout stays stable on reload.
+  const SIDEBAR_COLLAPSED_KEY = "ui.sidebar.collapsed";
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
-    try { return localStorage.getItem("sentri.sidebar.collapsed") === "1"; }
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; }
     catch { return false; }
   });
   React.useEffect(() => {
-    try { localStorage.setItem("sentri.sidebar.collapsed", sidebarCollapsed ? "1" : "0"); }
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0"); }
     catch { /* localStorage unavailable */ }
   }, [sidebarCollapsed]);
 

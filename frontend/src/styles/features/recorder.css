@@ -38,12 +38,12 @@
 .recorder-pulse__dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: #dc2626;
-  animation: sentri-recorder-pulse 1.4s ease-in-out infinite;
+  animation: recorder-pulse-blink 1.4s ease-in-out infinite;
 }
 .recorder-pulse__label {
   font-size: 0.72rem; font-weight: 700; color: #dc2626; letter-spacing: 0.04em;
 }
-@keyframes sentri-recorder-pulse {
+@keyframes recorder-pulse-blink {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
 }
