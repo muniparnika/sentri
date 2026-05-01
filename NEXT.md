@@ -52,12 +52,12 @@ Capture Web Vitals (LCP, CLS, INP, TTFB) per page during runs and compare agains
 
 **Files:** `backend/src/runner/pageCapture.js` · `backend/src/testRunner.js` · `frontend/src/components/run/StepResultsView.jsx`
 
-### 4 · ENH-036 — Project credential editing after creation
-**Effort:** S | **Priority:** 🟡 High | **Dependencies:** ✅ ACL-002
+### 4 · DIF-008 — Jira / Linear issue sync
+**Effort:** L | **Priority:** 🟢 Differentiator | **Dependencies:** FEA-001 ✅
 
-Add `PATCH /api/v1/projects/:id` accepting `{ name?, url?, credentials? }`, gated by `requireRole("qa_lead")`. Run `credentials` through `encryptCredentials()` before persisting. Add an "Edit project" affordance in the Project Detail header that reuses the create form pre-filled. Removes the data-loss workaround where operators delete the entire project to rotate a stale credential.
+Auto-create a Jira or Linear ticket when a test run fails (with screenshot, error, Playwright trace attached). Sync pass/fail status back to the linked issue. Traceability data model already stores `linkedIssueKey` and `tags` per test — the outbound sync layer is the missing piece.
 
-**Files:** `backend/src/routes/projects.js` · `backend/src/middleware/permissions.json` · `frontend/src/api.js` · `frontend/src/pages/ProjectDetail.jsx` · `backend/tests/projects.test.js`
+**Files:** `backend/src/utils/integrations.js` (new) · `backend/src/testRunner.js` · `backend/src/routes/settings.js` · `frontend/src/pages/Settings.jsx`
 
 ---
 
@@ -67,7 +67,7 @@ These can be picked up by a second engineer alongside the current PR without fil
 
 | ID | Title | Effort | Shared files? |
 |----|-------|--------|---------------|
-| **DIF-015b Gap 2** | **Recorder selectorGenerator: data-testid quality scoring** | **S** | **`backend/src/runner/recorder.js` only — no overlap with AUTO-012 (current PR) / AUTO-017 / ENH-036** |
+| **DIF-015b Gap 2** | **Recorder selectorGenerator: data-testid quality scoring** | **S** | **`backend/src/runner/recorder.js` only — no overlap with AUTO-012 (current PR) / AUTO-017 / DIF-008** |
 | DIF-015b Gap 3 | Recorder selectorGenerator: iframe + shadow-DOM traversal | M | `backend/src/runner/recorder.js` only |
 | AUTO-017 | Performance budget testing (Web Vitals) | M | None |
 | AUTO-019 | Run diffing: per-test comparison across runs | M | None |
@@ -82,8 +82,8 @@ These can be picked up by a second engineer alongside the current PR without fil
 
 | ID | Title | PR |
 |----|-------|----|
+| ENH-036 + ENH-036b | Project credential editing (`PATCH /projects/:id`) + auto-detect login form fields (semantic-first locator waterfall) | #1 |
 | AUTO-016b | Frontend CrawlView a11y panel + dashboard offenders rollup | #1 |
 | DIF-007 | Conversational test editor connected to /chat (in-app "Edit with AI" panel with diff preview + apply) | #123 |
-| MNT-006 | Object storage abstraction — local-disk default + S3/R2 pre-signed URLs for screenshots, visual-diff baselines, and diffs (dual-write to local disk in s3 mode) | #122 |
 
 *Full completed list → ROADMAP.md § Completed Work*
