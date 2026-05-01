@@ -338,8 +338,11 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
               </div>
             </div>
 
-            {/* BOTTOM: Add verification + Test name + Stop & save — always pinned */}
-            {phase === "recording" && (
+            {/* BOTTOM: Add verification + Test name + Stop & save — always pinned.
+                Includes `stopping` so the disabled "Saving…" feedback stays
+                visible while the save request is in flight (otherwise the
+                whole panel unmounts the moment the user clicks the button). */}
+            {(phase === "recording" || phase === "stopping") && (
               <div style={{
                 flexShrink: 0,
                 borderTop: "1px solid var(--border)",

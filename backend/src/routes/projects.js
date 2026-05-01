@@ -111,10 +111,15 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
     // Merge: any blank secret falls back to the already-encrypted value so
     // the client can PATCH without re-sending the password.
     const incoming = req.body.credentials;
+    // Selectors: fall back to existing values when the client omits or blanks
+    // them, so editing a legacy explicit-selector project doesn't silently
+    // wipe its login strategy. The new frontend only sends username + password
+    // (selectors are auto-detected at crawl time), so without this fallback
+    // any project rename/credential rotation would clobber the saved selectors.
     const merged = {
-      usernameSelector: incoming.usernameSelector || "",
-      passwordSelector: incoming.passwordSelector || "",
-      submitSelector:   incoming.submitSelector   || "",
+      usernameSelector: incoming.usernameSelector ?? existing.credentials?.usernameSelector ?? "",
+      passwordSelector: incoming.passwordSelector ?? existing.credentials?.passwordSelector ?? "",
+      submitSelector:   incoming.submitSelector   ?? existing.credentials?.submitSelector   ?? "",
       username: incoming.username ? incoming.username : null,
       password: incoming.password ? incoming.password : null,
     };
