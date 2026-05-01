@@ -36,10 +36,35 @@ async function main() {
   const t = createTestContext();
   const runner = t.createTestRunner();
 
-  // Reuse a single browser process across cases — much faster than relaunching
-  // per test. Each case opens its own page so DOM state is isolated.
-  const browser = await chromium.launch({ headless: true });
+  // Backend CI intentionally does not install Playwright browser binaries
+  // (see `backend/tests/cross-browser.test.js` preamble). If chromium is
+  // unavailable locally, the three live-DOM cases are skipped and only the
+  // browser-free guard case runs — the full suite is exercised in the
+  // separate cross-browser workflow where browsers are preinstalled.
+  let browser = null;
   try {
+    browser = await chromium.launch({ headless: true });
+  } catch (err) {
+    const msg = err?.message || String(err);
+    if (msg.includes("Executable doesn't exist") || msg.includes("playwright install")) {
+      console.log("⏭️  auto-login: chromium not installed in this env, skipping live-DOM cases");
+    } else {
+      throw err;
+    }
+  }
+
+  try {
+    if (!browser) {
+      // Only the browser-free guard case is runnable without chromium.
+      await runner.test("Blank credentials short-circuit without touching the page", async () => {
+        const result = await performAutoLogin(null, { username: "", password: "" });
+        assert.equal(result.ok, false);
+        assert.match(result.reason || "", /required/i);
+      });
+      runner.summary("auto-login");
+      return;
+    }
+
     await runner.test("Canonical email/password/submit form succeeds via primary strategies", async () => {
       const page = await browser.newPage();
       try {
@@ -150,7 +175,7 @@ async function main() {
 
     runner.summary("auto-login");
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 
