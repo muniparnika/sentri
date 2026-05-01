@@ -61,6 +61,9 @@ export default function NewProject() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(isEdit);
+  // Baseline form after load — used to detect real dirtiness in edit mode.
+  // In create mode it stays equal to EMPTY_FORM so any typing counts as dirty.
+  const [initialForm, setInitialForm] = useState(EMPTY_FORM);
   const [error, setError] = useState(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -80,7 +83,7 @@ export default function NewProject() {
         const p = data.project ?? data;
         const creds = p.credentials || {};
         setHasExistingCreds(Boolean(p.credentials));
-        setForm({
+        const loaded = {
           name: p.name || "",
           url:  p.url  || "",
           hasAuth: Boolean(p.credentials),
@@ -90,7 +93,9 @@ export default function NewProject() {
           passwordSelector: creds.passwordSelector || "",
           password:         "",
           submitSelector:   creds.submitSelector   || "",
-        });
+        };
+        setForm(loaded);
+        setInitialForm(loaded);
       })
       .catch(err => setError(`Could not load project: ${err.message}`))
       .finally(() => setLoadingEdit(false));
@@ -182,8 +187,10 @@ export default function NewProject() {
       </div>
     : null;
 
-  const isDirty = form.name.trim() || form.url.trim() ||
-    (form.hasAuth && (form.username.trim() || form.password.trim()));
+  // Compare against the baseline (EMPTY_FORM in create mode, loaded project
+  // in edit mode) so a pristine edit form doesn't trigger the leave-without-
+  // saving prompt.
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
 
   function handleBack() {
     if (isDirty && !window.confirm("Leave without saving? Your changes will be lost.")) return;
