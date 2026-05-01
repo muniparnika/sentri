@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.10] — 2026-05-01
+
 ### Changed
 - **Recorder (DIF-015b)**: `selectorGenerator()` now delegates to Playwright's own `InjectedScript`-based selector generator (the same algorithm Playwright's `codegen` tool uses) instead of the previous hand-rolled chain. Playwright's generator brings ancestor scoring, machine-generated-testid demotion, shadow-DOM traversal, and iframe locator chains for free. The delegation is loaded best-effort from `playwright-core`'s pre-bundled `injectedScriptSource.js` at server start; when that source can't be resolved (missing install, Playwright bumped to a version with a different bundle layout), the recorder falls back to the existing hand-rolled chain — including a noise-testid heuristic for the three patterns captured in the original DIF-015b Gap 2 spec (numeric-only, `el_`/`comp-`/`t-` + hex tails, length > 30 with no separators) — so the recorder remains usable in degraded form. New `backend/src/runner/playwrightSelectorGenerator.js` houses the loader + in-page bootstrap. (#TBD)
 - **E2E Coverage**: Added UI login→dashboard automation in `tests/e2e/specs/ui-smoke.spec.mjs` using verified-user API scaffolding plus DOM assertions for `/dashboard`, Dashboard heading, and workspace visibility; kept `tests/e2e/COVERAGE.md` auth happy-path row pending (🟥) until CI Playwright smoke is green, and annotated `QA.md` to match. (#TBD)
