@@ -48,10 +48,14 @@
  * Try each candidate locator until one resolves to a visible element or we
  * run out. Returns the first winning Locator or null.
  *
- * @param {import('@playwright/test').Page} page
- * @param {Array<() => import('@playwright/test').Locator>} strategies
+ * Types intentionally kept loose (`object` / `Function`) so vanilla jsdoc
+ * can parse them — the `import('@playwright/test').Page` / `.Locator` syntax
+ * is valid TypeScript but unsupported by the jsdoc CLI we use in CI.
+ *
+ * @param {object} page - Playwright `Page` instance.
+ * @param {Array<Function>} strategies - Locator-building functions.
  * @param {number} timeout - per-strategy visibility timeout (ms).
- * @returns {Promise<import('@playwright/test').Locator|null>}
+ * @returns {Promise<object|null>} Playwright `Locator` or null.
  * @private
  */
 async function firstVisible(page, strategies, timeout) {
@@ -68,11 +72,12 @@ async function firstVisible(page, strategies, timeout) {
 /**
  * Resolve the three login form elements by running the waterfall strategies.
  *
- * @param {import('@playwright/test').Page} page
+ * @param {object} page - Playwright `Page` instance.
  * @param {number} timeout
- * @returns {Promise<{ username: any, password: any, submit: any|null }>}
- *   Locators for each element. `submit` may be null if no button is found —
- *   the caller should fall back to pressing Enter on the password field.
+ * @returns {Promise<object>} Shape: `{ username, password, submit }`. Each
+ *   value is a Playwright `Locator` or null. `submit` may be null if no
+ *   button is found — the caller should fall back to pressing Enter on the
+ *   password field.
  * @private
  */
 async function resolveLoginFields(page, timeout) {
@@ -105,14 +110,13 @@ async function resolveLoginFields(page, timeout) {
 /**
  * Attempt to log in by auto-detecting the login form elements.
  *
- * @param {import('@playwright/test').Page} page - Playwright page already
- *   navigated to the login URL.
- * @param {{ username: string, password: string }} creds
+ * @param {object} page - Playwright `Page` already navigated to the login URL.
+ * @param {object} creds - `{ username, password }` strings.
  * @param {object} [opts]
  * @param {number}   [opts.timeout=5000]   - Per-strategy visibility timeout (ms).
- * @param {function} [opts.logger]         - Optional logger `(msg) => void`.
- * @returns {Promise<{ ok: boolean, reason?: string }>} Result envelope. Never
- *   throws — transient Playwright errors are captured in `reason`.
+ * @param {Function} [opts.logger]         - Optional logger `(msg) => void`.
+ * @returns {Promise<object>} Result envelope `{ ok: boolean, reason?: string }`.
+ *   Never throws — transient Playwright errors are captured in `reason`.
  */
 export async function performAutoLogin(page, { username, password }, { timeout = 5000, logger } = {}) {
   const log = typeof logger === "function" ? logger : () => {};
