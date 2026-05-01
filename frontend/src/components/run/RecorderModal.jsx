@@ -17,6 +17,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   const [assertValue, setAssertValue] = useState("");
   const [assertLabel, setAssertLabel] = useState("");
   const [error, setError] = useState(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [viewport, setViewport] = useState({ width: 1280, height: 720 });
   const pollRef = useRef(null);
   const sessionIdRef = useRef(null);
@@ -55,18 +56,14 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   }, []);
 
   async function handleStart() {
-    setError(null);
-    setActions([]);
-    setFrames([]);
+    setError(null); setActions([]); setFrames([]);
     if (!startUrl || !/^https?:\/\//i.test(startUrl)) {
-      setError("Enter a valid http(s) URL to record from.");
-      return;
+      setError("Enter a valid http(s) URL to record from."); return;
     }
     const stale = sessionIdRef.current;
     if (stale) {
       api.recordDiscard(projectIdRef.current || projectId, stale).catch(() => {});
-      sessionIdRef.current = null;
-      setSessionId(null);
+      sessionIdRef.current = null; setSessionId(null);
     }
     teardownStreams();
     setPhase("starting");
@@ -91,17 +88,14 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
 
   async function handleStopAndSave() {
     if (!sessionId) return;
-    setPhase("stopping");
-    setError(null);
+    setPhase("stopping"); setError(null);
     try {
       const result = await api.recordStop(projectId, sessionId, {
         name: name.trim() || `Recorded flow @ ${new Date().toISOString()}`,
       });
       teardownStreams();
-      sessionIdRef.current = null;
-      setSessionId(null);
-      onSaved?.(result.test);
-      onClose?.();
+      sessionIdRef.current = null; setSessionId(null);
+      onSaved?.(result.test); onClose?.();
     } catch (e) {
       setError(e.message || "failed to stop recorder");
       setPhase("error");
@@ -135,9 +129,19 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   }
 
   function handleCancel() {
+    // If actively recording, show confirmation first
+    if (phase === "recording" || phase === "stopping") {
+      setConfirmDiscard(true);
+      return;
+    }
+    doDiscard();
+  }
+
+  function doDiscard() {
     if (sessionId) api.recordDiscard(projectId, sessionId).catch(() => {});
     teardownStreams();
     sessionIdRef.current = null;
+    setConfirmDiscard(false);
     setPhase("idle");
     setSessionId(null);
     onClose?.();
@@ -172,12 +176,35 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
         background: "var(--bg)",
       }}>
         <span style={{ fontSize: 20 }}>🎥</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.2 }}>Record a test</div>
-          <div style={{ fontSize: "0.74rem", color: "var(--text3)" }}>
-            Interact with the app in the live browser — every click, fill, and navigation is captured as a Playwright step.
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: "0.95rem", lineHeight: 1.2 }}>Record a test</div>
+            <div style={{ fontSize: "0.74rem", color: "var(--text3)" }}>
+              Interact with the app in the live browser — every click, fill, and navigation is captured as a Playwright step.
+            </div>
           </div>
+          {/* Recording pulse indicator */}
+          {(phase === "recording" || phase === "stopping") && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 20, background: "rgba(220,38,38,0.1)", border: "1px solid rgba(220,38,38,0.25)" }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: "50%", background: "#dc2626",
+                display: "inline-block",
+                animation: "sentri-pulse 1.4s ease-in-out infinite",
+              }} />
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#dc2626", letterSpacing: "0.04em" }}>
+                {phase === "stopping" ? "SAVING" : "RECORDING"}
+              </span>
+            </div>
+          )}
         </div>
+
+        {/* Step count badge — visible while recording */}
+        {(phase === "recording" || phase === "stopping") && (
+          <div style={{ fontSize: "0.78rem", color: "var(--text3)", marginRight: 8 }}>
+            <span style={{ fontWeight: 700, color: "var(--text)" }}>{actions.length}</span> step{actions.length !== 1 ? "s" : ""} captured
+          </div>
+        )}
+
         <button
           onClick={handleCancel}
           style={{
@@ -197,7 +224,10 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
         </button>
       </div>
 
-      {/* ── IDLE: clean centred form, no repeated title ── */}
+      {/* Pulse keyframe injected once */}
+      <style>{`@keyframes sentri-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
+
+      {/* ── IDLE: clean centred form ── */}
       {isIdle && (
         <div style={{
           flex: 1,
@@ -208,21 +238,12 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
           background: "var(--bg)",
         }}>
           <div style={{ width: 560 }}>
-
-            {/* Section title */}
             <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text)", marginBottom: 20 }}>
               New recording
             </div>
-
-            {/* Two fields stacked, each with its own label */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
-
-              {/* Test name */}
               <div>
-                <label style={{
-                  display: "block", fontSize: "0.82rem", fontWeight: 600,
-                  color: "var(--text)", marginBottom: 6,
-                }}>
+                <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
                   Test name
                 </label>
                 <input
@@ -233,16 +254,9 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
                   style={{ width: "100%", fontSize: "0.9rem" }}
                 />
               </div>
-
-              {/* Starting URL */}
               <div>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  fontSize: "0.82rem", fontWeight: 600,
-                  color: "var(--text)", marginBottom: 6,
-                }}>
-                  Starting URL
-                  <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>*</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.82rem", fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
+                  Starting URL <span style={{ color: "var(--accent)" }}>*</span>
                 </label>
                 <input
                   className="input"
@@ -255,45 +269,29 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
                 />
               </div>
             </div>
-
-            {error && (
-              <div className="banner banner-error" style={{ marginBottom: 16 }}>{error}</div>
-            )}
-
-            {/* Divider */}
+            {error && <div className="banner banner-error" style={{ marginBottom: 16 }}>{error}</div>}
             <div style={{ borderTop: "1px solid var(--border)", marginBottom: 20 }} />
-
-            {/* Actions */}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button className="btn btn-ghost" onClick={handleCancel}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleStart}
-                disabled={phase === "starting"}
-                style={{ minWidth: 148 }}
-              >
+              <button className="btn btn-ghost" onClick={handleCancel}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleStart} disabled={phase === "starting"} style={{ minWidth: 148 }}>
                 {phase === "starting" ? "Launching…" : "Launch recorder"}
               </button>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* ── RECORDING: two-column grid ── */}
+      {/* ── RECORDING: fixed two-column layout, sidebar never overflows ── */}
       {!isIdle && (
         <div style={{
           flex: 1,
-          overflow: "auto",
-          padding: 20,
-          display: "grid",
-          gridTemplateColumns: "1fr 300px",
-          gap: 16,
-          cursor: "default",
+          display: "flex",
+          overflow: "hidden",    /* KEY: prevents full-page scroll */
+          gap: 0,
         }}>
-          <div>
+
+          {/* Left — live browser, scrollable if needed */}
+          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
             <LiveBrowserView
               frames={frames}
               label={sessionId || ""}
@@ -303,87 +301,173 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
             />
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", minHeight: 300 }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              Captured steps ({actions.length})
-            </div>
-            <div style={{ flex: 1, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg2)" }}>
-              {actions.length === 0 ? (
-                <div style={{ padding: 16, fontSize: "0.76rem", color: "var(--text3)", fontStyle: "italic" }}>
-                  No actions captured yet. Click, type, or navigate in the live browser on the left.
-                </div>
-              ) : (
-                <ol style={{ margin: 0, padding: "10px 14px 10px 30px", fontSize: "0.75rem", fontFamily: "var(--font-mono)", color: "var(--text2)" }}>
-                  {actions.map((a, i) => (
-                    <li key={i} style={{ marginBottom: 4, lineHeight: 1.5 }}>
-                      <span style={{ fontWeight: 700, color: "var(--accent)" }}>{a.kind}</span>
-                      {a.selector && <span style={{ color: "var(--text3)" }}> → {a.selector}</span>}
-                      {a.value && <span style={{ color: "var(--green)" }}> = "{a.value.slice(0, 40)}"</span>}
-                      {a.url && <span style={{ color: "var(--blue)" }}> {a.url}</span>}
-                      {a.key && <span style={{ color: "var(--amber)" }}> {a.key}</span>}
-                    </li>
-                  ))}
-                </ol>
-              )}
+          {/* Right sidebar — steps scroll, verification+name+save pinned at bottom */}
+          <div style={{
+            width: 300,
+            background: "var(--bg2, #f7f8fa)",
+            borderLeft: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            flexShrink: 0,
+          }}>
+
+            {/* TOP: Captured steps — takes all remaining space, scrolls internally */}
+            <div style={{ flex: 1, overflow: "hidden", padding: "14px 14px 0", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, flexShrink: 0 }}>
+                Captured steps ({actions.length})
+              </div>
+              <div style={{ flex: 1, border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)", overflow: "auto", minHeight: 0 }}>
+                {actions.length === 0 ? (
+                  <div style={{ padding: 14, fontSize: "0.74rem", color: "var(--text3)", fontStyle: "italic" }}>
+                    No actions yet — interact in the browser on the left.
+                  </div>
+                ) : (
+                  <ol style={{ margin: 0, padding: "10px 12px 10px 28px", fontSize: "0.73rem", fontFamily: "var(--font-mono)", color: "var(--text2)" }}>
+                    {actions.map((a, i) => (
+                      <li key={i} style={{ marginBottom: 4, lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 700, color: "var(--accent)" }}>{a.kind}</span>
+                        {a.selector && <span style={{ color: "var(--text3)" }}> → {a.selector}</span>}
+                        {a.value && <span style={{ color: "var(--green)" }}> = "{a.value.slice(0, 40)}"</span>}
+                        {a.url && <span style={{ color: "var(--blue)" }}> {a.url}</span>}
+                        {a.key && <span style={{ color: "var(--amber)" }}> {a.key}</span>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             </div>
 
+            {/* BOTTOM: Add verification + Test name + Stop & save — always pinned */}
             {phase === "recording" && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              <div style={{
+                flexShrink: 0,
+                borderTop: "1px solid var(--border)",
+                background: "var(--bg2, #f7f8fa)",
+                padding: "12px 14px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}>
+                {/* Verification */}
+                <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>
                   Add verification
                 </div>
-                <select className="input" value={assertKind} onChange={(e) => setAssertKind(e.target.value)} style={{ width: "100%", marginBottom: 6 }}>
+                <select className="input" value={assertKind} onChange={(e) => setAssertKind(e.target.value)} style={{ width: "100%" }}>
                   <option value="assertVisible">Element visible</option>
                   <option value="assertText">Element contains text</option>
                   <option value="assertValue">Field has value</option>
                   <option value="assertUrl">URL contains</option>
                 </select>
                 {assertKind !== "assertUrl" && (
-                  <input
-                    className="input"
-                    value={assertSelector}
-                    onChange={(e) => setAssertSelector(e.target.value)}
-                    placeholder='selector (e.g. role=button[name="Checkout"])'
-                    style={{ width: "100%", marginBottom: 6 }}
-                  />
+                  <input className="input" value={assertSelector} onChange={(e) => setAssertSelector(e.target.value)}
+                    placeholder='selector (e.g. role=button[name="Checkout"])' style={{ width: "100%" }} />
                 )}
-                <input
-                  className="input"
-                  value={assertLabel}
-                  onChange={(e) => setAssertLabel(e.target.value)}
-                  placeholder="friendly label (optional)"
-                  style={{ width: "100%", marginBottom: 6 }}
-                />
+                <input className="input" value={assertLabel} onChange={(e) => setAssertLabel(e.target.value)}
+                  placeholder="friendly label (optional)" style={{ width: "100%" }} />
                 {(assertKind === "assertText" || assertKind === "assertValue" || assertKind === "assertUrl") && (
-                  <input
-                    className="input"
-                    value={assertValue}
-                    onChange={(e) => setAssertValue(e.target.value)}
+                  <input className="input" value={assertValue} onChange={(e) => setAssertValue(e.target.value)}
                     placeholder={assertKind === "assertUrl" ? "URL fragment or regex text" : "expected value"}
-                    style={{ width: "100%", marginBottom: 8 }}
-                  />
+                    style={{ width: "100%" }} />
                 )}
-                <button className="btn btn-ghost" onClick={handleAddAssertion} style={{ width: "100%", marginBottom: 12 }}>
+                <button className="btn btn-ghost" onClick={handleAddAssertion} style={{ width: "100%" }}>
                   Add verification step
                 </button>
-                <label className="text-sm font-semi" style={{ display: "block", marginBottom: 6 }}>Test name</label>
+
+                {/* Divider */}
+                <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0" }} />
+
+                {/* Test name + Stop & save */}
+                <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text)" }}>
+                  Test name
+                </label>
                 <input
                   className="input"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Login happy path"
-                  style={{ width: "100%", marginBottom: 10 }}
+                  style={{ width: "100%" }}
                 />
                 <button
                   className="btn btn-primary"
                   onClick={handleStopAndSave}
                   disabled={actions.length === 0 || phase === "stopping"}
-                  style={{ width: "100%" }}
+                  style={{ width: "100%", fontWeight: 700, marginTop: 2 }}
                 >
                   {phase === "stopping" ? "Saving…" : `Stop & save (${actions.length})`}
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Discard confirmation dialog ── */}
+      {confirmDiscard && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 10,
+          background: "rgba(0,0,0,0.45)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}>
+          <div style={{
+            background: "var(--bg)",
+            borderRadius: 14,
+            padding: "28px 28px 20px",
+            width: 380,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            border: "1px solid var(--border)",
+          }}>
+            {/* Icon + title */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                background: "rgba(220,38,38,0.1)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                </svg>
+              </div>
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text)" }}>
+                Discard recording?
+              </div>
+            </div>
+
+            <p style={{ fontSize: "0.85rem", color: "var(--text2)", lineHeight: 1.6, margin: "0 0 22px" }}>
+              You have <strong>{actions.length} step{actions.length !== 1 ? "s" : ""}</strong> recorded.
+              Exiting now will permanently discard all of them.
+            </p>
+
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setConfirmDiscard(false)}
+                style={{
+                  padding: "7px 16px", borderRadius: 7, border: "1px solid var(--border)",
+                  background: "var(--bg2)", color: "var(--text)", fontSize: "0.85rem",
+                  fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Keep recording
+              </button>
+              <button
+                onClick={doDiscard}
+                style={{
+                  padding: "7px 16px", borderRadius: 7, border: "none",
+                  background: "#dc2626", color: "#fff", fontSize: "0.85rem",
+                  fontWeight: 700, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                </svg>
+                Discard & exit
+              </button>
+            </div>
           </div>
         </div>
       )}
