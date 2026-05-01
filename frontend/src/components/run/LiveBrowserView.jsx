@@ -221,7 +221,13 @@ export default function LiveBrowserView({
         tabIndex={isInteractive ? 0 : undefined}
         style={{
           width: "100%", height: "100%", objectFit: "contain", display: "block",
-          cursor: isInteractive ? "crosshair" : "default",
+          // Use the default arrow cursor while interacting (matches Playwright
+          // codegen, Chrome DevTools recorder, Browserbase). Crosshair (`+`)
+          // implies a coordinate picker, which is misleading — the user is
+          // driving a real browser, not selecting a point. Falls back to the
+          // hand cursor when hovering an interactive element via standard
+          // browser propagation from the embedded page's own cursor styling.
+          cursor: isInteractive ? "default" : "default",
           outline: "none", // hide focus ring on canvas; we show our own indicator
         }}
         // Pointer events
