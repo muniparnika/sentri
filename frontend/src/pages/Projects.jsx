@@ -9,7 +9,7 @@ import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Globe, Search, ExternalLink,
-  RefreshCw, FlaskConical, ChevronRight, Trash2,
+  RefreshCw, FlaskConical, ChevronRight, Trash2, Pencil,
 } from "lucide-react";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData";
 import { fmtRelativeDate } from "../utils/formatters";
@@ -43,6 +43,7 @@ export default function Projects() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canDelete = userHasRole(user, "qa_lead");
+  const canEdit   = userHasRole(user, "qa_lead");
 
   // Derive per-project stats from the shared hook data
   const projectStats = useMemo(() => {
@@ -229,6 +230,16 @@ export default function Projects() {
                   >
                     <FlaskConical size={13} /> Tests
                   </button>
+                  {canEdit && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ color: "var(--text2)" }}
+                    onClick={() => navigate(`/projects/new?edit=${p.id}`)}
+                    title="Edit project"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  )}
                   {canDelete && (
                   <button
                     className="btn btn-ghost btn-sm"

@@ -1,11 +1,13 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Globe, Lock, Plus, CheckCircle2, Loader2 } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import {
+  ArrowLeft, Globe, Lock, Plus, CheckCircle2, Loader2,
+  Eye, EyeOff, ShieldCheck, Wifi, WifiOff, Pencil, Save,
+} from "lucide-react";
 import { api } from "../api.js";
 import { emitTourEvent } from "../hooks/useOnboarding.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 
-// Robust URL validation + required auth field enforcement
 function validateForm(form) {
   const errors = {};
   if (!form.name.trim()) errors.name = "Project name is required.";
@@ -31,33 +33,63 @@ function validateForm(form) {
   return errors;
 }
 
+const EMPTY_FORM = {
+  name: "", url: "", hasAuth: false,
+  usernameSelector: "", username: "",
+  passwordSelector: "", password: "", submitSelector: "",
+};
+
 export default function NewProject() {
-  usePageTitle("New Project");
+  // Support edit mode: /projects/new?edit=PRJ-1
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const editId = params.get("edit") || null;
+  const isEdit = Boolean(editId);
+
+  usePageTitle(isEdit ? "Edit Project" : "New Project");
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    name: "", url: "", hasAuth: false,
-    usernameSelector: "", username: "",
-    passwordSelector: "", password: "", submitSelector: "",
-  });
-  // Preserve auth field values when toggling checkbox
+
+  const [form, setForm] = useState(EMPTY_FORM);
   const [savedAuthFields, setSavedAuthFields] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(isEdit);
   const [error, setError] = useState(null);
-  // Connection test
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Load existing project when editing
+  useEffect(() => {
+    if (!editId) return;
+    setLoadingEdit(true);
+    api.getProject(editId)
+      .then(data => {
+        const p = data.project ?? data;
+        const creds = p.credentials || {};
+        setForm({
+          name: p.name || "",
+          url:  p.url  || "",
+          hasAuth: Boolean(p.credentials),
+          usernameSelector: creds.usernameSelector || "",
+          username:         creds.username         || "",
+          passwordSelector: creds.passwordSelector || "",
+          password:         creds.password         || "",
+          submitSelector:   creds.submitSelector   || "",
+        });
+      })
+      .catch(err => setError(`Could not load project: ${err.message}`))
+      .finally(() => setLoadingEdit(false));
+  }, [editId]);
 
   const set = (k) => (e) => {
-    setForm((f) => ({ ...f, [k]: e.target.value }));
+    setForm(f => ({ ...f, [k]: e.target.value }));
     if (fieldErrors[k]) setFieldErrors(fe => { const n = { ...fe }; delete n[k]; return n; });
   };
 
-  // Warn before discarding auth fields
   function toggleAuth(e) {
     const checked = e.target.checked;
     if (!checked && form.hasAuth) {
-      // Save current values so they can be restored
       setSavedAuthFields({
         usernameSelector: form.usernameSelector,
         username: form.username,
@@ -67,7 +99,6 @@ export default function NewProject() {
       });
     }
     if (checked && savedAuthFields) {
-      // Restore previously entered values
       setForm(f => ({ ...f, hasAuth: true, ...savedAuthFields }));
       return;
     }
@@ -77,9 +108,7 @@ export default function NewProject() {
   async function testConnection() {
     let urlVal = form.url.trim();
     if (!urlVal) { setTestResult({ ok: false, msg: "Enter a URL first." }); return; }
-    // Apply the same https:// prefix that onBlur adds — avoids a race where
-    // blur hasn't updated state yet when the user clicks "Test" immediately.
-    if (urlVal && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(urlVal)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(urlVal)) {
       urlVal = "https://" + urlVal;
       setForm(f => ({ ...f, url: urlVal }));
     }
@@ -88,7 +117,7 @@ export default function NewProject() {
     setTestResult(null);
     try {
       await api.testConnection(urlVal);
-      setTestResult({ ok: true, msg: "URL is reachable." });
+      setTestResult({ ok: true, msg: "URL is reachable" });
     } catch (err) {
       setTestResult({ ok: false, msg: `Could not reach URL: ${err.message}` });
     } finally {
@@ -106,18 +135,24 @@ export default function NewProject() {
     try {
       const payload = {
         name: form.name.trim(),
-        url: form.url.trim(),
+        url:  form.url.trim(),
         credentials: form.hasAuth ? {
           usernameSelector: form.usernameSelector.trim(),
-          username: form.username.trim(),
+          username:         form.username.trim(),
           passwordSelector: form.passwordSelector.trim(),
-          password: form.password,
-          submitSelector: form.submitSelector.trim(),
+          password:         form.password,
+          submitSelector:   form.submitSelector.trim(),
         } : null,
       };
-      const project = await api.createProject(payload);
-      emitTourEvent("project-created");
-      navigate(`/projects/${project.id}`);
+      if (isEdit) {
+        await api.req?.("PATCH", `/projects/${editId}`, payload)
+          .catch(() => { throw new Error("Edit not yet supported by server — changes not saved."); });
+        navigate(`/projects/${editId}`);
+      } else {
+        const project = await api.createProject(payload);
+        emitTourEvent("project-created");
+        navigate(`/projects/${project.id}`);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -126,7 +161,10 @@ export default function NewProject() {
   }
 
   const FieldError = ({ name }) => fieldErrors[name]
-    ? <div style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: 4 }}>{fieldErrors[name]}</div>
+    ? <div style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: 5, display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ width: 12, height: 12, borderRadius: "50%", background: "var(--red)", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.6rem", flexShrink: 0, fontWeight: 700 }}>!</span>
+        {fieldErrors[name]}
+      </div>
     : null;
 
   const isDirty = form.name.trim() || form.url.trim() ||
@@ -134,127 +172,345 @@ export default function NewProject() {
 
   function handleBack() {
     if (isDirty && !window.confirm("Leave without saving? Your changes will be lost.")) return;
-    navigate(-1);
+    navigate(isEdit ? `/projects/${editId}` : -1);
+  }
+
+  if (loadingEdit) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, gap: 10, color: "var(--text3)" }}>
+        <Loader2 size={18} className="spin" />
+        <span style={{ fontSize: "0.9rem" }}>Loading project…</span>
+      </div>
+    );
   }
 
   return (
-    <div className="fade-in" style={{ maxWidth: 640, margin: "0 auto" }}>
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 24 }} onClick={handleBack}>
+    <div className="fade-in" style={{ maxWidth: 620, margin: "0 auto", paddingBottom: 48 }}>
+
+      {/* Back */}
+      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 28, gap: 6 }} onClick={handleBack}>
         <ArrowLeft size={14} /> Back
       </button>
 
+      {/* Header */}
       <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "1.9rem" }}>New Project</h1>
-        <p style={{ color: "var(--text2)", marginTop: 6 }}>Configure your web application for autonomous testing</p>
-      </div>
-
-      <form onSubmit={submit} noValidate>
-        {/* Basic Info */}
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <Globe size={16} color="var(--accent)" />
-            <span style={{ fontFamily: "var(--font-display)", fontWeight: 700 }}>Application Details</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 12,
+            background: "var(--accent-bg)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            {isEdit
+              ? <Pencil size={18} color="var(--accent)" />
+              : <Globe size={18} color="var(--accent)" />}
           </div>
-          <div style={{ display: "grid", gap: 16 }}>
-            <div>
-              <label>Project Name</label>
-              <input className="input" value={form.name} onChange={set("name")} placeholder="My Web App"
-                style={{ borderColor: fieldErrors.name ? "var(--red)" : undefined }} />
-              <FieldError name="name" />
-            </div>
-            <div>
-              <label>Application URL</label>
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <input className="input" value={form.url} onChange={set("url")} placeholder="https://example.com"
-                    onBlur={() => {
-                      const v = form.url.trim();
-                      if (v && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) {
-                        setForm(f => ({ ...f, url: "https://" + v }));
-                      }
-                    }}
-                    style={{ borderColor: fieldErrors.url ? "var(--red)" : undefined }} />
-                  <FieldError name="url" />
-                </div>
-                {/* Fix #19: test connection button */}
-                <button type="button" className="btn btn-ghost btn-sm" onClick={testConnection} disabled={testing} style={{ flexShrink: 0, marginTop: 0 }}>
-                  {testing ? <Loader2 size={13} className="spin" /> : <CheckCircle2 size={13} />}
-                  Test
-                </button>
-              </div>
-              {testResult && (
-                <div style={{ fontSize: "0.75rem", marginTop: 5, color: testResult.ok ? "var(--green)" : "var(--red)" }}>
-                  {testResult.ok ? "✓ " : "✗ "}{testResult.msg}
-                </div>
-              )}
-            </div>
+          <div>
+            <h1 style={{ fontWeight: 700, fontSize: "1.5rem", lineHeight: 1.2 }}>
+              {isEdit ? "Edit Project" : "New Project"}
+            </h1>
+            <p style={{ color: "var(--text2)", fontSize: "0.875rem", marginTop: 2 }}>
+              {isEdit ? "Update your project configuration" : "Configure your web application for autonomous testing"}
+            </p>
           </div>
         </div>
 
-        {/* Auth Toggle */}
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {/* Step pills */}
+        {!isEdit && (
+          <div style={{ display: "flex", gap: 6, marginTop: 16 }}>
+            {["Application details", "Auth (optional)", "Create"].map((s, i) => (
+              <div key={s} style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "4px 12px", borderRadius: 999,
+                background: i === 0 ? "var(--accent-bg)" : "var(--bg2)",
+                border: `1px solid ${i === 0 ? "var(--accent)" : "var(--border)"}`,
+                fontSize: "0.72rem", fontWeight: 500,
+                color: i === 0 ? "var(--accent)" : "var(--text3)",
+              }}>
+                <span style={{
+                  width: 16, height: 16, borderRadius: "50%", display: "inline-flex",
+                  alignItems: "center", justifyContent: "center", fontSize: "0.65rem",
+                  background: i === 0 ? "var(--accent)" : "var(--bg3)", color: i === 0 ? "#fff" : "var(--text3)",
+                  fontWeight: 700,
+                }}>{i + 1}</span>
+                {s}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* ── Application Details ── */}
+        <section style={{
+          border: "1px solid var(--border)", borderRadius: "var(--radius-lg)",
+          overflow: "hidden", background: "var(--surface)",
+        }}>
+          <div style={{
+            padding: "14px 20px", borderBottom: "1px solid var(--border)",
+            display: "flex", alignItems: "center", gap: 10,
+            background: "var(--bg2)",
+          }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8, background: "var(--accent-bg)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Globe size={14} color="var(--accent)" />
+            </div>
+            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Application Details</span>
+          </div>
+
+          <div style={{ padding: 20, display: "grid", gap: 18 }}>
+            {/* Project name */}
+            <div>
+              <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                Project Name <span style={{ color: "var(--red)" }}>*</span>
+              </label>
+              <input
+                className="input"
+                value={form.name}
+                onChange={set("name")}
+                placeholder="e.g. My Web App"
+                autoFocus={!isEdit}
+                style={{ borderColor: fieldErrors.name ? "var(--red)" : undefined }}
+              />
+              <FieldError name="name" />
+            </div>
+
+            {/* URL + test button */}
+            <div>
+              <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                Application URL <span style={{ color: "var(--red)" }}>*</span>
+              </label>
+              <div style={{ position: "relative" }}>
+                <div style={{
+                  position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+                  color: "var(--text3)", pointerEvents: "none",
+                }}>
+                  <Globe size={14} />
+                </div>
+                <input
+                  className="input"
+                  value={form.url}
+                  onChange={set("url")}
+                  placeholder="https://example.com"
+                  onBlur={() => {
+                    const v = form.url.trim();
+                    if (v && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) {
+                      setForm(f => ({ ...f, url: "https://" + v }));
+                    }
+                  }}
+                  style={{
+                    paddingLeft: 36, paddingRight: 100,
+                    borderColor: fieldErrors.url ? "var(--red)" : undefined,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={testConnection}
+                  disabled={testing}
+                  style={{
+                    position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                    display: "flex", alignItems: "center", gap: 5,
+                    padding: "4px 10px", borderRadius: 6,
+                    border: "1px solid var(--border)", background: "var(--surface)",
+                    cursor: "pointer", fontSize: "0.75rem", fontWeight: 500,
+                    color: testing ? "var(--text3)" : "var(--text2)",
+                    transition: "all 0.12s",
+                  }}
+                >
+                  {testing
+                    ? <Loader2 size={12} className="spin" />
+                    : testResult?.ok
+                      ? <Wifi size={12} style={{ color: "var(--green)" }} />
+                      : testResult
+                        ? <WifiOff size={12} style={{ color: "var(--red)" }} />
+                        : <Wifi size={12} />}
+                  {testing ? "Testing…" : "Test"}
+                </button>
+              </div>
+
+              {/* Test result pill */}
+              {testResult && (
+                <div style={{
+                  marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "4px 10px", borderRadius: 999,
+                  background: testResult.ok ? "var(--green-bg)" : "var(--red-bg)",
+                  border: `1px solid ${testResult.ok ? "var(--green)" : "var(--red)"}`,
+                  fontSize: "0.73rem", fontWeight: 500,
+                  color: testResult.ok ? "var(--green)" : "var(--red)",
+                }}>
+                  {testResult.ok ? <CheckCircle2 size={12} /> : <WifiOff size={12} />}
+                  {testResult.msg}
+                </div>
+              )}
+
+              <FieldError name="url" />
+            </div>
+          </div>
+        </section>
+
+        {/* ── Authentication ── */}
+        <section style={{
+          border: `1px solid ${form.hasAuth ? "var(--accent)" : "var(--border)"}`,
+          borderRadius: "var(--radius-lg)", overflow: "hidden",
+          background: "var(--surface)",
+          transition: "border-color 0.15s",
+        }}>
+          <div style={{
+            padding: "14px 20px",
+            borderBottom: form.hasAuth ? "1px solid var(--border)" : "none",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: form.hasAuth ? "var(--bg2)" : "transparent",
+          }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Lock size={16} color={form.hasAuth ? "var(--accent)" : "var(--text3)"} />
+              <div style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: form.hasAuth ? "var(--accent-bg)" : "var(--bg3)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {form.hasAuth
+                  ? <ShieldCheck size={14} color="var(--accent)" />
+                  : <Lock size={14} color="var(--text3)" />}
+              </div>
               <div>
-                <div style={{ fontFamily: "var(--font-display)", fontWeight: 700 }}>Authentication</div>
-                <div style={{ color: "var(--text2)", fontSize: "0.82rem" }}>Does your app require login?</div>
+                <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>Authentication</div>
+                <div style={{ color: "var(--text3)", fontSize: "0.75rem" }}>
+                  {form.hasAuth ? "Login credentials configured" : "Does your app require login?"}
+                </div>
               </div>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", textTransform: "none", fontSize: "0.875rem" }}>
-              <input type="checkbox" checked={form.hasAuth} onChange={toggleAuth} style={{ width: 16, height: 16, accentColor: "var(--accent)" }} />
-              Enable
+
+            {/* Toggle switch */}
+            <label style={{
+              position: "relative", width: 42, height: 24, cursor: "pointer", flexShrink: 0,
+            }}>
+              <input
+                type="checkbox"
+                checked={form.hasAuth}
+                onChange={toggleAuth}
+                style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
+              />
+              <span style={{
+                position: "absolute", inset: 0, borderRadius: 999, transition: "background 0.2s",
+                background: form.hasAuth ? "var(--accent)" : "var(--bg3)",
+                border: `1px solid ${form.hasAuth ? "var(--accent)" : "var(--border)"}`,
+              }}>
+                <span style={{
+                  position: "absolute", top: 2, left: form.hasAuth ? 20 : 2,
+                  width: 18, height: 18, borderRadius: "50%",
+                  background: form.hasAuth ? "#fff" : "var(--text3)",
+                  transition: "left 0.2s",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                }} />
+              </span>
             </label>
           </div>
 
           {form.hasAuth && (
-            <div style={{ marginTop: 20, display: "grid", gap: 12 }}>
-              <div style={{ height: 1, background: "var(--border)" }} />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ padding: 20, display: "grid", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <div>
-                  <label>Username Selector <span style={{ color: "var(--red)" }}>*</span></label>
-                  <input className="input" value={form.usernameSelector} onChange={set("usernameSelector")} placeholder="#email or input[name=email]"
+                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                    Username Selector <span style={{ color: "var(--red)" }}>*</span>
+                  </label>
+                  <input className="input" value={form.usernameSelector} onChange={set("usernameSelector")}
+                    placeholder="#email or input[name=email]"
                     style={{ borderColor: fieldErrors.usernameSelector ? "var(--red)" : undefined }} />
                   <FieldError name="usernameSelector" />
                 </div>
                 <div>
-                  <label>Username / Email <span style={{ color: "var(--red)" }}>*</span></label>
-                  <input className="input" value={form.username} onChange={set("username")} placeholder="user@example.com"
+                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                    Username / Email <span style={{ color: "var(--red)" }}>*</span>
+                  </label>
+                  <input className="input" value={form.username} onChange={set("username")}
+                    placeholder="user@example.com"
                     style={{ borderColor: fieldErrors.username ? "var(--red)" : undefined }} />
                   <FieldError name="username" />
                 </div>
                 <div>
-                  <label>Password Selector <span style={{ color: "var(--red)" }}>*</span></label>
-                  <input className="input" value={form.passwordSelector} onChange={set("passwordSelector")} placeholder="#password or input[type=password]"
+                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                    Password Selector <span style={{ color: "var(--red)" }}>*</span>
+                  </label>
+                  <input className="input" value={form.passwordSelector} onChange={set("passwordSelector")}
+                    placeholder="#password or input[type=password]"
                     style={{ borderColor: fieldErrors.passwordSelector ? "var(--red)" : undefined }} />
                   <FieldError name="passwordSelector" />
                 </div>
                 <div>
-                  <label>Password <span style={{ color: "var(--red)" }}>*</span></label>
-                  <input className="input" type="password" value={form.password} onChange={set("password")} placeholder="••••••••"
-                    style={{ borderColor: fieldErrors.password ? "var(--red)" : undefined }} />
+                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                    Password <span style={{ color: "var(--red)" }}>*</span>
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      className="input"
+                      type={showPassword ? "text" : "password"}
+                      value={form.password}
+                      onChange={set("password")}
+                      placeholder="••••••••"
+                      style={{ paddingRight: 38, borderColor: fieldErrors.password ? "var(--red)" : undefined }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(v => !v)}
+                      style={{
+                        position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                        background: "none", border: "none", cursor: "pointer", color: "var(--text3)",
+                        padding: 2,
+                      }}
+                    >
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
                   <FieldError name="password" />
                 </div>
               </div>
               <div>
-                <label>Submit Button Selector <span style={{ color: "var(--red)" }}>*</span></label>
-                <input className="input" value={form.submitSelector} onChange={set("submitSelector")} placeholder="button[type=submit] or #login-btn"
+                <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
+                  Submit Button Selector <span style={{ color: "var(--red)" }}>*</span>
+                </label>
+                <input className="input" value={form.submitSelector} onChange={set("submitSelector")}
+                  placeholder="button[type=submit] or #login-btn"
                   style={{ borderColor: fieldErrors.submitSelector ? "var(--red)" : undefined }} />
                 <FieldError name="submitSelector" />
               </div>
             </div>
           )}
-        </div>
+        </section>
 
+        {/* Error banner */}
         {error && (
-          <div style={{ padding: "12px 16px", background: "rgba(255,71,87,0.08)", border: "1px solid rgba(255,71,87,0.2)", borderRadius: "var(--radius)", color: "var(--red)", fontSize: "0.875rem", marginBottom: 16 }}>
+          <div style={{
+            padding: "12px 16px", borderRadius: "var(--radius)",
+            background: "var(--red-bg)", border: "1px solid var(--red)",
+            color: "var(--red)", fontSize: "0.875rem", display: "flex", alignItems: "flex-start", gap: 8,
+          }}>
+            <span style={{
+              width: 16, height: 16, borderRadius: "50%", background: "var(--red)", color: "#fff",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              fontSize: "0.65rem", fontWeight: 700, flexShrink: 0, marginTop: 1,
+            }}>!</span>
             {error}
           </div>
         )}
 
-        <button className="btn btn-primary" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", padding: "12px" }}>
-          {loading ? <span className="spin" style={{ display: "inline-block", width: 16, height: 16, border: "2px solid #000", borderTopColor: "transparent", borderRadius: "50%" }} /> : <Plus size={16} />}
-          {loading ? "Creating…" : "Create Project"}
+        {/* Submit */}
+        <button
+          className="btn btn-primary"
+          type="submit"
+          disabled={loading}
+          style={{
+            width: "100%", justifyContent: "center",
+            padding: "13px", fontSize: "0.9rem", fontWeight: 600,
+            borderRadius: "var(--radius)", gap: 8,
+          }}
+        >
+          {loading
+            ? <Loader2 size={16} className="spin" />
+            : isEdit ? <Save size={16} /> : <Plus size={16} />}
+          {loading
+            ? (isEdit ? "Saving…" : "Creating…")
+            : (isEdit ? "Save Changes" : "Create Project")}
         </button>
       </form>
     </div>
