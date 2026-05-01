@@ -8,7 +8,7 @@ import { api } from "../api.js";
 import { emitTourEvent } from "../hooks/useOnboarding.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 
-function validateForm(form) {
+function validateForm(form, { isEdit = false, hasExistingCreds = false } = {}) {
   const errors = {};
   if (!form.name.trim()) errors.name = "Project name is required.";
   if (!form.url.trim()) {
@@ -25,10 +25,17 @@ function validateForm(form) {
   }
   if (form.hasAuth) {
     if (!form.usernameSelector.trim()) errors.usernameSelector = "Username selector is required.";
-    if (!form.username.trim())         errors.username         = "Username / email is required.";
     if (!form.passwordSelector.trim()) errors.passwordSelector = "Password selector is required.";
-    if (!form.password.trim())         errors.password         = "Password is required.";
     if (!form.submitSelector.trim())   errors.submitSelector   = "Submit button selector is required.";
+    // In edit mode, a blank username/password means "keep the existing encrypted
+    // value" — the server never returns secrets so the input arrives empty.
+    const skipSecretRequired = isEdit && hasExistingCreds;
+    if (!form.username.trim() && !skipSecretRequired) {
+      errors.username = "Username / email is required.";
+    }
+    if (!form.password.trim() && !skipSecretRequired) {
+      errors.password = "Password is required.";
+    }
   }
   return errors;
 }
@@ -58,6 +65,11 @@ export default function NewProject() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
+  // True when the loaded project already has credentials stored server-side.
+  // The backend never returns the encrypted username/password to the client
+  // (see projectSanitiser.js), so those fields arrive blank — we use this flag
+  // to relax validation and show a "leave blank to keep" hint.
+  const [hasExistingCreds, setHasExistingCreds] = useState(false);
 
   // Load existing project when editing
   useEffect(() => {
@@ -67,14 +79,16 @@ export default function NewProject() {
       .then(data => {
         const p = data.project ?? data;
         const creds = p.credentials || {};
+        setHasExistingCreds(Boolean(p.credentials));
         setForm({
           name: p.name || "",
           url:  p.url  || "",
           hasAuth: Boolean(p.credentials),
           usernameSelector: creds.usernameSelector || "",
-          username:         creds.username         || "",
+          // Secrets are intentionally not returned by the API — leave blank.
+          username:         "",
           passwordSelector: creds.passwordSelector || "",
-          password:         creds.password         || "",
+          password:         "",
           submitSelector:   creds.submitSelector   || "",
         });
       })
@@ -128,7 +142,7 @@ export default function NewProject() {
   async function submit(e) {
     e.preventDefault();
     setError(null);
-    const errors = validateForm(form);
+    const errors = validateForm(form, { isEdit, hasExistingCreds });
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
     setFieldErrors({});
     setLoading(true);
@@ -138,6 +152,8 @@ export default function NewProject() {
         url:  form.url.trim(),
         credentials: form.hasAuth ? {
           usernameSelector: form.usernameSelector.trim(),
+          // Blank username/password on edit means "keep existing" — the server
+          // merges these with the stored encrypted values.
           username:         form.username.trim(),
           passwordSelector: form.passwordSelector.trim(),
           password:         form.password,
@@ -145,8 +161,7 @@ export default function NewProject() {
         } : null,
       };
       if (isEdit) {
-        await api.req?.("PATCH", `/projects/${editId}`, payload)
-          .catch(() => { throw new Error("Edit not yet supported by server — changes not saved."); });
+        await api.updateProject(editId, payload);
         navigate(`/projects/${editId}`);
       } else {
         const project = await api.createProject(payload);
@@ -424,7 +439,7 @@ export default function NewProject() {
                     Username / Email <span style={{ color: "var(--red)" }}>*</span>
                   </label>
                   <input className="input" value={form.username} onChange={set("username")}
-                    placeholder="user@example.com"
+                    placeholder={isEdit && hasExistingCreds ? "•••••• (saved — leave blank to keep)" : "user@example.com"}
                     style={{ borderColor: fieldErrors.username ? "var(--red)" : undefined }} />
                   <FieldError name="username" />
                 </div>
@@ -447,7 +462,7 @@ export default function NewProject() {
                       type={showPassword ? "text" : "password"}
                       value={form.password}
                       onChange={set("password")}
-                      placeholder="••••••••"
+                      placeholder={isEdit && hasExistingCreds ? "•••••• (saved — leave blank to keep)" : "••••••••"}
                       style={{ paddingRight: 38, borderColor: fieldErrors.password ? "var(--red)" : undefined }}
                     />
                     <button
