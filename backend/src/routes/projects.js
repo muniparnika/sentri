@@ -29,7 +29,7 @@ import * as scheduleRepo from "../database/repositories/scheduleRepo.js";
 import { getDatabase } from "../database/sqlite.js";
 import { generateProjectId, generateScheduleId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { encryptCredentials } from "../utils/credentialEncryption.js";
+import { encryptCredentials, decryptCredentials } from "../utils/credentialEncryption.js";
 import { validateProjectPayload, sanitise } from "../utils/validate.js";
 import { actor } from "../utils/actor.js";
 import { sanitiseProjectForClient } from "../utils/projectSanitiser.js";
@@ -108,34 +108,34 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   if (req.body.credentials === null) {
     fields.credentials = null;
   } else if (req.body.credentials) {
-    // Merge: any blank secret falls back to the already-encrypted value so
-    // the client can PATCH without re-sending the password.
-    const incoming = req.body.credentials;
-    // Selectors: fall back to existing values when the client omits or blanks
+    // Merge: any blank secret falls back to the existing stored value so the
+    // client can PATCH without re-sending the password.
+    //
+    // We normalise `existing.credentials` through `decryptCredentials()` first
+    // so legacy unencrypted rows (no `_encrypted` flag, pre-dating the
+    // encryption module) and current encrypted rows are both handled
+    // uniformly. Then the merged plaintext object is passed through
+    // `encryptCredentials()` exactly once — no post-hoc copy of raw stored
+    // fields into a `_encrypted: true` object, which would mix plaintext
+    // values into an "encrypted" envelope and permanently corrupt the row
+    // (next `decryptCredentials()` call throws and returns `null`).
+    //
+    // Selectors fall back to existing values when the client omits or blanks
     // them, so editing a legacy explicit-selector project doesn't silently
-    // wipe its login strategy. The new frontend only sends username + password
-    // (selectors are auto-detected at crawl time), so without this fallback
-    // any project rename/credential rotation would clobber the saved selectors.
+    // wipe its login strategy. The new frontend only sends username +
+    // password (selectors are auto-detected at crawl time); without this
+    // fallback any project rename/credential rotation would clobber the
+    // saved selectors.
+    const incoming = req.body.credentials;
+    const existingDecrypted = decryptCredentials(existing.credentials) || {};
     const merged = {
-      usernameSelector: incoming.usernameSelector ?? existing.credentials?.usernameSelector ?? "",
-      passwordSelector: incoming.passwordSelector ?? existing.credentials?.passwordSelector ?? "",
-      submitSelector:   incoming.submitSelector   ?? existing.credentials?.submitSelector   ?? "",
-      username: incoming.username ? incoming.username : null,
-      password: incoming.password ? incoming.password : null,
+      usernameSelector: incoming.usernameSelector ?? existingDecrypted.usernameSelector ?? "",
+      passwordSelector: incoming.passwordSelector ?? existingDecrypted.passwordSelector ?? "",
+      submitSelector:   incoming.submitSelector   ?? existingDecrypted.submitSelector   ?? "",
+      username: incoming.username || existingDecrypted.username || "",
+      password: incoming.password || existingDecrypted.password || "",
     };
-    const encryptedNew = encryptCredentials({
-      ...merged,
-      username: merged.username || "",
-      password: merged.password || "",
-    });
-    // Preserve existing encrypted secrets when the client sent blanks.
-    if (!merged.username && existing.credentials?.username) {
-      encryptedNew.username = existing.credentials.username;
-    }
-    if (!merged.password && existing.credentials?.password) {
-      encryptedNew.password = existing.credentials.password;
-    }
-    fields.credentials = encryptedNew;
+    fields.credentials = encryptCredentials(merged);
   }
 
   projectRepo.update(req.params.id, fields);
