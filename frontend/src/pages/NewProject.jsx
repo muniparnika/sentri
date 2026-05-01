@@ -24,11 +24,10 @@ function validateForm(form, { isEdit = false, hasExistingCreds = false } = {}) {
     }
   }
   if (form.hasAuth) {
-    if (!form.usernameSelector.trim()) errors.usernameSelector = "Username selector is required.";
-    if (!form.passwordSelector.trim()) errors.passwordSelector = "Password selector is required.";
-    if (!form.submitSelector.trim())   errors.submitSelector   = "Submit button selector is required.";
-    // In edit mode, a blank username/password means "keep the existing encrypted
-    // value" — the server never returns secrets so the input arrives empty.
+    // Selectors are auto-detected at crawl time by the backend's
+    // performAutoLogin() waterfall, so the user only needs to supply
+    // credentials. In edit mode, a blank username/password means "keep
+    // the existing encrypted value" (the server never returns secrets).
     const skipSecretRequired = isEdit && hasExistingCreds;
     if (!form.username.trim() && !skipSecretRequired) {
       errors.username = "Username / email is required.";
@@ -42,8 +41,7 @@ function validateForm(form, { isEdit = false, hasExistingCreds = false } = {}) {
 
 const EMPTY_FORM = {
   name: "", url: "", hasAuth: false,
-  usernameSelector: "", username: "",
-  passwordSelector: "", password: "", submitSelector: "",
+  username: "", password: "",
 };
 
 export default function NewProject() {
@@ -81,18 +79,14 @@ export default function NewProject() {
     api.getProject(editId)
       .then(data => {
         const p = data.project ?? data;
-        const creds = p.credentials || {};
         setHasExistingCreds(Boolean(p.credentials));
         const loaded = {
           name: p.name || "",
           url:  p.url  || "",
           hasAuth: Boolean(p.credentials),
-          usernameSelector: creds.usernameSelector || "",
           // Secrets are intentionally not returned by the API — leave blank.
-          username:         "",
-          passwordSelector: creds.passwordSelector || "",
-          password:         "",
-          submitSelector:   creds.submitSelector   || "",
+          username: "",
+          password: "",
         };
         setForm(loaded);
         setInitialForm(loaded);
@@ -110,11 +104,8 @@ export default function NewProject() {
     const checked = e.target.checked;
     if (!checked && form.hasAuth) {
       setSavedAuthFields({
-        usernameSelector: form.usernameSelector,
         username: form.username,
-        passwordSelector: form.passwordSelector,
         password: form.password,
-        submitSelector: form.submitSelector,
       });
     }
     if (checked && savedAuthFields) {
@@ -155,14 +146,13 @@ export default function NewProject() {
       const payload = {
         name: form.name.trim(),
         url:  form.url.trim(),
+        // Only credentials (username + password) are sent — login form
+        // selectors are auto-detected at crawl time. Blank username/password
+        // on edit means "keep existing"; the server merges blanks with the
+        // stored encrypted values.
         credentials: form.hasAuth ? {
-          usernameSelector: form.usernameSelector.trim(),
-          // Blank username/password on edit means "keep existing" — the server
-          // merges these with the stored encrypted values.
-          username:         form.username.trim(),
-          passwordSelector: form.passwordSelector.trim(),
-          password:         form.password,
-          submitSelector:   form.submitSelector.trim(),
+          username: form.username.trim(),
+          password: form.password,
         } : null,
       };
       if (isEdit) {
@@ -251,9 +241,6 @@ export default function NewProject() {
           }
           const step1Complete = Boolean(form.name.trim()) && urlValid;
           const authFieldsFilled = form.hasAuth
-            && form.usernameSelector.trim()
-            && form.passwordSelector.trim()
-            && form.submitSelector.trim()
             && form.username.trim()
             && form.password.trim();
           // hasAuth=false counts as "complete" — auth is genuinely optional.
@@ -478,16 +465,20 @@ export default function NewProject() {
 
           {form.hasAuth && (
             <div style={{ padding: 20, display: "grid", gap: 14 }}>
+              {/* Auto-detect hint */}
+              <div style={{
+                padding: "10px 12px", borderRadius: "var(--radius)",
+                background: "var(--accent-bg)", border: "1px solid var(--accent)",
+                fontSize: "0.78rem", color: "var(--accent)",
+                display: "flex", alignItems: "flex-start", gap: 8,
+              }}>
+                <ShieldCheck size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>
+                  Sentri detects login form fields automatically — just enter your test credentials.
+                </span>
+              </div>
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <div>
-                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                    Username Selector <span style={{ color: "var(--red)" }}>*</span>
-                  </label>
-                  <input className="input" value={form.usernameSelector} onChange={set("usernameSelector")}
-                    placeholder="#email or input[name=email]"
-                    style={{ borderColor: fieldErrors.usernameSelector ? "var(--red)" : undefined }} />
-                  <FieldError name="usernameSelector" />
-                </div>
                 <div>
                   <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
                     Username / Email <span style={{ color: "var(--red)" }}>*</span>
@@ -496,15 +487,6 @@ export default function NewProject() {
                     placeholder={isEdit && hasExistingCreds ? "•••••• (saved — leave blank to keep)" : "user@example.com"}
                     style={{ borderColor: fieldErrors.username ? "var(--red)" : undefined }} />
                   <FieldError name="username" />
-                </div>
-                <div>
-                  <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                    Password Selector <span style={{ color: "var(--red)" }}>*</span>
-                  </label>
-                  <input className="input" value={form.passwordSelector} onChange={set("passwordSelector")}
-                    placeholder="#password or input[type=password]"
-                    style={{ borderColor: fieldErrors.passwordSelector ? "var(--red)" : undefined }} />
-                  <FieldError name="passwordSelector" />
                 </div>
                 <div>
                   <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
@@ -533,15 +515,6 @@ export default function NewProject() {
                   </div>
                   <FieldError name="password" />
                 </div>
-              </div>
-              <div>
-                <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: "0.83rem" }}>
-                  Submit Button Selector <span style={{ color: "var(--red)" }}>*</span>
-                </label>
-                <input className="input" value={form.submitSelector} onChange={set("submitSelector")}
-                  placeholder="button[type=submit] or #login-btn"
-                  style={{ borderColor: fieldErrors.submitSelector ? "var(--red)" : undefined }} />
-                <FieldError name="submitSelector" />
               </div>
             </div>
           )}
