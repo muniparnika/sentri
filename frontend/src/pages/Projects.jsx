@@ -8,8 +8,8 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Plus, Globe, Search, ExternalLink,
-  RefreshCw, FlaskConical, ChevronRight, Trash2, Pencil,
+  Plus, Globe, Search, ExternalLink, CheckSquare,
+  RefreshCw, ChevronRight, Trash2, Pencil,
 } from "lucide-react";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData";
 import { fmtRelativeDate } from "../utils/formatters";
@@ -228,7 +228,7 @@ export default function Projects() {
                     onClick={() => navigate(`/projects/${p.id}`)}
                     title="View project"
                   >
-                    <FlaskConical size={13} /> Tests
+                    <CheckSquare size={13} /> Tests
                   </button>
                   {canEdit && (
                   <button

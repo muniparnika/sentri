@@ -1,8 +1,7 @@
 import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import {
-  LayoutDashboard, FlaskConical, FolderOpen, BarChart2,
-  Briefcase, Layers, Zap, Settings, ChevronDown, Check, ChevronRight,
+import { Home, FolderKanban, CheckSquare, PlayCircle, BarChart3, Bot, Server,
+    Settings, ChevronDown, Check, ChevronRight
 } from "lucide-react";
 import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -13,23 +12,23 @@ const NAV_GROUPS = [
   {
     label: "Core",
     items: [
-      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", tour: "tour-dashboard" },
-      { to: "/projects",  icon: FolderOpen,      label: "Projects",  tour: "tour-projects"  },
-      { to: "/tests",     icon: FlaskConical,    label: "Tests",     tour: "tour-tests"     },
+      { to: "/dashboard", icon: Home, label: "Dashboard", tour: "tour-dashboard" },
+      { to: "/projects",  icon: FolderKanban, label: "Projects",  tour: "tour-projects" },
+      { to: "/tests",     icon: CheckSquare, label: "Tests", tour: "tour-tests" },
     ],
   },
   {
     label: "Activity",
     items: [
-      { to: "/runs",    icon: Briefcase, label: "Runs"    },
-      { to: "/reports", icon: BarChart2, label: "Reports" },
+      { to: "/runs",    icon: PlayCircle, label: "Runs" },
+      { to: "/reports", icon: BarChart3, label: "Reports" },
     ],
   },
   {
     label: "Automation",
     items: [
-      { to: "/automation", icon: Zap,    label: "Automation" },
-      { to: "/system",     icon: Layers, label: "System"     },
+      { to: "/automation", icon: Bot, label: "Automation" },
+      { to: "/system",     icon: Server, label: "System" },
     ],
   },
 ];
@@ -223,7 +222,7 @@ export default function Sidebar({ open }) {
                           background: "var(--accent)",
                         }} />
                       )}
-                      <item.icon size={15} style={{ flexShrink: 0 }} strokeWidth={isActive ? 2.2 : 1.8} />
+                      <item.icon size={16} style={{ flexShrink: 0 }} strokeWidth={isActive ? 2.4 : 1.6} />
                       <span>{item.label}</span>
                       {isActive && (
                         <ChevronRight size={12} style={{ marginLeft: "auto", flexShrink: 0 }} color="var(--accent)" />
