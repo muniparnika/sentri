@@ -233,7 +233,6 @@ export default function Projects() {
                   {canEdit && (
                   <button
                     className="btn btn-ghost btn-sm"
-                    style={{ color: "var(--text2)" }}
                     onClick={() => navigate(`/projects/new?edit=${p.id}`)}
                     title="Edit project"
                   >
