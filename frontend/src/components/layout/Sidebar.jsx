@@ -107,13 +107,24 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
           overflowX: "hidden",
         }}
       >
-        {/* Logo */}
-        <div style={{
-          padding: "18px 0 16px", borderBottom: "1px solid var(--border)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
+        {/* Logo — doubles as expand toggle in collapsed mode so the toggle
+            lives in the same place (top) as the collapse toggle in expanded
+            mode, avoiding the footer/header asymmetry. */}
+        <button
+          onClick={() => onToggleCollapsed?.()}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+          style={{
+            padding: "18px 0 16px", borderBottom: "1px solid var(--border)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: "none", background: "transparent", cursor: "pointer",
+            width: "100%", transition: "background 0.12s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
           <AppLogo size={28} variant="icon" />
-        </div>
+        </button>
 
         {/* Workspace avatar (clicking expands the sidebar so the user can switch) */}
         <div style={{
@@ -166,12 +177,13 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
           ))}
         </nav>
 
-        {/* Footer: expand toggle + settings */}
-        <div style={{
-          padding: "10px 0 14px", borderTop: "1px solid var(--border)",
-          display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-        }}>
-          {isAdmin && (
+        {/* Footer: settings (admin only) — expand toggle lives at the top
+            on the logo, matching the expanded-mode collapse-toggle position. */}
+        {isAdmin && (
+          <div style={{
+            padding: "10px 0 14px", borderTop: "1px solid var(--border)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
             <NavLink
               to="/settings"
               className="nav-link"
@@ -187,23 +199,8 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
             >
               <Settings size={16} strokeWidth={1.8} />
             </NavLink>
-          )}
-          <button
-            onClick={() => onToggleCollapsed?.()}
-            title="Expand sidebar"
-            aria-label="Expand sidebar"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 40, height: 40, borderRadius: "var(--radius)",
-              border: "none", background: "transparent", color: "var(--text3)",
-              cursor: "pointer", transition: "background 0.12s",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-          >
-            <PanelLeftOpen size={16} />
-          </button>
-        </div>
+          </div>
+        )}
       </aside>
     );
   }
@@ -226,12 +223,27 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
         overflowX: "hidden",
       }}
     >
-      {/* ── Logo ── */}
+      {/* ── Logo + collapse toggle ── */}
       <div style={{
         padding: "18px 16px 16px", borderBottom: "1px solid var(--border)",
-        display: "flex", alignItems: "center",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
       }}>
         <AppLogo size={28} variant="full" />
+        <button
+          onClick={() => onToggleCollapsed?.()}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 26, height: 26, borderRadius: "var(--radius)",
+            border: "none", background: "transparent", color: "var(--text3)",
+            cursor: "pointer", flexShrink: 0, transition: "background 0.12s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <PanelLeftClose size={15} />
+        </button>
       </div>
 
       {/* ── Workspace Switcher ── */}
@@ -366,14 +378,9 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
         ))}
       </nav>
 
-      {/* ── Footer: Settings (admin only) + collapse toggle ── */}
-      {/* Always rendered so the collapse toggle has a consistent home —
-          mirrors the collapsed-rail footer where the expand toggle lives. */}
-      <div style={{
-        padding: "8px 10px 12px", borderTop: "1px solid var(--border)",
-        display: "flex", flexDirection: "column", gap: 2,
-      }}>
-        {isAdmin && (
+      {/* ── Settings footer (admin only) ── */}
+      {isAdmin && (
+        <div style={{ padding: "10px 10px 14px", borderTop: "1px solid var(--border)" }}>
           <NavLink
             to="/settings"
             className="nav-link"
@@ -390,26 +397,8 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
             <Settings size={15} strokeWidth={1.8} />
             <span>Settings</span>
           </NavLink>
-        )}
-        <button
-          onClick={() => onToggleCollapsed?.()}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-          style={{
-            display: "flex", alignItems: "center", gap: 9,
-            padding: "7px 10px", borderRadius: "var(--radius)",
-            border: "none", background: "transparent",
-            color: "var(--text2)", fontSize: "0.86rem", fontWeight: 400,
-            cursor: "pointer", textAlign: "left", width: "100%",
-            transition: "background 0.12s",
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = "var(--bg2)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-        >
-          <PanelLeftClose size={15} strokeWidth={1.8} />
-          <span>Collapse</span>
-        </button>
-      </div>
+        </div>
+      )}
     </aside>
   );
 }
