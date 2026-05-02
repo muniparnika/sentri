@@ -350,7 +350,21 @@ const RECORDER_SCRIPT = `
   // "dblclick" listener can cancel the queued clicks for the same target;
   // otherwise replay would re-run the click handler twice before the
   // intended double-click and toggle UI state / submit forms early.
-  const pendingClickTimers = new Map(); // selector -> timeout id
+  // Pending clicks: sel -> { timer, emit }. We keep the emit fn alongside
+  // the timer so flushPendingClicks() can fire it synchronously when the
+  // page is about to navigate. Without this, clicking a submit button or
+  // link loses the click action — the 250 ms dblclick-defer timer is
+  // destroyed along with the page before it fires.
+  const pendingClickTimers = new Map();
+  function flushPendingClicks() {
+    for (const sel of Array.from(pendingClickTimers.keys())) {
+      const pending = pendingClickTimers.get(sel);
+      if (!pending) continue;
+      clearTimeout(pending.timer);
+      pendingClickTimers.delete(sel);
+      try { pending.emit(); } catch (_) { /* best-effort */ }
+    }
+  }
   let shortcutCaptureBudget = 0;
   function eventElement(ev) {
     const p = ev.composedPath && ev.composedPath();
@@ -369,8 +383,9 @@ const RECORDER_SCRIPT = `
     };
     if (!sel) { emit(); return; }
     const prev = pendingClickTimers.get(sel);
-    if (prev) clearTimeout(prev);
-    pendingClickTimers.set(sel, setTimeout(emit, ${TIMINGS.DBLCLICK_DEFER_MS}));
+    if (prev) clearTimeout(prev.timer);
+    const timer = setTimeout(emit, ${TIMINGS.DBLCLICK_DEFER_MS});
+    pendingClickTimers.set(sel, { timer, emit });
   }, true);
   document.addEventListener("dblclick", (ev) => {
     const raw = eventElement(ev);
@@ -380,7 +395,7 @@ const RECORDER_SCRIPT = `
     // the two click events that preceded it.
     if (sel) {
       const pending = pendingClickTimers.get(sel);
-      if (pending) { clearTimeout(pending); pendingClickTimers.delete(sel); }
+      if (pending) { clearTimeout(pending.timer); pendingClickTimers.delete(sel); }
     }
     window.__sentriRecord && window.__sentriRecord({
       kind: "dblclick", selector: sel, label: bestLabel(el), ts: Date.now(),
@@ -502,6 +517,7 @@ const RECORDER_SCRIPT = `
   // as the navigation, so __sentriRecord (an exposeBinding) gets the
   // event queued before the page unloads.
   document.addEventListener("submit", () => {
+    flushPendingClicks();
     flushAllPendingFills();
   }, true);
 
@@ -510,7 +526,11 @@ const RECORDER_SCRIPT = `
   // navigations, and HTTP redirects) — best-effort because exposeBinding
   // marshalling is async, but works for "type → click submit button"
   // flows where the click handler runs synchronously before unload.
+  // Order matters: flush clicks first so the recorded sequence is
+  // click → fill → goto rather than fill → click → goto when both are
+  // pending (rare but possible with synthetic events).
   window.addEventListener("pagehide", () => {
+    flushPendingClicks();
     flushAllPendingFills();
   }, true);
 
@@ -601,6 +621,7 @@ const RECORDER_SCRIPT = `
     // goto rather than just press Enter → goto. Same rationale for Tab
     // (commits autocomplete + moves focus, can trigger nav on some sites).
     if (ev.key === "Enter" || ev.key === "Tab") {
+      flushPendingClicks();
       flushAllPendingFills();
     }
     // If a printable single character is being typed into an editable field,
