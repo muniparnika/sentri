@@ -27,6 +27,11 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [shortcutArmed, setShortcutArmed] = useState(false);
   const [viewport, setViewport] = useState({ width: 1280, height: 720 });
+  // Candidate URLs surfaced as a datalist suggestion list under the Starting
+  // URL input — seed URL + any pages discovered on the latest successful
+  // crawl. Fetched lazily when the modal opens so projects without a crawl
+  // simply see the seed URL and an empty suggestion list.
+  const [urlOptions, setUrlOptions] = useState([]);
   const pollRef = useRef(null);
   const sessionIdRef = useRef(null);
   const projectIdRef = useRef(projectId);
@@ -47,6 +52,18 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   useEffect(() => { setStartUrl(defaultUrl); }, [defaultUrl]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
+
+  // Populate the Starting URL datalist with the project's seed URL + pages
+  // discovered on the latest successful crawl. Best-effort — failures fall
+  // through to an empty suggestion list rather than blocking the recorder.
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let cancelled = false;
+    api.getProjectPages(projectId)
+      .then((res) => { if (!cancelled) setUrlOptions(res?.urls || []); })
+      .catch(() => { if (!cancelled) setUrlOptions([]); });
+    return () => { cancelled = true; };
+  }, [open, projectId]);
 
   const sseUrl = sessionId ? `${API_PATH}/runs/${sessionId}/events` : null;
   useSseStream(sseUrl, useCallback((event) => {
@@ -70,7 +87,11 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     }
     const stale = sessionIdRef.current;
     if (stale) {
-      api.recordDiscard(projectIdRef.current || projectId, stale).catch(() => {});
+      // Await discard so the previous browser is fully torn down before we
+      // launch a new one. Fire-and-forget here let the new screencast race
+      // the old session's Chromium close, producing black-canvas symptoms.
+      try { await api.recordDiscard(projectIdRef.current || projectId, stale); }
+      catch { /* best-effort */ }
       sessionIdRef.current = null; setSessionId(null);
     }
     teardownStreams();
@@ -180,13 +201,25 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     doDiscard();
   }
 
-  function doDiscard() {
-    if (sessionId) api.recordDiscard(projectId, sessionId).catch(() => {});
+  async function doDiscard() {
+    // Await the discard so the previous session's browser teardown
+    // completes before the modal closes / re-launches. Fire-and-forget
+    // here caused a race where the next `startRecording` raced against
+    // the previous session's `stopRecording()` (which closes Chromium),
+    // leaving the new session's CDP screencast attached to a browser
+    // that was still in mid-teardown — symptom: black canvas with no
+    // frames produced on the new session, until a hard refresh.
+    setConfirmDiscard(false);
+    if (sessionId) {
+      try { await api.recordDiscard(projectId, sessionId); }
+      catch { /* best-effort — server may have already auto-torn-down */ }
+    }
     teardownStreams();
     sessionIdRef.current = null;
-    setConfirmDiscard(false);
     setPhase("idle");
     setSessionId(null);
+    setFrames([]);
+    setActions([]);
     onClose?.();
   }
 
@@ -254,12 +287,16 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
                 </label>
                 <input
                   className="input recorder-idle__input"
+                  list="recorder-url-options"
                   value={startUrl}
                   onChange={(e) => setStartUrl(e.target.value)}
                   placeholder="https://example.com"
                   onKeyDown={(e) => e.key === "Enter" && handleStart()}
                   autoFocus
                 />
+                <datalist id="recorder-url-options">
+                  {urlOptions.map((u) => <option key={u} value={u} />)}
+                </datalist>
               </div>
             </div>
             {error && <div className="banner banner-error" style={{ marginBottom: 16 }}>{error}</div>}

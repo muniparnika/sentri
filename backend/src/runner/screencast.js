@@ -48,12 +48,22 @@ export async function startScreencast(page, runId) {
   let cdpSession;
   try {
     cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send("Page.bringToFront").catch(() => {});
+    await cdpSession.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+        await page.evaluate(() => {
+          try {
+            Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
+            Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
+            document.dispatchEvent(new Event("visibilitychange"));
+            requestAnimationFrame(() => {});
+          } catch (_) { /* best-effort */ }
+        }).catch(() => {});
     await cdpSession.send("Page.startScreencast", {
       format: "jpeg",
       quality: 50,
       maxWidth: 1280,
       maxHeight: 720,
-      everyNthFrame: 2, // ~15 FPS source → ~7 FPS net
+      everyNthFrame: 1, // ~15 FPS source → ~7 FPS net
     });
     console.log(formatLogLine("info", null, `[screencast] started for run=${runId}`));
   } catch (cdpErr) {
@@ -99,6 +109,7 @@ export async function startScreencast(page, runId) {
   const stop = async () => {
     await cdpSession.send("Page.stopScreencast").catch(() => {});
     await cdpSession.detach().catch(() => {});
+    console.log(formatLogLine("info", null, `[screencast] stopped for run=${runId} (frames=${frameCount})`));
   };
   return { stop, cdpSession };
 }
