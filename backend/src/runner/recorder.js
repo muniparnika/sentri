@@ -1270,6 +1270,30 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     page = await context.newPage();
     pageAliases.set(page, "page");
     session.page = page;
+
+    // Temporary diagnostic: pipe page console + errors into backend logs so
+    // we can see if RECORDER_SCRIPT throws during init or if the in-page
+    // listeners ever fire.
+    page.on("console", (msg) => {
+      console.error(formatLogLine("info", null, `[recorder/page-console] ${msg.type()}: ${msg.text()}`));
+    });
+    page.on("pageerror", (err) => {
+      console.error(formatLogLine("warn", null, `[recorder/page-error] ${err.message}`));
+    });
+    // Sentinel: after the init script installs, log what's on window so we
+    // can verify __sentriRecord and __sentriRecorderInstalled exist.
+    page.on("load", async () => {
+      try {
+        const probe = await page.evaluate(() => ({
+          installed: !!window.__sentriRecorderInstalled,
+          hasBinding: typeof window.__sentriRecord === "function",
+          url: location.href,
+        }));
+        console.error(formatLogLine("info", null, `[recorder/probe] installed=${probe.installed} hasBinding=${probe.hasBinding} url=${probe.url}`));
+      } catch (err) {
+        console.error(formatLogLine("warn", null, `[recorder/probe] failed: ${err.message}`));
+      }
+    });
     context.on("page", (p) => {
       if (pageAliases.has(p)) return;
       pageAliases.set(p, `popup${Math.max(1, pageAliases.size)}`);
