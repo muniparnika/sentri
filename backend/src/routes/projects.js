@@ -260,8 +260,17 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
 router.get("/:id/pages", requireRole("viewer"), (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
+  // Walk newest-first and take the first crawl run that actually has pages
+  // persisted. We intentionally do NOT filter on status === "completed"
+  // because `crawler.js` flips the status to "completed_empty" whenever a
+  // crawl finished without generating any tests (auth-walled sites, SPAs
+  // with no interactive elements, AI-rate-limited runs). Those runs still
+  // persist `run.pages` at crawler.js:402 before the status flip, so their
+  // discovered URLs are a perfectly valid input to the dropdown. Filtering
+  // them out was causing the dropdown to show only the seed URL for any
+  // project whose most recent crawl didn't produce tests.
   const runs = runRepo.getByProjectId(req.params.id);
-  const latest = runs.find(r => r.type === "crawl" && (r.status === "completed" || r.status === "passed"));
+  const latest = runs.find(r => r.type === "crawl" && Array.isArray(r.pages) && r.pages.length > 0);
   const pages = (latest?.pages || []).map(p => p?.url).filter(Boolean);
   const seed = project.url;
   const unique = Array.from(new Set([seed, ...pages].filter(Boolean)));
