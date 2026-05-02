@@ -433,7 +433,7 @@ const RECORDER_SCRIPT = `
   document.addEventListener("mouseover", (ev) => {
     const raw = eventElement(ev);
     // Only capture hovers on interactive ancestors — do NOT fall back to the
-    // raw element. The `|| raw` pattern that was here previously caused every
+    // raw element. The \`|| raw\` pattern that was here previously caused every
     // mouseover on a generic container (div, section, body) to emit a hover
     // action with a noisy CSS selector, flooding the captured steps list with
     // drive-by movements across layout elements.
