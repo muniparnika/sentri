@@ -854,18 +854,6 @@
   opacity: 0.3;
 }
 
-/* DOM tree node */
-.srv-dom-node-wrap {
-  line-height: 1.8;
-}
-
-.srv-dom-node-tag {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  cursor: pointer;
-  color: #93c5fd;
-}
-
 /* ── Responsive: 900px ───────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .srv-grid {
