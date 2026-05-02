@@ -14,14 +14,27 @@
  */
 
 import assert from "node:assert/strict";
-import { createTestRunner, setupEnv } from "./helpers/test-base.js";
+import { createTestContext } from "./helpers/test-base.js";
 import {
   getProvider,
   getConfiguredKeys,
 } from "../src/aiProvider.js";
 import { demoQuota } from "../src/middleware/demoQuota.js";
+import authRouter, { requireAuth } from "../src/routes/auth.js";
+import settingsRouter from "../src/routes/settings.js";
 
-const { test, summary } = createTestRunner();
+const t = createTestContext();
+const { app, req, workspaceScope, setupEnv, resetDb, registerAndLogin } = t;
+const { test, summary } = t.createTestRunner();
+
+// ─── Mount routes once on the shared app instance ────────────────────────────
+let _routesMounted = false;
+function mountRoutesOnce() {
+  if (_routesMounted) return;
+  app.use("/api/auth", authRouter);
+  app.use("/api", requireAuth, workspaceScope, settingsRouter);
+  _routesMounted = true;
+}
 
 // Strip any pre-existing cloud keys so detection is deterministic.
 const CLEAN_ENV = {
@@ -123,29 +136,129 @@ await test("demoQuota bypasses quota when only OPENROUTER_API_KEY is configured"
   } finally { env.restore(); }
 });
 
-console.log("\n🧪 OpenRouter — POST /api/v1/settings");
+// ─── HTTP integration: POST / GET / DELETE /api/settings ────────────────────
+//
+// These tests spin up the shared Express app with auth + settings routers
+// mounted, register a new user (who becomes admin of their personal
+// workspace so `requireRole("admin")` passes), and exercise the full HTTP
+// flow for provider="openrouter".
 
-// The settings routes require auth + workspace scoping. Rather than spin up
-// a full HTTP server here (which couples this test to many migrations), we
-// verify the route validator's provider list directly. Full HTTP coverage
-// belongs in tests/integration-routes.test.js.
-await test("settings route accepts 'openrouter' as a valid provider", async () => {
-  const mod = await import("../src/routes/settings.js");
-  // The route file exports an Express router; we cannot easily invoke it
-  // without a live app. Instead, assert the provider literal is referenced
-  // in the source so future refactors don't drop it.
-  const src = await import("node:fs").then((fs) =>
-    fs.promises.readFile(new URL("../src/routes/settings.js", import.meta.url), "utf8"),
-  );
-  assert.match(src, /"openrouter"/, "settings.js must list 'openrouter' in validProviders");
-  assert.ok(mod, "settings module loads");
+console.log("\n🧪 OpenRouter — POST/GET/DELETE /api/settings (HTTP)");
+
+// Helper: boot the app, register + login an admin user, return
+// `{ base, token, cleanup }`. Each test gets a fresh DB + server to avoid
+// leaking keys between cases.
+async function bootTestServer() {
+  mountRoutesOnce();
+  resetDb();
+  const env = setupEnv({
+    SKIP_EMAIL_VERIFICATION: "true",
+    // Clear provider keys so getConfiguredKeys() starts clean.
+    ...CLEAN_ENV,
+  });
+  const server = app.listen(0);
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+  const { token } = await registerAndLogin(base, {
+    name: "OR Admin",
+    email: `or-admin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`,
+    password: "Password123!",
+  });
+  return {
+    base,
+    token,
+    async cleanup() {
+      env.restore();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+await test("POST /api/settings with provider='openrouter' + valid key returns 200", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    const out = await req(base, "/api/settings", {
+      method: "POST",
+      token,
+      body: { provider: "openrouter", apiKey: "or-valid-key-123456" },
+    });
+    assert.equal(out.res.status, 200, `expected 200, got ${out.res.status}: ${JSON.stringify(out.json)}`);
+    assert.equal(out.json.ok, true);
+    assert.equal(out.json.provider, "openrouter");
+    assert.ok(typeof out.json.providerName === "string", "response must include providerName");
+  } finally { await cleanup(); }
 });
 
-await test("apiKeyRepo VALID_PROVIDERS includes 'openrouter'", async () => {
-  const src = await import("node:fs").then((fs) =>
-    fs.promises.readFile(new URL("../src/database/repositories/apiKeyRepo.js", import.meta.url), "utf8"),
-  );
-  assert.match(src, /VALID_PROVIDERS\s*=\s*\[[^\]]*"openrouter"/, "apiKeyRepo must allow 'openrouter'");
+await test("POST /api/settings with provider='openrouter' + short key returns 400", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    const out = await req(base, "/api/settings", {
+      method: "POST",
+      token,
+      body: { provider: "openrouter", apiKey: "short" },  // < 10 chars
+    });
+    assert.equal(out.res.status, 400, `expected 400, got ${out.res.status}: ${JSON.stringify(out.json)}`);
+    assert.match(out.json.error || "", /at least 10 characters/i);
+  } finally { await cleanup(); }
+});
+
+await test("POST /api/settings with invalid provider returns 400", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    const out = await req(base, "/api/settings", {
+      method: "POST",
+      token,
+      body: { provider: "not-a-provider", apiKey: "or-valid-key-123456" },
+    });
+    assert.equal(out.res.status, 400);
+    assert.match(out.json.error || "", /openrouter/);
+  } finally { await cleanup(); }
+});
+
+await test("GET /api/settings exposes 'openrouter' field in masked-key response", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    // First save a key, then read it back.
+    await req(base, "/api/settings", {
+      method: "POST",
+      token,
+      body: { provider: "openrouter", apiKey: "or-roundtrip-key-abc" },
+    });
+    const out = await req(base, "/api/settings", { token });
+    assert.equal(out.res.status, 200);
+    assert.ok("openrouter" in out.json, "GET /settings response must include 'openrouter' field");
+    assert.ok(out.json.openrouter, "openrouter should be truthy (masked) after POST");
+    // Key must be masked — never returned in plaintext.
+    assert.ok(!/roundtrip/.test(out.json.openrouter), "raw key must not be returned");
+  } finally { await cleanup(); }
+});
+
+await test("DELETE /api/settings/openrouter clears the stored key", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    // Save, then delete, then confirm it's gone.
+    await req(base, "/api/settings", {
+      method: "POST",
+      token,
+      body: { provider: "openrouter", apiKey: "or-delete-me-123456" },
+    });
+    const del = await req(base, "/api/settings/openrouter", { method: "DELETE", token });
+    assert.equal(del.res.status, 200, `expected 200 from DELETE, got ${del.res.status}: ${JSON.stringify(del.json)}`);
+    assert.equal(del.json.ok, true);
+
+    const after = await req(base, "/api/settings", { token });
+    assert.equal(after.res.status, 200);
+    assert.ok(!after.json.openrouter, "openrouter field should be null/falsy after DELETE");
+  } finally { await cleanup(); }
+});
+
+await test("DELETE /api/settings/not-a-provider returns 400", async () => {
+  const { base, token, cleanup } = await bootTestServer();
+  try {
+    const out = await req(base, "/api/settings/not-a-provider", { method: "DELETE", token });
+    assert.equal(out.res.status, 400);
+    assert.match(out.json.error || "", /openrouter/);
+  } finally { await cleanup(); }
 });
 
 summary("OpenRouter");
