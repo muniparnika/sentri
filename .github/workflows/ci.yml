@@ -24,10 +24,12 @@ jobs:
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
-        with:
-          config-path: .github/.gitleaks.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action v2 does not accept a `config-path` input; it
+          # honours the GITLEAKS_CONFIG env var instead (passed through to
+          # the underlying gitleaks CLI).
+          GITLEAKS_CONFIG: .github/.gitleaks.toml
           # GITLEAKS_LICENSE is only required for organisations on the paid plan.
           # For public repos and personal accounts this can be omitted.
 

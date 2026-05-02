@@ -34,13 +34,18 @@ The distinct ID sent to PostHog is `sha256(hostname|cwd)` — no usernames, emai
 
 | Variable | Default | Description |
 |---|---|---|
-| `AI_PROVIDER` | auto-detect | Force: `anthropic`, `openai`, `google`, or `local` |
+| `AI_PROVIDER` | auto-detect | Force: `anthropic`, `openai`, `google`, `openrouter`, or `local` |
 | `ANTHROPIC_API_KEY` | — | [console.anthropic.com](https://console.anthropic.com) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Override Anthropic model |
 | `OPENAI_API_KEY` | — | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Override OpenAI model |
 | `GOOGLE_API_KEY` | — | [aistudio.google.com](https://aistudio.google.com/apikey) |
 | `GOOGLE_MODEL` | `gemini-2.5-flash` | Override Google model |
+| `OPENROUTER_API_KEY` | — | [openrouter.ai/keys](https://openrouter.ai/keys) — unified gateway to 200+ models |
+| `OPENROUTER_MODEL` | `openrouter/auto` | OpenRouter model slug (e.g. `anthropic/claude-3.5-sonnet`, `meta-llama/llama-3.1-70b-instruct`) |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for self-hosted / proxy deployments |
+| `OPENROUTER_REFERER` | `https://sentri.dev` | `HTTP-Referer` header sent to OpenRouter for leaderboard attribution (optional) |
+| `OPENROUTER_APP_TITLE` | `Sentri` | `X-Title` header sent to OpenRouter for leaderboard attribution (optional) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `mistral:7b` | Model name for local inference |
 | `OLLAMA_MAX_PREDICT` | `4096` | Max output tokens for Ollama |

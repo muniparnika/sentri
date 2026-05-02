@@ -3,14 +3,15 @@
  * @description Multi-AI provider abstraction layer.
  *
  * ### Supported providers
- * | Provider         | Key Env Variable    | Model Env Variable   | Default Model              |
- * |------------------|---------------------|----------------------|----------------------------|
- * | Anthropic Claude | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL`    | claude-sonnet-4-20250514   |
- * | OpenAI GPT       | `OPENAI_API_KEY`    | `OPENAI_MODEL`       | gpt-4o-mini                |
- * | Google Gemini    | `GOOGLE_API_KEY`    | `GOOGLE_MODEL`       | gemini-2.5-flash           |
- * | Ollama (local)   | `AI_PROVIDER=local` | `OLLAMA_MODEL`       | mistral:7b                 |
+ * | Provider         | Key Env Variable      | Model Env Variable   | Default Model              |
+ * |------------------|-----------------------|----------------------|----------------------------|
+ * | Anthropic Claude | `ANTHROPIC_API_KEY`   | `ANTHROPIC_MODEL`    | claude-sonnet-4-20250514   |
+ * | OpenAI GPT       | `OPENAI_API_KEY`      | `OPENAI_MODEL`       | gpt-4o-mini                |
+ * | Google Gemini    | `GOOGLE_API_KEY`      | `GOOGLE_MODEL`       | gemini-2.5-flash           |
+ * | OpenRouter       | `OPENROUTER_API_KEY`  | `OPENROUTER_MODEL`   | openrouter/auto            |
+ * | Ollama (local)   | `AI_PROVIDER=local`   | `OLLAMA_MODEL`       | mistral:7b                 |
  *
- * **Detection order:** Runtime override (header dropdown) → `AI_PROVIDER` env var → auto-detect (Anthropic → OpenAI → Google → Ollama).
+ * **Detection order:** Runtime override (header dropdown) → `AI_PROVIDER` env var → auto-detect (Anthropic → OpenAI → Google → OpenRouter → Ollama).
  *
  * ### Exports
  * - {@link generateText} — Single-shot text generation.
@@ -75,14 +76,23 @@ export function setActiveProvider(provider) {
 }
 
 // Maps cloud provider IDs to their env-var names (single source of truth)
-const CLOUD_KEY_MAP = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GOOGLE_API_KEY" };
+const CLOUD_KEY_MAP = {
+  anthropic:  "ANTHROPIC_API_KEY",
+  openai:     "OPENAI_API_KEY",
+  google:     "GOOGLE_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
 
 // Default models per cloud provider — overridable via env vars
 const CLOUD_DEFAULT_MODELS = {
-  anthropic: { envVar: "ANTHROPIC_MODEL", fallback: "claude-sonnet-4-20250514", name: "Claude Sonnet" },
-  openai:    { envVar: "OPENAI_MODEL",    fallback: "gpt-4o-mini",              name: "GPT-4o-mini" },
-  google:    { envVar: "GOOGLE_MODEL",    fallback: "gemini-2.5-flash",         name: "Gemini 2.5 Flash" },
+  anthropic:  { envVar: "ANTHROPIC_MODEL",  fallback: "claude-sonnet-4-20250514", name: "Claude Sonnet" },
+  openai:     { envVar: "OPENAI_MODEL",     fallback: "gpt-4o-mini",              name: "GPT-4o-mini" },
+  google:     { envVar: "GOOGLE_MODEL",     fallback: "gemini-2.5-flash",         name: "Gemini 2.5 Flash" },
+  openrouter: { envVar: "OPENROUTER_MODEL", fallback: "openrouter/auto",          name: "OpenRouter" },
 };
+
+// OpenRouter base URL — overridable for self-hosted proxies.
+const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
 function getCloudModel(provider) {
   const cfg = CLOUD_DEFAULT_MODELS[provider];
@@ -99,14 +109,14 @@ function getCloudName(provider) {
 }
 
 // Auto-detect order for cloud providers
-const CLOUD_DETECT_ORDER = ["anthropic", "openai", "google"];
+const CLOUD_DETECT_ORDER = ["anthropic", "openai", "google", "openrouter"];
 
 /**
  * Set an AI provider API key at runtime (via Settings page).
  * Persists the key to the database so it survives server restarts.
  * Pass an empty string to clear the key both in-memory and in the DB.
  *
- * @param {string} provider - `"anthropic"` | `"openai"` | `"google"`.
+ * @param {string} provider - `"anthropic"` | `"openai"` | `"google"` | `"openrouter"`.
  * @param {string} key      - The API key string, or `""` to deactivate.
  */
 export function setRuntimeKey(provider, key) {
@@ -191,18 +201,20 @@ function getOllamaModel() {
 
 function buildProviderMeta() {
   return {
-    anthropic: { name: getCloudName("anthropic"), model: getCloudModel("anthropic"), color: "#cd7f32" },
-    openai:    { name: getCloudName("openai"),    model: getCloudModel("openai"),    color: "#10a37f" },
-    google:    { name: getCloudName("google"),    model: getCloudModel("google"),    color: "#4285f4" },
-    local:     { name: `Ollama (${getOllamaModel()})`, model: getOllamaModel(), color: "#7c3aed" },
+    anthropic:  { name: getCloudName("anthropic"),  model: getCloudModel("anthropic"),  color: "#cd7f32" },
+    openai:     { name: getCloudName("openai"),     model: getCloudModel("openai"),     color: "#10a37f" },
+    google:     { name: getCloudName("google"),     model: getCloudModel("google"),     color: "#4285f4" },
+    openrouter: { name: getCloudName("openrouter"), model: getCloudModel("openrouter"), color: "#6466f1" },
+    local:      { name: `Ollama (${getOllamaModel()})`, model: getOllamaModel(), color: "#7c3aed" },
   };
 }
 
 const PROVIDER_DOCS = {
-  anthropic: "https://console.anthropic.com/settings/keys",
-  openai:    "https://platform.openai.com/api-keys",
-  google:    "https://aistudio.google.com/apikey",
-  local:     "https://ollama.ai",
+  anthropic:  "https://console.anthropic.com/settings/keys",
+  openai:     "https://platform.openai.com/api-keys",
+  google:     "https://aistudio.google.com/apikey",
+  openrouter: "https://openrouter.ai/keys",
+  local:      "https://ollama.ai",
 };
 
 /**
@@ -280,7 +292,7 @@ function detectProvider() {
   const forced = process.env.AI_PROVIDER?.toLowerCase();
   if (forced) {
     if (forced === "local") return "local";
-    if (!CLOUD_KEY_MAP[forced]) throw new Error(`Unknown AI_PROVIDER="${forced}". Valid: anthropic, openai, google, local`);
+    if (!CLOUD_KEY_MAP[forced]) throw new Error(`Unknown AI_PROVIDER="${forced}". Valid: anthropic, openai, google, openrouter, local`);
     if (!getKey(CLOUD_KEY_MAP[forced])) throw new Error(`AI_PROVIDER="${forced}" but ${CLOUD_KEY_MAP[forced]} is not set`);
     return forced;
   }
@@ -294,7 +306,7 @@ function detectProvider() {
   return null;
 }
 
-/** @returns {string|null} Current provider ID (`"anthropic"`, `"openai"`, `"google"`, `"local"`), or `null`. */
+/** @returns {string|null} Current provider ID (`"anthropic"`, `"openai"`, `"google"`, `"openrouter"`, `"local"`), or `null`. */
 export function getProvider()     { try { return detectProvider(); } catch { return null; } }
 /** @returns {boolean} `true` if any AI provider is configured. */
 export function hasProvider()     { return getProvider() !== null; }
@@ -327,7 +339,7 @@ export function getProviderMeta() {
  * Returns masked API keys and Ollama config for the Settings UI.
  * Never returns full keys — only masked versions for display.
  *
- * @returns {{anthropic: string, openai: string, google: string, activeProvider: string|null, ollamaBaseUrl: string, ollamaModel: string}}
+ * @returns {{anthropic: string, openai: string, google: string, openrouter: string, activeProvider: string|null, ollamaBaseUrl: string, ollamaModel: string}}
  */
 export function getConfiguredKeys() {
   const result = { activeProvider: getProvider() };
@@ -859,6 +871,36 @@ async function callProvider(provider, promptOrMessages, maxTokens, signal, respo
     }, "OpenAI");
   }
 
+  if (provider === "openrouter") {
+    // OpenRouter is OpenAI-API-compatible — reuse the OpenAI SDK with a
+    // custom baseURL. Optional HTTP-Referer / X-Title headers let OpenRouter
+    // attribute traffic on their leaderboard; they're safe to omit.
+    const client = new OpenAI({
+      apiKey: getKey("OPENROUTER_API_KEY"),
+      baseURL: OPENROUTER_BASE_URL,
+      defaultHeaders: {
+        "HTTP-Referer": process.env.OPENROUTER_REFERER || "https://sentri.dev",
+        "X-Title":      process.env.OPENROUTER_APP_TITLE || "Sentri",
+      },
+    });
+    return await withRetry(async () => {
+      const { signal: composedSignal, cleanup } = composeSignal(signal, CLOUD_TIMEOUT_MS);
+      try {
+        const messages = [];
+        if (system) messages.push({ role: "system", content: system });
+        messages.push({ role: "user", content: user });
+        const params = {
+          model: buildProviderMeta().openrouter.model,
+          max_tokens: tokens,
+          messages,
+        };
+        if (useJson) params.response_format = { type: "json_object" };
+        const res = await client.chat.completions.create(params, { signal: composedSignal });
+        return res.choices[0].message.content;
+      } finally { cleanup(); }
+    }, "OpenRouter");
+  }
+
   if (provider === "google") {
     const genAI = new GoogleGenerativeAI(getKey("GOOGLE_API_KEY"));
     return await withRetry(async () => {
@@ -925,7 +967,7 @@ export async function generateText(prompt, options) {
   if (!provider) {
     throw new Error(
       "No AI provider configured. Options:\n" +
-      "  Cloud: set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY in backend/.env\n" +
+      "  Cloud: set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY / OPENROUTER_API_KEY in backend/.env\n" +
       "  Local: set AI_PROVIDER=local (requires Ollama running at http://localhost:11434)\n" +
       "         Optionally: OLLAMA_MODEL=mistral:7b  OLLAMA_BASE_URL=http://localhost:11434"
     );
@@ -1016,6 +1058,8 @@ export function parseJSON(text) {
  * Token-streaming variant of {@link generateText}.
  * Calls `onToken(string)` for each token as it arrives.
  * Returns the full accumulated text when the stream completes.
+ * Anthropic, OpenAI, and OpenRouter stream natively; Google and Ollama
+ * deliver the whole response as a single synthetic token.
  *
  * ### Error handling
  * If the streaming call fails with a retryable error (rate limit or
@@ -1092,6 +1136,42 @@ export async function streamText(promptOrMessages, onToken, options = {}) {
       messages.push({ role: "user", content: user });
       const params = {
         model: buildProviderMeta().openai.model,
+        max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+        stream: true,
+        messages,
+      };
+      if (useJson) params.response_format = { type: "json_object" };
+      const stream = await client.chat.completions.create(params, { signal });
+      let full = "";
+      for await (const chunk of stream) {
+        throwIfAborted(signal);
+        const token = chunk.choices[0]?.delta?.content ?? "";
+        if (token) { full += token; onToken(token); tokensEmitted++; }
+      }
+      return full;
+    } catch (err) {
+      if (err.name === "AbortError" || signal?.aborted) throw err;
+      if (tokensEmitted === 0 && isRetryableError(err)) return fallbackToNonStreaming(err);
+      throw err;
+    }
+  }
+
+  if (provider === "openrouter") {
+    let tokensEmitted = 0;
+    try {
+      const client = new OpenAI({
+        apiKey: getKey("OPENROUTER_API_KEY"),
+        baseURL: OPENROUTER_BASE_URL,
+        defaultHeaders: {
+          "HTTP-Referer": process.env.OPENROUTER_REFERER || "https://sentri.dev",
+          "X-Title":      process.env.OPENROUTER_APP_TITLE || "Sentri",
+        },
+      });
+      const messages = [];
+      if (system) messages.push({ role: "system", content: system });
+      messages.push({ role: "user", content: user });
+      const params = {
+        model: buildProviderMeta().openrouter.model,
         max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
         stream: true,
         messages,

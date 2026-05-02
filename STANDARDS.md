@@ -297,7 +297,7 @@ Schema is defined in `backend/src/database/schema.sql` (all `CREATE TABLE IF NOT
 
 ### AI Provider
 
-All LLM calls go through `aiProvider.js`. Do not import Anthropic, OpenAI, or Google SDKs directly anywhere else.
+All LLM calls go through `aiProvider.js`. Do not import Anthropic, OpenAI, Google, or OpenRouter SDKs directly anywhere else.
 
 ```js
 // ✅

@@ -1,173 +1,90 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  AlertTriangle,
-  RefreshCw,
-  RotateCcw,
-  ChevronLeft,
-  ChevronRight,
-  Globe,
-  Lock,
-  MoreHorizontal,
-  ExternalLink,
+  ArrowLeft, CheckCircle2, XCircle, Clock, AlertTriangle,
+  RefreshCw, RotateCcw, ChevronLeft, ChevronRight,
+  Globe, Lock, MoreHorizontal, ExternalLink,
 } from "lucide-react";
 import OverlayCanvas from "./OverlayCanvas.jsx";
 import HealingTimeline from "./HealingTimeline.jsx";
 import { cleanTestName } from "../../utils/formatTestName.js";
 import { fmtMs, fmtBytes } from "../../utils/formatters.js";
+import { escapeHtml } from "../../utils/markdown.js";
 import { api } from "../../api.js";
 
-// ─── Infer per-step status from the overall test result ──────────────────────
-//
-// The backend runs the whole test and records one pass/fail + error string.
-// The `steps[]` are human-readable strings (e.g. "Login to application").
-// We infer which step failed by matching keywords in the error message.
-//
+// ─── Infer per-step status ────────────────────────────────────────────────────
 function inferStepStatuses(steps = [], result = {}) {
   if (!steps.length) return [];
-
   const status = result.status || "pending";
-  const error = (result.error || "").toLowerCase();
+  const error  = (result.error || "").toLowerCase();
 
-  if (status === "passed") {
-    return steps.map(() => "passed");
-  }
-
-  if (status === "running") {
-    // Find the first step that looks like it's the current one
-    // (simple heuristic: mark first N as passed, last as running)
-    return steps.map((_, i) =>
-      i < steps.length - 1 ? "passed" : "running"
-    );
-  }
+  if (status === "passed")  return steps.map(() => "passed");
+  if (status === "running") return steps.map((_, i) => i < steps.length - 1 ? "passed" : "running");
 
   if (status === "failed") {
-    // Try to match the error to a specific step.
-    //
-    // Strategy: score every step by how many of its meaningful words appear in
-    // the error message, then pick the highest-scoring step. Ties are broken by
-    // preferring the *later* step (failures are more likely to surface in later
-    // steps than early ones). A minimum score of 2 is required so that a single
-    // incidental word match (e.g. "navigate" appearing in a URL fragment) does
-    // not falsely blame Step 1.
-    //
-    // URL-encoded noise is stripped from the error first so that words like
-    // "navigation" embedded in a percent-encoded query string don't pollute the
-    // match.
     const cleanError = error
-      .replace(/%[0-9a-f]{2}/gi, " ")   // strip URL-encoded chars
-      .replace(/https?:\/\/\S+/g, " ")  // strip full URLs
-      .replace(/[^a-z0-9 ]/g, " ");     // keep only alphanum + spaces
+      .replace(/%[0-9a-f]{2}/gi, " ")
+      .replace(/https?:\/\/\S+/g, " ")
+      .replace(/[^a-z0-9 ]/g, " ");
 
-    // Detect assertion-related keywords in the error — these strongly indicate
-    // which step failed (e.g. "toHaveTitle" → step mentioning "title").
     const assertionKeywords = [];
     const assertionPatterns = [
-      { re: /tohave(?:title|url|text|value|count)/i, words: ["title", "verif", "assert", "check", "redirect"] },
-      { re: /tobevisible|tobeenabled|tobedisabled|tobechecked/i, words: ["verif", "visible", "assert", "check"] },
-      { re: /tocontaintext/i, words: ["verif", "contain", "assert", "check", "text"] },
+      { re: /tohave(?:title|url|text|value|count)/i, words: ["title","verif","assert","check","redirect"] },
+      { re: /tobevisible|tobeenabled|tobedisabled|tobechecked/i, words: ["verif","visible","assert","check"] },
+      { re: /tocontaintext/i, words: ["verif","contain","assert","check","text"] },
     ];
     for (const { re, words } of assertionPatterns) {
       if (re.test(error)) assertionKeywords.push(...words);
     }
 
-    let failedIdx = -1;
-    let bestScore = 0;
-
+    let failedIdx = -1, bestScore = 0;
     for (let i = 0; i < steps.length; i++) {
-      // Only consider words longer than 3 characters to skip stop-words
-      // (lowered from 4 to catch words like "title", "page", "cart")
-      const stepWords = steps[i]
-        .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, "")
-        .split(" ")
-        .filter((w) => w.length > 3);
-
-      if (stepWords.length === 0) continue;
-
-      let matchCount = stepWords.filter((w) => cleanError.includes(w)).length;
-
-      // Boost score when assertion keywords match step words — this helps
-      // attribute "toHaveTitle failed" to the step that says "verifies...title"
-      // rather than an earlier step that incidentally shares a word.
+      const stepWords = steps[i].toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ").filter(w => w.length > 3);
+      if (!stepWords.length) continue;
+      let matchCount = stepWords.filter(w => cleanError.includes(w)).length;
       if (assertionKeywords.length > 0) {
         const stepLower = steps[i].toLowerCase();
-        const assertionBoost = assertionKeywords.filter((kw) => stepLower.includes(kw)).length;
-        matchCount += assertionBoost;
+        matchCount += assertionKeywords.filter(kw => stepLower.includes(kw)).length;
       }
-
-      // Require at least 2 matching words, or a majority of the step's words
       const threshold = Math.max(2, Math.ceil(stepWords.length * 0.4));
       if (matchCount >= threshold && matchCount >= bestScore) {
         bestScore = matchCount;
         failedIdx = i;
-        // Don't break — keep scanning so a later, better-matching step wins
       }
     }
-
-    // If no keyword match, assume last step failed
     if (failedIdx === -1) failedIdx = steps.length - 1;
-
-    return steps.map((_, i) => {
-      if (i < failedIdx) return "passed";
-      if (i === failedIdx) return "failed";
-      return "pending";
-    });
+    return steps.map((_, i) => i < failedIdx ? "passed" : i === failedIdx ? "failed" : "pending");
   }
 
-  // Default: all pending
   return steps.map(() => "pending");
 }
 
-// ─── Step status visual config ────────────────────────────────────────────────
-
+// ─── Status badge ─────────────────────────────────────────────────────────────
 function StepStatusBadge({ status }) {
   const cfg = {
-    passed:  { bg: "var(--green-bg)",  color: "var(--green)",  label: "Passed",  icon: <CheckCircle2 size={10} /> },
-    failed:  { bg: "var(--red-bg)",    color: "var(--red)",    label: "Failed",  icon: <XCircle size={10} /> },
-    running: { bg: "var(--blue-bg)",   color: "var(--blue)",   label: "Running", icon: <RefreshCw size={10} style={{ animation: "spin 0.9s linear infinite" }} /> },
-    warning: { bg: "var(--amber-bg)",  color: "var(--amber)",  label: "Warning", icon: <AlertTriangle size={10} /> },
-    pending: { bg: "var(--bg3)",       color: "var(--text3)",  label: "Pending", icon: <Clock size={10} /> },
+    passed:  { bg: "var(--green-bg)", color: "var(--green)",  label: "Passed",  icon: <CheckCircle2 size={10} /> },
+    failed:  { bg: "var(--red-bg)",   color: "var(--red)",    label: "Failed",  icon: <XCircle size={10} /> },
+    running: { bg: "var(--blue-bg)",  color: "var(--blue)",   label: "Running", icon: <RefreshCw size={10} style={{ animation: "spin 0.9s linear infinite" }} /> },
+    warning: { bg: "var(--amber-bg)", color: "var(--amber)",  label: "Warning", icon: <AlertTriangle size={10} /> },
+    pending: { bg: "var(--bg3)",      color: "var(--text3)",  label: "Pending", icon: <Clock size={10} /> },
   };
   const c = cfg[status] || cfg.pending;
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 8px",
-        borderRadius: 99,
-        fontSize: "0.68rem",
-        fontWeight: 700,
-        background: c.bg,
-        color: c.color,
-        whiteSpace: "nowrap",
-        letterSpacing: "0.01em",
-      }}
-    >
-      {c.icon}
-      {c.label}
+    <span className="srv-status-badge" style={{ background: c.bg, color: c.color }}>
+      {c.icon}{c.label}
     </span>
   );
 }
 
 function stepLeftColor(status) {
-  if (status === "passed") return "var(--green)";
-  if (status === "failed") return "var(--red)";
+  if (status === "passed")  return "var(--green)";
+  if (status === "failed")  return "var(--red)";
   if (status === "running") return "var(--blue)";
   return "var(--border)";
 }
 
-// ─── Browser Chrome Wrapper ───────────────────────────────────────────────────
-// Renders a screenshot/content inside a realistic browser UI shell
-
+// ─── Browser Chrome ───────────────────────────────────────────────────────────
 function BrowserChrome({ url, children, isLoading = false }) {
-  // Extract a short domain for the tab title
   let domain = "";
   try {
     domain = url ? new URL(url.startsWith("http") ? url : `https://${url}`).hostname : "Browser";
@@ -176,224 +93,48 @@ function BrowserChrome({ url, children, isLoading = false }) {
   }
 
   return (
-    <div
-      style={{
-        borderRadius: 10,
-        overflow: "hidden",
-        border: "1px solid var(--border)",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-        background: "#f0f0f0",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* ── Title bar ── */}
-      <div
-        style={{
-          background: "linear-gradient(180deg, #e8e8e8 0%, #d8d8d8 100%)",
-          padding: "8px 12px 0",
-          borderBottom: "1px solid #c0c0c0",
-        }}
-      >
-        {/* Traffic lights + tab */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 0,
-            marginBottom: 6,
-          }}
-        >
-          {/* Traffic lights */}
-          <div style={{ display: "flex", gap: 6, marginRight: 12 }}>
-            {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
-              <div
-                key={c}
-                style={{
-                  width: 11,
-                  height: 11,
-                  borderRadius: "50%",
-                  background: c,
-                  border: "0.5px solid rgba(0,0,0,0.15)",
-                }}
-              />
+    <div className="srv-chrome">
+      <div className="srv-chrome-titlebar">
+        <div className="srv-chrome-toptray">
+          <div className="srv-chrome-lights">
+            {["#ff5f57","#febc2e","#28c840"].map(c => (
+              <div key={c} className="srv-chrome-light" style={{ background: c }} />
             ))}
           </div>
-
-          {/* Tab */}
-          <div
-            style={{
-              background: "#fff",
-              borderRadius: "6px 6px 0 0",
-              padding: "4px 14px 5px",
-              fontSize: "0.72rem",
-              color: "#333",
-              fontWeight: 500,
-              maxWidth: 200,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              borderTop: "1px solid #c0c0c0",
-              borderLeft: "1px solid #c0c0c0",
-              borderRight: "1px solid #c0c0c0",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
+          <div className="srv-chrome-tab">
             <Globe size={11} color="#666" />
             {domain}
           </div>
         </div>
 
-        {/* ── Address bar row ── */}
-        <div
-          style={{
-            background: "#fff",
-            padding: "2px 4px 6px",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {/* Nav buttons */}
-          <button
-            style={{
-              width: 24,
-              height: 24,
-              border: "none",
-              background: "none",
-              cursor: "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              color: "#666",
-              opacity: 0.5,
-            }}
-          >
-            <ChevronLeft size={14} />
+        <div className="srv-chrome-addressbar">
+          <button className="srv-chrome-nav-btn faded"><ChevronLeft size={14} /></button>
+          <button className="srv-chrome-nav-btn faded"><ChevronRight size={14} /></button>
+          <button className="srv-chrome-nav-btn">
+            {isLoading ? <XCircle size={13} /> : <RotateCcw size={12} />}
           </button>
-          <button
-            style={{
-              width: 24,
-              height: 24,
-              border: "none",
-              background: "none",
-              cursor: "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              color: "#666",
-              opacity: 0.5,
-            }}
-          >
-            <ChevronRight size={14} />
-          </button>
-          <button
-            style={{
-              width: 24,
-              height: 24,
-              border: "none",
-              background: "none",
-              cursor: "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              color: "#666",
-            }}
-          >
-            {isLoading ? (
-              <XCircle size={13} />
-            ) : (
-              <RotateCcw size={12} />
-            )}
-          </button>
-
-          {/* URL bar */}
-          <div
-            style={{
-              flex: 1,
-              height: 28,
-              background: "#f5f5f5",
-              borderRadius: 14,
-              border: "1px solid #d0d0d0",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "0 12px",
-            }}
-          >
+          <div className="srv-chrome-url-bar">
             <Lock size={11} color="#888" />
-            <span
-              style={{
-                fontSize: "0.75rem",
-                color: "#333",
-                fontFamily: "var(--font-sans)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flex: 1,
-              }}
-            >
-              {url || "about:blank"}
-            </span>
+            <span className="srv-chrome-url-text">{url || "about:blank"}</span>
           </div>
-
-          <button
-            style={{
-              width: 24,
-              height: 24,
-              border: "none",
-              background: "none",
-              cursor: "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 4,
-              color: "#666",
-            }}
-          >
-            <MoreHorizontal size={14} />
-          </button>
+          <button className="srv-chrome-nav-btn"><MoreHorizontal size={14} /></button>
         </div>
       </div>
 
-      {/* ── Page content ── */}
-      <div style={{ background: "#fff", position: "relative" }}>
-        {isLoading && (
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 2,
-              background: "var(--accent)",
-              animation: "pulse 1.2s ease-in-out infinite",
-              zIndex: 10,
-            }}
-          />
-        )}
+      <div className="srv-chrome-content">
+        {isLoading && <div className="srv-chrome-loading-bar" />}
         {children}
       </div>
     </div>
   );
 }
 
-// ─── DIF-001: Visual regression panel ─────────────────────────────────────────
-//
-// Renders a toggleable before/after view for a captured screenshot versus its
-// stored baseline, plus an "Accept visual changes" button that promotes the
-// current capture to the new baseline via the tests API.
-
+// ─── Visual Diff Panel ────────────────────────────────────────────────────────
 function VisualDiffPanel({ visualDiff, currentScreenshot, testId, runId, stepNumber }) {
-  const [mode, setMode] = useState("diff");   // "before" | "after" | "diff"
+  const [mode, setMode]         = useState("diff");
   const [accepting, setAccepting] = useState(false);
-  const [accepted, setAccepted] = useState(false);
-  const [error, setError] = useState(null);
+  const [accepted, setAccepted]   = useState(false);
+  const [error, setError]         = useState(null);
 
   if (!visualDiff) return null;
 
@@ -401,29 +142,22 @@ function VisualDiffPanel({ visualDiff, currentScreenshot, testId, runId, stepNum
   const percent = diffRatio != null ? (diffRatio * 100).toFixed(2) : null;
 
   const statusLabel = {
-    baseline_created: { text: "Baseline captured", color: "var(--blue)", bg: "var(--blue-bg)" },
-    match:            { text: "No visual regression", color: "var(--green)", bg: "var(--green-bg)" },
-    regression:       { text: "Visual regression detected", color: "var(--red)", bg: "var(--red-bg)" },
-    error:            { text: "Visual diff unavailable", color: "var(--amber)", bg: "var(--amber-bg)" },
+    baseline_created: { text: "Baseline captured",          color: "var(--blue)",  bg: "var(--blue-bg)"  },
+    match:            { text: "No visual regression",       color: "var(--green)", bg: "var(--green-bg)" },
+    regression:       { text: "Visual regression detected", color: "var(--red)",   bg: "var(--red-bg)"   },
+    error:            { text: "Visual diff unavailable",    color: "var(--amber)", bg: "var(--amber-bg)" },
   }[status] || { text: status, color: "var(--text2)", bg: "var(--bg2)" };
 
   const canToggle = status === "regression" || status === "match";
 
   async function handleAccept() {
     if (!testId || !runId) return;
-    setAccepting(true);
-    setError(null);
-    try {
-      await api.acceptBaseline(testId, stepNumber || 0, runId);
-      setAccepted(true);
-    } catch (e) {
-      setError(e.message || "failed to accept baseline");
-    } finally {
-      setAccepting(false);
-    }
+    setAccepting(true); setError(null);
+    try { await api.acceptBaseline(testId, stepNumber || 0, runId); setAccepted(true); }
+    catch (e) { setError(e.message || "failed to accept baseline"); }
+    finally { setAccepting(false); }
   }
 
-  // Figure out which image URL to render for the selected mode.
   let shownSrc = null;
   if (mode === "before" && baselinePath) shownSrc = baselinePath;
   else if (mode === "diff" && diffPath) shownSrc = diffPath;
@@ -432,50 +166,30 @@ function VisualDiffPanel({ visualDiff, currentScreenshot, testId, runId, stepNum
   }
 
   return (
-    <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", background: "var(--surface)" }}>
-      {/* Status banner */}
-      <div style={{
-        padding: "10px 14px",
-        background: statusLabel.bg,
-        borderBottom: "1px solid var(--border)",
-        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-      }}>
-        <span style={{ fontWeight: 700, fontSize: "0.78rem", color: statusLabel.color }}>
-          {statusLabel.text}
-        </span>
+    <div className="srv-vdiff">
+      <div className="srv-vdiff-banner" style={{ background: statusLabel.bg }}>
+        <span className="srv-vdiff-status" style={{ color: statusLabel.color }}>{statusLabel.text}</span>
         {percent != null && (
-          <span style={{ fontSize: "0.74rem", color: "var(--text3)", fontFamily: "var(--font-mono)" }}>
+          <span className="srv-vdiff-stats">
             {percent}% of pixels differ ({diffPixels}/{totalPixels}) · threshold {(threshold * 100).toFixed(1)}%
           </span>
         )}
-        {message && (
-          <span style={{ fontSize: "0.72rem", color: "var(--text3)", fontStyle: "italic" }}>{message}</span>
-        )}
+        {message && <span className="srv-vdiff-msg">{message}</span>}
       </div>
 
-      {/* Mode toggle */}
       {canToggle && (baselinePath || diffPath || currentScreenshot) && (
-        <div style={{ display: "flex", gap: 6, padding: "8px 12px", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
+        <div className="srv-vdiff-toolbar">
           {[
             { id: "before", label: "Baseline", enabled: !!baselinePath },
             { id: "after",  label: "Current",  enabled: !!currentScreenshot },
             { id: "diff",   label: "Diff",     enabled: !!diffPath },
-          ].map((t) => (
+          ].map(t => (
             <button
               key={t.id}
               disabled={!t.enabled}
               onClick={() => setMode(t.id)}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--border)",
-                fontSize: "0.72rem",
-                fontWeight: 600,
-                cursor: t.enabled ? "pointer" : "not-allowed",
-                opacity: t.enabled ? 1 : 0.4,
-                background: mode === t.id ? "var(--accent)" : "var(--surface)",
-                color: mode === t.id ? "#fff" : "var(--text2)",
-              }}
+              className={`srv-vdiff-mode-btn ${mode === t.id ? "active" : ""}`}
+              style={{ opacity: t.enabled ? 1 : 0.4, cursor: t.enabled ? "pointer" : "not-allowed" }}
             >
               {t.label}
             </button>
@@ -485,16 +199,7 @@ function VisualDiffPanel({ visualDiff, currentScreenshot, testId, runId, stepNum
             <button
               onClick={handleAccept}
               disabled={accepting || accepted}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 6,
-                border: "1px solid var(--border)",
-                fontSize: "0.72rem",
-                fontWeight: 700,
-                cursor: accepting || accepted ? "default" : "pointer",
-                background: accepted ? "var(--green-bg)" : "var(--surface)",
-                color: accepted ? "var(--green)" : "var(--text2)",
-              }}
+              className={`srv-vdiff-accept-btn ${accepted ? "accepted" : ""}`}
               title="Promote the current capture to the new baseline"
             >
               {accepted ? "Baseline updated" : accepting ? "Accepting…" : "Accept visual changes"}
@@ -503,37 +208,26 @@ function VisualDiffPanel({ visualDiff, currentScreenshot, testId, runId, stepNum
         </div>
       )}
 
-      {/* Image */}
-      <div style={{ padding: 0, display: "flex", justifyContent: "center", background: "#fafafa" }}>
-        {shownSrc ? (
-          <img
-            src={shownSrc}
-            alt={`Visual ${mode}`}
-            style={{ maxWidth: "100%", maxHeight: 620, display: "block" }}
-          />
-        ) : (
-          <div style={{ padding: "60px 20px", color: "#94a3b8", fontSize: "0.78rem" }}>
-            No image to display for "{mode}".
-          </div>
-        )}
+      <div className="srv-vdiff-img-wrap">
+        {shownSrc
+          ? <img src={shownSrc} alt={`Visual ${mode}`} className="srv-vdiff-img" />
+          : <div className="srv-vdiff-no-img">No image to display for "{mode}".</div>}
       </div>
 
-      {error && (
-        <div style={{
-          padding: "8px 14px",
-          background: "var(--red-bg)",
-          color: "var(--red)",
-          fontSize: "0.74rem",
-        }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="srv-vdiff-error">{error}</div>}
     </div>
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Network status colour helper ─────────────────────────────────────────────
+function netStatusColor(s) {
+  if (!s || s === 0) return "var(--red)";
+  if (s < 300) return "var(--green)";
+  if (s < 400) return "var(--amber)";
+  return "var(--red)";
+}
 
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function StepResultsView({ result, run, onBack }) {
   const navigate = useNavigate();
   const steps = result?.steps || [];
@@ -541,18 +235,14 @@ export default function StepResultsView({ result, run, onBack }) {
   const testId = result?.testId;
 
   const [activeStepIdx, setActiveStepIdx] = useState(() => {
-    // Start on the first failed/running step, else 0
-    const failIdx = stepStatuses.findIndex((s) => s === "failed" || s === "running");
+    const failIdx = stepStatuses.findIndex(s => s === "failed" || s === "running");
     return failIdx >= 0 ? failIdx : 0;
   });
 
   const [activeTab, setActiveTab] = useState(() => result?.videoPath ? "video" : "screenshot");
   const listRef = useRef(null);
-
-  // Extract URL from screenshot or from test source
   const currentUrl = result?.url || result?.sourceUrl || run?.targetUrl || "";
 
-  // Scroll active step into view
   useEffect(() => {
     if (listRef.current) {
       const el = listRef.current.querySelector(`[data-step="${activeStepIdx}"]`);
@@ -561,22 +251,13 @@ export default function StepResultsView({ result, run, onBack }) {
   }, [activeStepIdx]);
 
   const isRunning = run?.status === "running";
-  const hasVideo = !!(result?.videoPath);
-  const isApi = !!result?.isApiTest;
+  const hasVideo  = !!(result?.videoPath);
+  const isApi     = !!result?.isApiTest;
 
-  // DIF-001: Show a "Visual" tab whenever the active step (or the final step)
-  // has a visualDiff attached. Per-step captures take precedence over the
-  // final-screenshot visualDiff when a per-step entry exists.
-  const activeStepCaptureForTabs = result?.stepCaptures?.find(
-    (c) => c.step === activeStepIdx + 1
-  );
-  const activeVisualDiff = activeStepCaptureForTabs?.visualDiff || result?.visualDiff;
-  const hasVisualDiff = !!activeVisualDiff;
+  const activeStepCapture = result?.stepCaptures?.find(c => c.step === activeStepIdx + 1);
+  const activeVisualDiff  = activeStepCapture?.visualDiff || result?.visualDiff;
+  const hasVisualDiff     = !!activeVisualDiff;
 
-  // If the user is currently viewing the "Visual" tab and then selects a step
-  // whose capture has no visualDiff, the tab button disappears but `activeTab`
-  // still reads "visual", leaving the content panel blank. Fall back to the
-  // default tab in that case.
   useEffect(() => {
     if (activeTab === "visual" && !hasVisualDiff) {
       setActiveTab(hasVideo ? "video" : "screenshot");
@@ -585,185 +266,66 @@ export default function StepResultsView({ result, run, onBack }) {
 
   const tabs = isApi
     ? [
-        { id: "screenshot", label: "🔌 Result" },
-        { id: "network",    label: "🌐 Network" },
+        { id: "screenshot", label: "🔌 Result"  },
+        { id: "network",    label: "🌐 Network"  },
       ]
     : [
-        ...(hasVideo ? [{ id: "video", label: "🎬 Recording" }] : []),
-        { id: "screenshot", label: "📸 Screenshot" },
-        ...(hasVisualDiff ? [{ id: "visual", label: "🖼️ Visual" }] : []),
-        { id: "network",    label: "🌐 Network" },
-        { id: "console",    label: "📜 Console" },
-        { id: "dom",        label: "🧩 DOM" },
+        ...(hasVideo        ? [{ id: "video",      label: "🎬 Recording" }] : []),
+        { id: "screenshot",   label: "📸 Screenshot" },
+        ...(hasVisualDiff   ? [{ id: "visual",     label: "🖼️ Visual"    }] : []),
+        { id: "network",      label: "🌐 Network"   },
+        { id: "console",      label: "📜 Console"   },
+        { id: "dom",          label: "🧩 DOM"       },
       ];
 
-  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+    <div className="srv-root">
 
-      {/* ── Back breadcrumb ─────────────────────────────────────────────── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 14,
-          fontSize: "0.8rem",
-          color: "var(--text3)",
-        }}
-      >
-        <button
-          onClick={onBack}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--text2)",
-            fontWeight: 500,
-            fontSize: "0.8rem",
-            padding: "4px 0",
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          <ArrowLeft size={13} />
-          Test Suite
+      {/* ── Breadcrumb ── */}
+      <div className="srv-breadcrumb">
+        <button className="srv-breadcrumb-btn" onClick={onBack}>
+          <ArrowLeft size={13} /> Test Suite
         </button>
-        <span style={{ color: "var(--border2)" }}>›</span>
-        <span
-          style={{
-            color: "var(--text)",
-            fontWeight: 600,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            maxWidth: 400,
-          }}
-        >
+        <span className="srv-breadcrumb-sep">›</span>
+        <span className="srv-breadcrumb-current">
           {cleanTestName(result?.testName || result?.name) || "Test Case"}
         </span>
         {testId && (
           <>
-            <span style={{ color: "var(--border2)" }}>›</span>
+            <span className="srv-breadcrumb-sep">›</span>
             <button
+              className="srv-breadcrumb-test-link"
               onClick={() => navigate(`/tests/${testId}`)}
               title="Go to test detail to edit steps"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--accent)",
-                fontWeight: 600,
-                fontSize: "0.78rem",
-                padding: "2px 0",
-                fontFamily: "var(--font-mono)",
-              }}
             >
-              {testId}
-              <ExternalLink size={11} />
+              {testId}<ExternalLink size={11} />
             </button>
           </>
         )}
       </div>
 
-      {/* ── Main split ──────────────────────────────────────────────────── */}
-      <div
-        className="run-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "300px 1fr",
-          gap: 16,
-          minHeight: 580,
-        }}
-      >
-        {/* ── LEFT: Activity Log ──────────────────────────────────────── */}
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            boxShadow: "var(--shadow-sm)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              padding: "12px 14px",
-              borderBottom: "1px solid var(--border)",
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span style={{ fontWeight: 700, fontSize: "0.82rem" }}>
-              Activity Log
-            </span>
-            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>
-              {steps.length > 0
-                ? `${steps.length} of ${steps.length} items`
-                : "0 items"}
+      {/* ── Main split ── */}
+      <div className="srv-grid">
+
+        {/* ── LEFT: Activity Log ── */}
+        <div className="srv-panel">
+          <div className="srv-panel-header">
+            <span className="srv-panel-title">Activity Log</span>
+            <span className="srv-panel-count">
+              {steps.length > 0 ? `${steps.length} of ${steps.length} items` : "0 items"}
             </span>
           </div>
 
-          {/* Scrollable body */}
-          <div ref={listRef} style={{ overflowY: "auto", flex: 1 }}>
-
+          <div ref={listRef} className="srv-log-body">
             {/* Test case prompt card */}
-            <div
-              style={{
-                margin: "10px 10px 6px",
-                padding: "10px 12px",
-                background: "var(--accent-bg)",
-                border: "1px solid var(--accent)",
-                borderRadius: 8,
-                fontSize: "0.76rem",
-                color: "var(--text)",
-                lineHeight: 1.5,
-                position: "relative",
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 700,
-                  fontSize: "0.68rem",
-                  color: "var(--accent)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  marginBottom: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+            <div className="srv-prompt-card">
+              <div className="srv-prompt-label-row">
                 <span>Test Case</span>
                 {testId && (
                   <button
+                    className="srv-prompt-test-link"
                     onClick={() => navigate(`/tests/${testId}`)}
                     title="View & edit test steps"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 3,
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      color: "var(--accent)",
-                      fontWeight: 700,
-                      fontSize: "0.68rem",
-                      padding: 0,
-                      fontFamily: "var(--font-mono)",
-                      textTransform: "none",
-                      letterSpacing: "normal",
-                    }}
                   >
                     {testId} <ExternalLink size={9} />
                   </button>
@@ -774,190 +336,63 @@ export default function StepResultsView({ result, run, onBack }) {
 
             {/* Step rows */}
             {steps.length === 0 ? (
-              <div
-                style={{
-                  padding: "20px 14px",
-                  textAlign: "center",
-                  color: "var(--text3)",
-                  fontSize: "0.8rem",
-                }}
-              >
-                No step breakdown available.
-                <br />
-                <span style={{ fontSize: "0.72rem" }}>
-                  View debug artifacts on the right.
-                </span>
+              <div className="srv-log-empty">
+                No step breakdown available.<br />
+                <span className="srv-log-empty-sub">View debug artifacts on the right.</span>
               </div>
             ) : (
               steps.map((step, i) => {
                 const stepStatus = stepStatuses[i];
-                const isActive = i === activeStepIdx;
-
+                const isActive   = i === activeStepIdx;
                 return (
                   <div
                     key={i}
                     data-step={i}
                     onClick={() => setActiveStepIdx(i)}
-                    style={{
-                      padding: "12px 14px",
-                      cursor: "pointer",
-                      borderBottom: "1px solid var(--border)",
-                      borderLeft: `3px solid ${
-                        isActive ? stepLeftColor(stepStatus) : "transparent"
-                      }`,
-                      background: isActive ? "var(--bg2)" : "transparent",
-                      transition: "all 0.12s",
-                    }}
+                    className={`srv-step-row ${isActive ? "active" : ""}`}
+                    style={{ borderLeftColor: isActive ? stepLeftColor(stepStatus) : "transparent" }}
                   >
-                    {/* Row top: step label + badge */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 5,
-                      }}
-                    >
-                      {/* Step number circle */}
+                    <div className="srv-step-top">
+                      {/* Step circle */}
                       <div
-                        style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: "50%",
-                          border: `2px solid ${stepLeftColor(stepStatus)}`,
-                          background:
-                            stepStatus === "passed"
-                              ? "var(--green-bg)"
-                              : stepStatus === "failed"
-                              ? "var(--red-bg)"
-                              : stepStatus === "running"
-                              ? "var(--blue-bg)"
-                              : "var(--bg3)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          flexShrink: 0,
-                        }}
+                        className={`srv-step-circle ${stepStatus}`}
+                        style={{ borderColor: stepLeftColor(stepStatus) }}
                       >
                         {stepStatus === "running" ? (
-                          <RefreshCw
-                            size={9}
-                            color="var(--blue)"
-                            style={{ animation: "spin 0.9s linear infinite" }}
-                          />
+                          <RefreshCw size={9} color="var(--blue)" style={{ animation: "spin 0.9s linear infinite" }} />
                         ) : stepStatus === "passed" ? (
                           <CheckCircle2 size={10} color="var(--green)" />
                         ) : stepStatus === "failed" ? (
                           <XCircle size={10} color="var(--red)" />
                         ) : (
-                          <span
-                            style={{
-                              fontSize: "0.6rem",
-                              fontWeight: 700,
-                              color: "var(--text3)",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {i + 1}
-                          </span>
+                          <span className="srv-step-num-text">{i + 1}</span>
                         )}
                       </div>
 
-                      <span
-                        style={{
-                          fontSize: "0.78rem",
-                          fontWeight: 600,
-                          color: "var(--text)",
-                        }}
-                      >
-                        Step {i + 1}
-                      </span>
-
-                      <div style={{ marginLeft: "auto" }}>
-                        <StepStatusBadge status={stepStatus} />
-                      </div>
+                      <span className="srv-step-label">Step {i + 1}</span>
+                      <div className="srv-step-badge"><StepStatusBadge status={stepStatus} /></div>
                     </div>
 
-                    {/* Step description */}
-                    <div
-                      style={{
-                        fontSize: "0.76rem",
-                        color: "var(--text2)",
-                        lineHeight: 1.45,
-                        paddingLeft: 30,
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                    >
-                      {step}
-                    </div>
+                    <div className="srv-step-desc">{step}</div>
 
-                    {/* Timestamp — use real per-step timing when available (DIF-016) */}
+                    {/* Timing */}
                     {stepStatus !== "pending" && (() => {
-                      const realTiming = result?.stepTimings?.find((t) => t.step === i + 1);
-                      if (realTiming) {
-                        return (
-                          <div
-                            style={{
-                              fontSize: "0.65rem",
-                              color: "var(--text3)",
-                              paddingLeft: 30,
-                              marginTop: 4,
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {fmtMs(realTiming.durationMs)}
-                          </div>
-                        );
-                      }
-                      // Fallback: approximate time per step
-                      if (result?.durationMs) {
-                        return (
-                          <div
-                            style={{
-                              fontSize: "0.65rem",
-                              color: "var(--text3)",
-                              paddingLeft: 30,
-                              marginTop: 4,
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            ~{fmtMs(Math.round((result.durationMs / steps.length) * (i + 1)))}
-                          </div>
-                        );
-                      }
+                      const realTiming = result?.stepTimings?.find(t => t.step === i + 1);
+                      if (realTiming) return <div className="srv-step-timing">{fmtMs(realTiming.durationMs)}</div>;
+                      if (result?.durationMs) return <div className="srv-step-timing">~{fmtMs(Math.round((result.durationMs / steps.length) * (i + 1)))}</div>;
                       return null;
                     })()}
 
-                    {/* Error inline for the failed step */}
+                    {/* Error inline */}
                     {stepStatus === "failed" && result?.error && (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          marginLeft: 30,
-                          padding: "7px 10px",
-                          background: "var(--red-bg)",
-                          borderRadius: 6,
-                          fontSize: "0.71rem",
-                          color: "var(--red)",
-                          fontFamily: "var(--font-mono)",
-                          lineHeight: 1.5,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          borderLeft: "2px solid var(--red)",
-                        }}
-                      >
-                        {result.error.length > 300
-                          ? result.error.slice(0, 300) + "…"
-                          : result.error}
+                      <div className="srv-step-error">
+                        {result.error.length > 300 ? result.error.slice(0, 300) + "…" : result.error}
                       </div>
                     )}
 
-                    {/* Self-healing trace — shown when the active step has healing events */}
+                    {/* Self-healing trace */}
                     {isActive && result?.healingEvents?.length > 0 && (
-                      <div style={{ marginLeft: 30, marginTop: 8 }}>
+                      <div className="srv-healing-wrap">
                         <HealingTimeline events={result.healingEvents} />
                       </div>
                     )}
@@ -968,92 +403,22 @@ export default function StepResultsView({ result, run, onBack }) {
           </div>
         </div>
 
-        {/* ── RIGHT: Browser View ──────────────────────────────────────── */}
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            boxShadow: "var(--shadow-sm)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {/* Panel header */}
-          <div
-            style={{
-              padding: "10px 16px",
-              borderBottom: "1px solid var(--border)",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexShrink: 0,
-            }}
-          >
-            {/* "Browser View" title */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                flex: 1,
-              }}
-            >
-              <div
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 4,
-                  background: "var(--bg3)",
-                  border: "1px solid var(--border)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {isApi
-                  ? <span style={{ fontSize: 11 }}>🔌</span>
-                  : <Globe size={11} color="var(--text3)" />}
+        {/* ── RIGHT: Browser View ── */}
+        <div className="srv-panel">
+          <div className="srv-browser-header">
+            <div className="srv-browser-title-row">
+              <div className="srv-browser-icon">
+                {isApi ? <span style={{ fontSize: 11 }}>🔌</span> : <Globe size={11} color="var(--text3)" />}
               </div>
-              <span style={{ fontWeight: 700, fontSize: "0.82rem" }}>
-                {isApi ? "API Response" : "Browser View"}
-              </span>
+              <span className="srv-browser-title">{isApi ? "API Response" : "Browser View"}</span>
             </div>
 
-            {/* Tab pills */}
-            <div
-              style={{
-                display: "flex",
-                gap: 2,
-                background: "var(--bg2)",
-                padding: 3,
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-              }}
-            >
-              {tabs.map((t) => (
+            <div className="srv-tab-group">
+              {tabs.map(t => (
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id)}
-                  style={{
-                    padding: "3px 10px",
-                    border: "none",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: "0.72rem",
-                    fontWeight: 500,
-                    fontFamily: "var(--font-sans)",
-                    background:
-                      activeTab === t.id ? "var(--surface)" : "transparent",
-                    color:
-                      activeTab === t.id ? "var(--accent)" : "var(--text3)",
-                    boxShadow:
-                      activeTab === t.id
-                        ? "0 1px 3px rgba(0,0,0,0.08)"
-                        : "none",
-                    transition: "all 0.12s",
-                  }}
+                  className={`srv-tab-pill ${activeTab === t.id ? "active" : ""}`}
                 >
                   {t.label}
                 </button>
@@ -1061,27 +426,21 @@ export default function StepResultsView({ result, run, onBack }) {
             </div>
           </div>
 
-          {/* Content area */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div className="srv-content">
 
-            {/* 🎬 VIDEO RECORDING */}
+            {/* 🎬 VIDEO */}
             {activeTab === "video" && (
               <BrowserChrome url={currentUrl} isLoading={false}>
                 {result?.videoPath ? (
-                  <video
-                    key={result.videoPath}
-                    src={result.videoPath}
-                    controls
-                    autoPlay
-                    style={{ width: "100%", display: "block", background: "#000", minHeight: 200 }}
-                  >
+                  <video key={result.videoPath} src={result.videoPath} controls autoPlay
+                    style={{ width: "100%", display: "block", background: "#000", minHeight: 200 }}>
                     Your browser does not support video playback.
                   </video>
                 ) : (
-                  <div style={{ padding: "60px 40px", textAlign: "center", background: "#fafafa", color: "#94a3b8" }}>
-                    <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>🎬</div>
-                    <div style={{ fontWeight: 600, marginBottom: 6, color: "#64748b" }}>No recording available</div>
-                    <div style={{ fontSize: "0.76rem", lineHeight: 1.6 }}>Video was not recorded for this test case.</div>
+                  <div className="srv-screenshot-empty">
+                    <div className="srv-screenshot-empty-icon">🎬</div>
+                    <div className="srv-screenshot-empty-title">No recording available</div>
+                    <div className="srv-screenshot-empty-desc">Video was not recorded for this test case.</div>
                   </div>
                 )}
               </BrowserChrome>
@@ -1089,135 +448,76 @@ export default function StepResultsView({ result, run, onBack }) {
 
             {/* 📸 SCREENSHOT / 🔌 API RESULT */}
             {activeTab === "screenshot" && (() => {
-              // DIF-016: Per-step screenshot — find the capture for the active step
-              const stepCapture = result?.stepCaptures?.find(
-                (c) => c.step === activeStepIdx + 1
-              );
+              const stepCapture    = result?.stepCaptures?.find(c => c.step === activeStepIdx + 1);
               const activeScreenshot = stepCapture?.screenshot || result?.screenshot;
-              const activeBoxes = stepCapture ? [] : (result?.boundingBoxes || []);
+              const activeBoxes    = stepCapture ? [] : (result?.boundingBoxes || []);
 
               return isApi ? (
-                <div style={{
-                  borderRadius: 10, overflow: "hidden",
-                  border: "1px solid var(--border)",
-                }}>
-                  <div style={{
-                    padding: "10px 14px", background: "var(--bg2)",
-                    borderBottom: "1px solid var(--border)",
-                    display: "flex", alignItems: "center", gap: 8,
-                  }}>
+                <div className="srv-api-panel">
+                  <div className="srv-api-header">
                     <span style={{ fontSize: 14 }}>🔌</span>
-                    <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--text)" }}>API Test Result</span>
+                    <span className="srv-api-header-title">API Test Result</span>
                   </div>
-                  {/* Status banner */}
-                  <div style={{
-                    padding: "24px 20px", textAlign: "center",
+                  <div className="srv-api-status-banner" style={{
                     background: result?.status === "passed" ? "var(--green-bg)" : result?.status === "failed" ? "var(--red-bg)" : "var(--bg2)",
                   }}>
-                    <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.6 }}>
+                    <div className="srv-api-status-icon">
                       {result?.status === "passed" ? "✓" : result?.status === "failed" ? "✗" : "⏳"}
                     </div>
-                    <div style={{
-                      fontWeight: 700, fontSize: "0.88rem", marginBottom: 4,
+                    <div className="srv-api-status-label" style={{
                       color: result?.status === "passed" ? "var(--green)" : result?.status === "failed" ? "var(--red)" : "var(--text2)",
                     }}>
                       {result?.status === "passed" ? "API Test Passed" : result?.status === "failed" ? "API Test Failed" : "Pending"}
                     </div>
-                    {result?.durationMs != null && (
-                      <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>{fmtMs(result.durationMs)}</div>
-                    )}
+                    {result?.durationMs != null && <div className="srv-api-duration">{fmtMs(result.durationMs)}</div>}
                   </div>
 
-                  {/* Full request/response detail for each API call */}
                   {result?.network?.length > 0 && (
-                    <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)" }}>
-                      <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
-                        API Calls ({result.network.length})
-                      </div>
+                    <div className="srv-api-calls-section">
+                      <div className="srv-api-calls-label">API Calls ({result.network.length})</div>
                       {result.network.map((n, i) => (
-                        <div key={i} style={{
-                          borderRadius: 8, overflow: "hidden",
-                          border: "1px solid var(--border)",
-                          marginBottom: i < result.network.length - 1 ? 10 : 0,
-                        }}>
-                          {/* Request header bar */}
-                          <div style={{
-                            padding: "8px 12px", background: "var(--bg2)",
-                            borderBottom: "1px solid var(--border)",
-                            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-                          }}>
-                            <span style={{
-                              padding: "2px 7px", borderRadius: 4, fontSize: "0.65rem", fontWeight: 700,
+                        <div key={i} className="srv-net-card">
+                          <div className="srv-net-card-header">
+                            <span className="srv-net-method" style={{
                               color: n.method === "GET" ? "var(--green)" : "var(--blue)",
                               background: n.method === "GET" ? "var(--green-bg)" : "var(--blue-bg)",
                             }}>{n.method}</span>
-                            <span style={{
-                              fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text)",
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
-                            }} title={n.url}>{n.url}</span>
-                            <span style={{
-                              fontWeight: 700, fontSize: "0.75rem",
-                              color: !n.status || n.status === 0 ? "var(--red)" : n.status < 300 ? "var(--green)" : n.status < 400 ? "var(--amber)" : "var(--red)",
-                            }}>{n.status || "—"}</span>
-                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>{fmtMs(n.duration)}</span>
-                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>{fmtBytes(n.size)}</span>
+                            <span className="srv-net-url" title={n.url}>{n.url}</span>
+                            <span className="srv-net-status" style={{ color: netStatusColor(n.status) }}>{n.status || "—"}</span>
+                            <span className="srv-net-meta">{fmtMs(n.duration)}</span>
+                            <span className="srv-net-meta">{fmtBytes(n.size)}</span>
                           </div>
-
-                          {/* Request headers + body */}
                           {(n.requestHeaders || n.requestBody) && (
                             <div style={{ borderBottom: "1px solid var(--border)" }}>
-                              <div style={{ padding: "5px 12px", fontSize: "0.65rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", background: "var(--bg2)" }}>
-                                Request
-                              </div>
+                              <div className="srv-net-section-label">Request</div>
                               {n.requestHeaders && (
                                 <div style={{ padding: "6px 12px", borderBottom: n.requestBody ? "1px solid var(--border)" : "none" }}>
-                                  <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Headers</div>
-                                  <pre style={{
-                                    margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
-                                    color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
-                                  }}>{typeof n.requestHeaders === "string" ? n.requestHeaders : JSON.stringify(n.requestHeaders, null, 2)}</pre>
+                                  <div className="srv-net-sub-label">Headers</div>
+                                  <pre className="srv-net-pre">{typeof n.requestHeaders === "string" ? n.requestHeaders : JSON.stringify(n.requestHeaders, null, 2)}</pre>
                                 </div>
                               )}
                               {n.requestBody && (
                                 <div style={{ padding: "6px 12px" }}>
-                                  <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Body</div>
-                                  <pre style={{
-                                    margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
-                                    color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
-                                  }}>{n.requestBody}</pre>
+                                  <div className="srv-net-sub-label">Body</div>
+                                  <pre className="srv-net-pre">{n.requestBody}</pre>
                                 </div>
                               )}
                             </div>
                           )}
-
-                          {/* Response headers + body */}
                           <div>
-                            <div style={{ padding: "5px 12px", fontSize: "0.65rem", fontWeight: 700, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
-                              Response
-                            </div>
+                            <div className="srv-net-section-label">Response</div>
                             {n.responseHeaders && (
                               <div style={{ padding: "6px 12px", borderBottom: "1px solid var(--border)" }}>
-                                <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Headers</div>
-                                <pre style={{
-                                  margin: 0, fontFamily: "var(--font-mono)", fontSize: "0.7rem",
-                                  color: "var(--text2)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6,
-                                }}>{typeof n.responseHeaders === "string" ? n.responseHeaders : JSON.stringify(n.responseHeaders, null, 2)}</pre>
+                                <div className="srv-net-sub-label">Headers</div>
+                                <pre className="srv-net-pre">{typeof n.responseHeaders === "string" ? n.responseHeaders : JSON.stringify(n.responseHeaders, null, 2)}</pre>
                               </div>
                             )}
                             <div style={{ padding: "6px 12px" }}>
-                              <div style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text3)", marginBottom: 3 }}>Body</div>
+                              <div className="srv-net-sub-label">Body</div>
                               {n.responseBody ? (
-                                <pre style={{
-                                  margin: 0, padding: "8px 10px",
-                                  background: "#0d1117", borderRadius: 6,
-                                  fontFamily: "var(--font-mono)", fontSize: "0.7rem",
-                                  color: "#94a3b8", whiteSpace: "pre-wrap", wordBreak: "break-all",
-                                  lineHeight: 1.6, maxHeight: 300, overflowY: "auto",
-                                }}>{(() => {
-                                  try { return JSON.stringify(JSON.parse(n.responseBody), null, 2); } catch { return n.responseBody; }
-                                })()}</pre>
+                                <pre className="srv-net-body-pre">{(() => { try { return JSON.stringify(JSON.parse(n.responseBody), null, 2); } catch { return n.responseBody; } })()}</pre>
                               ) : (
-                                <span style={{ fontSize: "0.72rem", color: "var(--text3)", fontStyle: "italic" }}>No body captured</span>
+                                <span className="srv-net-no-body">No body captured</span>
                               )}
                             </div>
                           </div>
@@ -1227,12 +527,7 @@ export default function StepResultsView({ result, run, onBack }) {
                   )}
                 </div>
               ) : (
-                <BrowserChrome
-                  url={currentUrl}
-                  isLoading={
-                    stepStatuses[activeStepIdx] === "running"
-                  }
-                >
+                <BrowserChrome url={currentUrl} isLoading={stepStatuses[activeStepIdx] === "running"}>
                   {activeScreenshot ? (
                     <OverlayCanvas
                       base64={activeScreenshot}
@@ -1240,24 +535,11 @@ export default function StepResultsView({ result, run, onBack }) {
                       status={stepCapture ? stepStatuses[activeStepIdx] : result.status}
                     />
                   ) : (
-                    <div
-                      style={{
-                        padding: "60px 40px",
-                        textAlign: "center",
-                        background: "#fafafa",
-                        color: "#94a3b8",
-                      }}
-                    >
-                      <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.3 }}>
-                        📸
-                      </div>
-                      <div style={{ fontWeight: 600, marginBottom: 6, color: "#64748b" }}>
-                        No screenshot captured
-                      </div>
-                      <div style={{ fontSize: "0.76rem", lineHeight: 1.6 }}>
-                        {isRunning
-                          ? "Screenshot will appear when this step completes."
-                          : "Screenshot was not recorded for this test case."}
+                    <div className="srv-screenshot-empty">
+                      <div className="srv-screenshot-empty-icon">📸</div>
+                      <div className="srv-screenshot-empty-title">No screenshot captured</div>
+                      <div className="srv-screenshot-empty-desc">
+                        {isRunning ? "Screenshot will appear when this step completes." : "Screenshot was not recorded for this test case."}
                       </div>
                     </div>
                   )}
@@ -1265,11 +547,9 @@ export default function StepResultsView({ result, run, onBack }) {
               );
             })()}
 
-            {/* 🖼️ VISUAL DIFF (DIF-001) */}
+            {/* 🖼️ VISUAL DIFF */}
             {activeTab === "visual" && (() => {
-              const stepCapture = result?.stepCaptures?.find(
-                (c) => c.step === activeStepIdx + 1
-              );
+              const stepCapture = result?.stepCaptures?.find(c => c.step === activeStepIdx + 1);
               const vd = stepCapture?.visualDiff || result?.visualDiff;
               const screenshotForAccept = stepCapture?.screenshot || result?.screenshot;
               const stepNumber = stepCapture ? stepCapture.step : 0;
@@ -1286,227 +566,58 @@ export default function StepResultsView({ result, run, onBack }) {
 
             {/* 🌐 NETWORK */}
             {activeTab === "network" && (
-              <div>
-                {result?.network?.length > 0 ? (
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: "0.73rem",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    <thead>
-                      <tr>
-                        {["Method", "URL", "Status", "Duration", "Size"].map(
-                          (h) => (
-                            <th
-                              key={h}
-                              style={{
-                                textAlign: "left",
-                                padding: "7px 10px",
-                                color: "var(--text3)",
-                                borderBottom: "1px solid var(--border)",
-                                fontSize: "0.65rem",
-                                textTransform: "uppercase",
-                                letterSpacing: "0.05em",
-                                background: "var(--bg2)",
-                                position: "sticky",
-                                top: 0,
-                              }}
-                            >
-                              {h}
-                            </th>
-                          )
-                        )}
+              result?.network?.length > 0 ? (
+                <table className="srv-net-table">
+                  <thead>
+                    <tr>{["Method","URL","Status","Duration","Size"].map(h => <th key={h}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {result.network.map((n, i) => (
+                      <tr key={i}>
+                        <td>
+                          <span className="srv-net-method" style={{
+                            color: n.method === "GET" ? "var(--green)" : "var(--blue)",
+                            background: n.method === "GET" ? "var(--green-bg)" : "var(--blue-bg)",
+                          }}>{n.method}</span>
+                        </td>
+                        <td className="url-cell" title={n.url}>{n.url}</td>
+                        <td style={{ fontWeight: 600, color: netStatusColor(n.status) }}>{n.status || "—"}</td>
+                        <td style={{ color: "var(--text3)" }}>{fmtMs(n.duration)}</td>
+                        <td style={{ color: "var(--text3)" }}>{fmtBytes(n.size)}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {result.network.map((n, i) => (
-                        <tr
-                          key={i}
-                          style={{ borderBottom: "1px solid var(--border)" }}
-                        >
-                          <td style={{ padding: "7px 10px" }}>
-                            <span
-                              style={{
-                                padding: "2px 6px",
-                                borderRadius: 4,
-                                fontSize: "0.65rem",
-                                fontWeight: 700,
-                                color:
-                                  n.method === "GET"
-                                    ? "var(--green)"
-                                    : "var(--blue)",
-                                background:
-                                  n.method === "GET"
-                                    ? "var(--green-bg)"
-                                    : "var(--blue-bg)",
-                              }}
-                            >
-                              {n.method}
-                            </span>
-                          </td>
-                          <td
-                            style={{
-                              padding: "7px 10px",
-                              color: "var(--text2)",
-                              maxWidth: 240,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                            title={n.url}
-                          >
-                            {n.url}
-                          </td>
-                          <td
-                            style={{
-                              padding: "7px 10px",
-                              fontWeight: 600,
-                              color:
-                                !n.status || n.status === 0
-                                  ? "var(--red)"
-                                  : n.status < 300
-                                  ? "var(--green)"
-                                  : n.status < 400
-                                  ? "var(--amber)"
-                                  : "var(--red)",
-                            }}
-                          >
-                            {n.status || "—"}
-                          </td>
-                          <td
-                            style={{
-                              padding: "7px 10px",
-                              color: "var(--text3)",
-                            }}
-                          >
-                            {fmtMs(n.duration)}
-                          </td>
-                          <td
-                            style={{
-                              padding: "7px 10px",
-                              color: "var(--text3)",
-                            }}
-                          >
-                            {fmtBytes(n.size)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: 60,
-                      color: "var(--text3)",
-                    }}
-                  >
-                    <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.3 }}>
-                      🌐
-                    </div>
-                    No network data recorded for this test case.
-                  </div>
-                )}
-              </div>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="srv-net-empty">
+                  <div className="srv-net-empty-icon">🌐</div>
+                  No network data recorded for this test case.
+                </div>
+              )
             )}
 
             {/* 📜 CONSOLE */}
             {activeTab === "console" && (
-              <div
-                style={{
-                  background: "#0d1117",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    padding: "8px 14px",
-                    borderBottom: "1px solid rgba(255,255,255,0.06)",
-                    background: "rgba(255,255,255,0.03)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>
-                    Console output
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#475569",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {result?.consoleLogs?.length || 0} entries
-                  </span>
+              <div className="srv-console">
+                <div className="srv-console-header">
+                  <span className="srv-console-header-label">Console output</span>
+                  <span className="srv-console-count">{result?.consoleLogs?.length || 0} entries</span>
                 </div>
-                <div
-                  style={{ padding: 12, maxHeight: 460, overflowY: "auto" }}
-                >
+                <div className="srv-console-body">
                   {result?.consoleLogs?.length > 0 ? (
                     result.consoleLogs.map((l, i) => {
-                      const colors = {
-                        error: "#f87171",
-                        warn: "#fbbf24",
-                        info: "#60a5fa",
-                        log: "#94a3b8",
-                      };
+                      const colors = { error: "#f87171", warn: "#fbbf24", info: "#60a5fa", log: "#94a3b8" };
                       const c = colors[l.level] || "#94a3b8";
                       return (
-                        <div
-                          key={i}
-                          style={{
-                            display: "flex",
-                            gap: 12,
-                            padding: "2px 0",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: "0.73rem",
-                            lineHeight: 1.7,
-                            borderBottom: "1px solid rgba(255,255,255,0.03)",
-                          }}
-                        >
-                          <span style={{ color: "#475569", flexShrink: 0 }}>
-                            {new Date(l.time).toLocaleTimeString()}
-                          </span>
-                          <span
-                            style={{
-                              color: c,
-                              fontWeight: 600,
-                              width: 40,
-                              flexShrink: 0,
-                            }}
-                          >
-                            {l.level?.toUpperCase()}
-                          </span>
-                          <span
-                            style={{
-                              color:
-                                l.level === "error" ? "#fca5a5" : "#94a3b8",
-                              wordBreak: "break-all",
-                            }}
-                          >
-                            {l.text}
-                          </span>
+                        <div key={i} className="srv-console-row">
+                          <span className="srv-console-time">{new Date(l.time).toLocaleTimeString()}</span>
+                          <span className="srv-console-level" style={{ color: c }}>{l.level?.toUpperCase()}</span>
+                          <span style={{ color: l.level === "error" ? "#fca5a5" : "#94a3b8", wordBreak: "break-all" }}>{l.text}</span>
                         </div>
                       );
                     })
                   ) : (
-                    <div
-                      style={{
-                        padding: 20,
-                        textAlign: "center",
-                        color: "#475569",
-                        fontSize: "0.76rem",
-                      }}
-                    >
-                      No console output captured.
-                    </div>
+                    <div className="srv-console-empty">No console output captured.</div>
                   )}
                 </div>
               </div>
@@ -1514,24 +625,14 @@ export default function StepResultsView({ result, run, onBack }) {
 
             {/* 🧩 DOM */}
             {activeTab === "dom" && (
-              <div>
-                {result?.domSnapshot ? (
-                  <DomNode node={result.domSnapshot} />
-                ) : (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: 60,
-                      color: "var(--text3)",
-                    }}
-                  >
-                    <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.3 }}>
-                      🧩
-                    </div>
-                    No DOM snapshot available.
-                  </div>
-                )}
-              </div>
+              result?.domSnapshot ? (
+                <DomNode node={result.domSnapshot} />
+              ) : (
+                <div className="srv-dom-empty">
+                  <div className="srv-dom-empty-icon">🧩</div>
+                  No DOM snapshot available.
+                </div>
+              )
             )}
           </div>
         </div>
@@ -1540,77 +641,57 @@ export default function StepResultsView({ result, run, onBack }) {
   );
 }
 
-// ─── DOM Renderer (local copy) ────────────────────────────────────────────────
-
+// ─── DOM Tree Renderer ────────────────────────────────────────────────────────
 function DomNode({ node, depth = 0 }) {
   const [open, setOpen] = useState(depth < 2);
   if (!node) return null;
 
   if (node.type === "text") {
     return (
-      <span
-        style={{
-          color: "#94a3b8",
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-        }}
-      >
+      <span style={{ color: "#94a3b8", fontSize: 11, fontFamily: "var(--font-mono)" }}>
         "{node.text}"
       </span>
     );
   }
 
+  // Escape AI-supplied attribute keys/values before interpolation — otherwise
+  // a malicious site under test could inject markup via dangerouslySetInnerHTML
+  // below (e.g. an attribute value of `"><script>…</script>`).
   const attrs = Object.entries(node.attrs || {})
-    .map(
-      ([k, v]) =>
-        ` <span style="color:#f59e0b">${k}</span>=<span style="color:#34d399">"${v}"</span>`
+    .map(([k, v]) =>
+      ` <span style="color:#f59e0b">${escapeHtml(String(k))}</span>=` +
+      `<span style="color:#34d399">"${escapeHtml(String(v))}"</span>`
     )
     .join("");
 
   const hasChildren = node.children?.length > 0;
 
   return (
-    <div
-      style={{
-        background: "#0d1117",
-        borderRadius: depth === 0 ? 10 : 0,
-        border: depth === 0 ? "1px solid var(--border)" : "none",
-        padding: depth === 0 ? "14px 16px" : 0,
-        marginLeft: depth * 14,
-        lineHeight: 1.8,
-      }}
-    >
+    <div style={{
+      background: "#0d1117",
+      borderRadius: depth === 0 ? 10 : 0,
+      border: depth === 0 ? "1px solid var(--border)" : "none",
+      padding: depth === 0 ? "14px 16px" : 0,
+      marginLeft: depth * 14,
+      lineHeight: 1.8,
+    }}>
       <span
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 11,
-          cursor: hasChildren ? "pointer" : "default",
-          color: "#93c5fd",
-        }}
-        onClick={() => hasChildren && setOpen((o) => !o)}
+        style={{ fontFamily: "var(--font-mono)", fontSize: 11, cursor: hasChildren ? "pointer" : "default", color: "#93c5fd" }}
+        onClick={() => hasChildren && setOpen(o => !o)}
       >
         {hasChildren ? (open ? "▾ " : "▸ ") : "  "}
         <span style={{ color: "#60a5fa" }}>&lt;{node.tag}</span>
         <span dangerouslySetInnerHTML={{ __html: attrs }} />
         {!hasChildren && <span style={{ color: "#60a5fa" }}> /&gt;</span>}
-        {hasChildren && <span style={{ color: "#60a5fa" }}>&gt;</span>}
+        {hasChildren  && <span style={{ color: "#60a5fa" }}>&gt;</span>}
       </span>
       {hasChildren && open && (
         <div>
-          {node.children.map((c, i) => (
-            <DomNode key={i} node={c} depth={depth + 1} />
-          ))}
+          {node.children.map((c, i) => <DomNode key={i} node={c} depth={depth + 1} />)}
         </div>
       )}
       {hasChildren && open && (
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "#60a5fa",
-            marginLeft: depth * 14,
-          }}
-        >
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "#60a5fa", marginLeft: depth * 14 }}>
           &lt;/{node.tag}&gt;
         </span>
       )}

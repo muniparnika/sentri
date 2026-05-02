@@ -49,7 +49,7 @@ git clone https://github.com/RameshBabuPrudhvi/sentri.git
 cd sentri
 
 cp backend/.env.example backend/.env
-# Add at least one AI provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# Add at least one AI provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, etc.)
 
 docker compose up --build
 ```

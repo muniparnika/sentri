@@ -300,10 +300,15 @@ Not yet implemented; address before production:
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `AI_PROVIDER` | No | auto-detect | Force a provider: `anthropic`, `openai`, `google`, `local` |
+| `AI_PROVIDER` | No | auto-detect | Force a provider: `anthropic`, `openai`, `google`, `openrouter`, `local` |
 | `ANTHROPIC_API_KEY` | One of these | — | Anthropic Claude |
 | `OPENAI_API_KEY` | One of these | — | OpenAI GPT |
 | `GOOGLE_API_KEY` | One of these | — | Google Gemini |
+| `OPENROUTER_API_KEY` | One of these | — | OpenRouter — unified gateway to 200+ models |
+| `OPENROUTER_MODEL` | No | `openrouter/auto` | OpenRouter model slug (e.g. `anthropic/claude-3.5-sonnet`) |
+| `OPENROUTER_BASE_URL` | No | `https://openrouter.ai/api/v1` | Override for self-hosted / proxy deployments |
+| `OPENROUTER_REFERER` | No | `https://sentri.dev` | `HTTP-Referer` header for OpenRouter leaderboard attribution |
+| `OPENROUTER_APP_TITLE` | No | `Sentri` | `X-Title` header for OpenRouter leaderboard attribution |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | No | `mistral:7b` | Ollama model name |
 | `JWT_SECRET` | Yes (prod) | — | HS256 signing key |

@@ -16,7 +16,7 @@ Returns the currently active AI provider info:
   "providerName": "Anthropic Claude",
   "model": "claude-sonnet-4-20250514",
   "color": "#e8965a",
-  "supportedProviders": ["anthropic", "openai", "google", "local"],
+  "supportedProviders": ["anthropic", "openai", "google", "openrouter", "local"],
   "demoMode": false,
   "demoQuota": null
 }
@@ -49,6 +49,7 @@ Returns masked keys and active provider (never returns full keys):
   "anthropic": "sk-ant-***...***03",
   "openai": null,
   "google": null,
+  "openrouter": null,
   "ollamaBaseUrl": "http://localhost:11434",
   "ollamaModel": "mistral:7b"
 }

@@ -14,10 +14,11 @@ export function invalidateConfigCache() {
 
 // ── Provider visual styles (colors only — labels come from the backend) ───────
 const PROVIDER_STYLES = {
-  anthropic: { bg: "#fef3e2", border: "#fcd8a8", color: "#b45309", dot: "#d97706", activeBg: "rgba(180,83,9,0.08)" },
-  openai:    { bg: "#dcfce7", border: "#bbf7d0", color: "#15803d", dot: "#16a34a", activeBg: "rgba(21,128,61,0.08)" },
-  google:    { bg: "#dbeafe", border: "#bfdbfe", color: "#1d4ed8", dot: "#2563eb", activeBg: "rgba(29,78,216,0.08)" },
-  local:     { bg: "#f5f3ff", border: "#ddd6fe", color: "#6d28d9", dot: "#7c3aed", activeBg: "rgba(109,40,217,0.08)" },
+  anthropic:  { bg: "#fef3e2", border: "#fcd8a8", color: "#b45309", dot: "#d97706", activeBg: "rgba(180,83,9,0.08)" },
+  openai:     { bg: "#dcfce7", border: "#bbf7d0", color: "#15803d", dot: "#16a34a", activeBg: "rgba(21,128,61,0.08)" },
+  google:     { bg: "#dbeafe", border: "#bfdbfe", color: "#1d4ed8", dot: "#2563eb", activeBg: "rgba(29,78,216,0.08)" },
+  openrouter: { bg: "#eef2ff", border: "#c7d2fe", color: "#4338ca", dot: "#6466f1", activeBg: "rgba(67,56,202,0.08)" },
+  local:      { bg: "#f5f3ff", border: "#ddd6fe", color: "#6d28d9", dot: "#7c3aed", activeBg: "rgba(109,40,217,0.08)" },
 };
 
 // Look up a provider's name/model from the backend-supplied supportedProviders list.
@@ -27,16 +28,17 @@ function getProviderInfo(config, id) {
   return { label: sp?.name || id, sublabel: sp?.model || "" };
 }
 
-const ALL_IDS = ["anthropic", "openai", "google", "local"];
+const ALL_IDS = ["anthropic", "openai", "google", "openrouter", "local"];
 
 // A provider is "saved" if getSettings() returns a non-empty masked key for it,
 // or (for Ollama) if the backend reports it as explicitly configured.
 function getSavedProviders(settings) {
   if (!settings) return [];
   const list = [];
-  if (settings.anthropic) list.push("anthropic");
-  if (settings.openai)    list.push("openai");
-  if (settings.google)    list.push("google");
+  if (settings.anthropic)  list.push("anthropic");
+  if (settings.openai)     list.push("openai");
+  if (settings.google)     list.push("google");
+  if (settings.openrouter) list.push("openrouter");
   if (settings.ollamaConfigured || settings.activeProvider === "local") list.push("local");
   return list;
 }

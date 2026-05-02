@@ -119,6 +119,7 @@ function serverHasConfiguredKey() {
   // excludes the demo fallback. A non-empty value means an admin saved
   // their own Google key via Settings.
   if (keys.google) return true;
+  if (keys.openrouter) return true;
   if (keys.ollamaConfigured) return true;
   return false;
 }
