@@ -9,6 +9,7 @@ import OverlayCanvas from "./OverlayCanvas.jsx";
 import HealingTimeline from "./HealingTimeline.jsx";
 import { cleanTestName } from "../../utils/formatTestName.js";
 import { fmtMs, fmtBytes } from "../../utils/formatters.js";
+import { escapeHtml } from "../../utils/markdown.js";
 import { api } from "../../api.js";
 
 // ─── Infer per-step status ────────────────────────────────────────────────────
@@ -653,8 +654,14 @@ function DomNode({ node, depth = 0 }) {
     );
   }
 
+  // Escape AI-supplied attribute keys/values before interpolation — otherwise
+  // a malicious site under test could inject markup via dangerouslySetInnerHTML
+  // below (e.g. an attribute value of `"><script>…</script>`).
   const attrs = Object.entries(node.attrs || {})
-    .map(([k, v]) => ` <span style="color:#f59e0b">${k}</span>=<span style="color:#34d399">"${v}"</span>`)
+    .map(([k, v]) =>
+      ` <span style="color:#f59e0b">${escapeHtml(String(k))}</span>=` +
+      `<span style="color:#34d399">"${escapeHtml(String(v))}"</span>`
+    )
     .join("");
 
   const hasChildren = node.children?.length > 0;
