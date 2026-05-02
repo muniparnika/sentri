@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **AI**: OpenRouter provider support — set `OPENROUTER_API_KEY` (and optionally `OPENROUTER_MODEL`, default `openrouter/auto`) to route generation through [OpenRouter](https://openrouter.ai), a unified gateway to 200+ models (Claude, GPT, Llama, Mixtral, etc.) behind a single OpenAI-compatible API. New "OpenRouter" card in Settings → AI Providers, OpenRouter entry in the header provider-switcher dropdown (`ProviderBadge`), and OpenRouter participates in the auto-detection chain (Anthropic → OpenAI → Google → OpenRouter → Ollama) and in the FEA-003 rate-limit fallback / sticky-fallback logic. Streaming, abort signals, retry with exponential backoff, circuit breaker, and BYOK demo-quota bypass all work the same way as the existing OpenAI branch. New env vars `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`, `OPENROUTER_REFERER`, `OPENROUTER_APP_TITLE` documented in `docs/guide/env-vars.md` and `docs/guide/ai-providers.md`. Files touched: `backend/src/aiProvider.js`, `backend/src/routes/settings.js`, `backend/src/database/repositories/apiKeyRepo.js`, `backend/src/middleware/demoQuota.js`, `frontend/src/pages/Settings.jsx`, `frontend/src/components/layout/ProviderBadge.jsx`. (#TBD)
+
 ## [1.6.10] — 2026-05-01
 
 ### Changed

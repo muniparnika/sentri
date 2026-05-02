@@ -65,6 +65,20 @@ const PROVIDERS = [
     warning: "Free tier is limited to 20 requests/day — hits rate limits quickly on large crawls.",
   },
   {
+    id: "openrouter",
+    name: "OpenRouter",
+    company: "OpenRouter",
+    model: "openrouter/auto",
+    placeholder: "sk-or-v1-...",
+    docsUrl: "https://openrouter.ai/keys",
+    color: "#8385f4",
+    borderColor: "rgba(100,102,241,0.3)",
+    bg: "rgba(100,102,241,0.06)",
+    description: "Unified gateway to 200+ models (Claude, GPT, Llama, Mixtral, etc.) with one key.",
+    badge: "Multi-model",
+    badgeColor: "var(--accent)",
+  },
+  {
     id: "local",
     name: "Ollama",
     company: "Local / Self-hosted",
@@ -325,7 +339,7 @@ function ProviderCard({ provider, activeProvider, maskedKey, ollamaBaseUrl, olla
           background: isActive ? provider.bg : "var(--bg3)",
           border: `1px solid ${isActive ? provider.borderColor : "var(--border)"}`,
         }}>
-          {provider.id === "anthropic" ? "🔶" : provider.id === "openai" ? "🟢" : provider.id === "local" ? "🦙" : "🔷"}
+          {provider.id === "anthropic" ? "🔶" : provider.id === "openai" ? "🟢" : provider.id === "openrouter" ? "🧭" : provider.id === "local" ? "🦙" : "🔷"}
         </div>
         <div className="flex-1">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
