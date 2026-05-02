@@ -982,6 +982,14 @@ router.post("/projects/:id/record", requireRole("qa_lead"), expensiveOpLimiter, 
       type: "record",
       status: "running",
       startedAt: new Date().toISOString(),
+      // Persist the starting URL so the Recorder modal's start-URL dropdown
+      // (`GET /api/v1/projects/:id/pages`) can surface URLs from past
+      // recordings as suggestions for new recordings on the same project.
+      // The `runs` table has no dedicated `url` column, but `pages` is a
+      // JSON column already used by the crawler to persist discovered URLs
+      // — reuse it here with a single `{url, status: "recorded"}` entry so
+      // the same /pages aggregator works for both crawl + record sources.
+      pages: [{ url: startUrl, title: startUrl, status: "recorded" }],
       workspaceId: project.workspaceId || null,
     });
     await startRecording({ sessionId, projectId: project.id, startUrl });

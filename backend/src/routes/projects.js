@@ -260,20 +260,35 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
 router.get("/:id/pages", requireRole("viewer"), (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
-  // Walk newest-first and take the first crawl run that actually has pages
-  // persisted. We intentionally do NOT filter on status === "completed"
+  // Source URLs from THREE places so the dropdown is useful even when the
+  // project has never been crawled:
+  //   1. Project seed URL (always present).
+  //   2. Pages from the latest crawl run that has `pages[]` populated.
+  //   3. Starting URLs from past `record` runs on this project — the most
+  //      useful suggestions for "I want to record another flow".
+  // We intentionally do NOT filter on status === "completed" for the crawl
   // because `crawler.js` flips the status to "completed_empty" whenever a
   // crawl finished without generating any tests (auth-walled sites, SPAs
   // with no interactive elements, AI-rate-limited runs). Those runs still
   // persist `run.pages` at crawler.js:402 before the status flip, so their
-  // discovered URLs are a perfectly valid input to the dropdown. Filtering
-  // them out was causing the dropdown to show only the seed URL for any
-  // project whose most recent crawl didn't produce tests.
+  // discovered URLs are a perfectly valid input to the dropdown.
   const runs = runRepo.getByProjectId(req.params.id);
-  const latest = runs.find(r => r.type === "crawl" && Array.isArray(r.pages) && r.pages.length > 0);
-  const pages = (latest?.pages || []).map(p => p?.url).filter(Boolean);
+  const latestCrawl = runs.find(r => r.type === "crawl" && Array.isArray(r.pages) && r.pages.length > 0);
+  const crawledUrls = (latestCrawl?.pages || []).map(p => p?.url).filter(Boolean);
+  // Past recording runs — `runs` is already sorted newest-first by
+  // `runRepo.getByProjectId()`, so this preserves recency order in the
+  // suggestions. Cap at 20 so the datalist doesn't grow unbounded on
+  // projects with hundreds of recordings. Each `record` run persists its
+  // startUrl as `pages: [{url, status: "recorded"}]` (see
+  // `routes/tests.js` POST /record) — reuse the same `pages[]` shape the
+  // crawler uses so we don't need a second column.
+  const recordedUrls = runs
+    .filter(r => r.type === "record" && Array.isArray(r.pages) && r.pages.length > 0)
+    .slice(0, 20)
+    .map(r => r.pages[0]?.url)
+    .filter(Boolean);
   const seed = project.url;
-  const unique = Array.from(new Set([seed, ...pages].filter(Boolean)));
+  const unique = Array.from(new Set([seed, ...recordedUrls, ...crawledUrls].filter(Boolean)));
   res.json({ urls: unique });
 });
 
