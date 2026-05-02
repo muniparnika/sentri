@@ -32,10 +32,14 @@ const CLEAN_ENV = {
   AI_PROVIDER: "",
 };
 
+// Low-entropy placeholders to avoid gitleaks false positives.
+const FAKE_OR  = "fake-fake-fake-fake";
+const FAKE_ANT = "fake-fake-fake-fake";
+
 console.log("\n🧪 OpenRouter — provider detection");
 
 await test("getProvider() returns 'openrouter' when only OPENROUTER_API_KEY is set", () => {
-  const env = setupEnv({ ...CLEAN_ENV, OPENROUTER_API_KEY: "sk-or-v1-test-key-1234" });
+  const env = setupEnv({ ...CLEAN_ENV, OPENROUTER_API_KEY: FAKE_OR });
   try {
     assert.equal(getProvider(), "openrouter");
   } finally { env.restore(); }
@@ -44,8 +48,8 @@ await test("getProvider() returns 'openrouter' when only OPENROUTER_API_KEY is s
 await test("auto-detect prefers Anthropic over OpenRouter when both are set", () => {
   const env = setupEnv({
     ...CLEAN_ENV,
-    ANTHROPIC_API_KEY: "sk-ant-test-1234",
-    OPENROUTER_API_KEY: "sk-or-v1-test-1234",
+    ANTHROPIC_API_KEY: FAKE_ANT,
+    OPENROUTER_API_KEY: FAKE_OR,
   });
   try {
     assert.equal(getProvider(), "anthropic");
@@ -56,7 +60,7 @@ await test("AI_PROVIDER=openrouter is honoured when key present", () => {
   const env = setupEnv({
     ...CLEAN_ENV,
     AI_PROVIDER: "openrouter",
-    OPENROUTER_API_KEY: "sk-or-v1-test-1234",
+    OPENROUTER_API_KEY: FAKE_OR,
   });
   try {
     assert.equal(getProvider(), "openrouter");
@@ -66,7 +70,7 @@ await test("AI_PROVIDER=openrouter is honoured when key present", () => {
 console.log("\n🧪 OpenRouter — getConfiguredKeys()");
 
 await test("getConfiguredKeys() exposes an `openrouter` field", () => {
-  const env = setupEnv({ ...CLEAN_ENV, OPENROUTER_API_KEY: "sk-or-v1-abcdefg-1234" });
+  const env = setupEnv({ ...CLEAN_ENV, OPENROUTER_API_KEY: FAKE_OR });
   try {
     const keys = getConfiguredKeys();
     assert.ok("openrouter" in keys, "openrouter field missing from getConfiguredKeys()");
