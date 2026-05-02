@@ -439,8 +439,34 @@ const RECORDER_SCRIPT = `
   // \`fill\` actions and produced two consecutive \`safeFill(sel, 'hello')\`
   // calls in the generated code. The lastEmittedFill entry is purged after
   // the change event so a subsequent retype of the same value re-fires.
+  // Pending fills: sel -> { timer, el, label }. We keep the captured element
+  // ref alongside the timer so flushPendingFill() can emit synchronously
+  // (re-querying via document.querySelector would lose elements inside
+  // shadow roots / iframes). flushPendingFill() is invoked by Enter
+  // keydown, form submit, and pagehide handlers below — without those
+  // flushes, a user who hits Enter to submit (or whose form auto-submits
+  // and navigates) loses the typed value because the 300 ms debounce
+  // timer is destroyed along with the page before it fires.
   const inputTimers = new Map();
   const lastEmittedFill = new Map();
+  function flushPendingFill(sel) {
+    const pending = inputTimers.get(sel);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    inputTimers.delete(sel);
+    const value = pending.el ? pending.el.value : "";
+    if (lastEmittedFill.get(sel) === value) {
+      lastEmittedFill.delete(sel);
+      return;
+    }
+    lastEmittedFill.set(sel, value);
+    window.__sentriRecord && window.__sentriRecord({
+      kind: "fill", selector: sel, label: pending.label, value, ts: Date.now(),
+    });
+  }
+  function flushAllPendingFills() {
+    for (const sel of Array.from(inputTimers.keys())) flushPendingFill(sel);
+  }
   document.addEventListener("input", (ev) => {
     const el = eventElement(ev);
     if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return;
@@ -448,8 +474,9 @@ const RECORDER_SCRIPT = `
     const sel = selectorGenerator(el);
     if (!sel) return;
     const prev = inputTimers.get(sel);
-    if (prev) clearTimeout(prev);
-    inputTimers.set(sel, setTimeout(() => {
+    if (prev) clearTimeout(prev.timer);
+    const label = bestLabel(el);
+    const timer = setTimeout(() => {
       inputTimers.delete(sel);
       const value = el.value;
       // Skip when the paste handler already emitted the exact same value —
@@ -463,9 +490,28 @@ const RECORDER_SCRIPT = `
       }
       lastEmittedFill.set(sel, value);
       window.__sentriRecord && window.__sentriRecord({
-        kind: "fill", selector: sel, label: bestLabel(el), value, ts: Date.now(),
+        kind: "fill", selector: sel, label, value, ts: Date.now(),
       });
-    }, ${TIMINGS.FILL_DEBOUNCE_MS}));
+    }, ${TIMINGS.FILL_DEBOUNCE_MS});
+    inputTimers.set(sel, { timer, el, label });
+  }, true);
+
+  // Flush on form submit — Enter-to-submit on Google search and other
+  // forms navigates away before the input debounce can fire. The capture
+  // phase listener runs synchronously inside the same user-gesture task
+  // as the navigation, so __sentriRecord (an exposeBinding) gets the
+  // event queued before the page unloads.
+  document.addEventListener("submit", () => {
+    flushAllPendingFills();
+  }, true);
+
+  // Last-chance flush before navigation. \`pagehide\` is more reliable
+  // than \`beforeunload\` (fires for back/forward cache, programmatic
+  // navigations, and HTTP redirects) — best-effort because exposeBinding
+  // marshalling is async, but works for "type → click submit button"
+  // flows where the click handler runs synchronously before unload.
+  window.addEventListener("pagehide", () => {
+    flushAllPendingFills();
   }, true);
 
   document.addEventListener("paste", (ev) => {
@@ -478,7 +524,7 @@ const RECORDER_SCRIPT = `
     if (!hasClipboard) return;
     // Cancel any pending input-handler debounce — the post-paste \`input\`
     // event would otherwise queue a second emission for the same change.
-    if (inputTimers.get(sel)) { clearTimeout(inputTimers.get(sel)); inputTimers.delete(sel); }
+    if (inputTimers.get(sel)) { clearTimeout(inputTimers.get(sel).timer); inputTimers.delete(sel); }
     // Defer to a microtask so \`el.value\` reflects the post-paste field
     // contents (paste fires in the capture phase before the browser mutates
     // value). Using el.value — not just the clipboard snippet — means
@@ -527,7 +573,7 @@ const RECORDER_SCRIPT = `
       if (!sel) return;
       const pending = inputTimers.get(sel);
       if (pending) {
-        clearTimeout(pending);
+        clearTimeout(pending.timer);
         inputTimers.delete(sel);
         // Fall through to emit below; the input handler hadn't fired yet.
       } else if (lastEmittedFill.get(sel) === el.value) {
@@ -549,6 +595,14 @@ const RECORDER_SCRIPT = `
     // Keep modifier-only events out, but capture regular typing + editing
     // keys so replay preserves keyboard-driven interactions.
     if (ev.key === "Shift" || ev.key === "Control" || ev.key === "Meta" || ev.key === "Alt") return;
+    // Enter often submits a form and navigates away before the 300 ms
+    // input debounce fires, losing the typed value. Flush all pending
+    // fills synchronously so the recorded order is fill → press Enter →
+    // goto rather than just press Enter → goto. Same rationale for Tab
+    // (commits autocomplete + moves focus, can trigger nav on some sites).
+    if (ev.key === "Enter" || ev.key === "Tab") {
+      flushAllPendingFills();
+    }
     // If a printable single character is being typed into an editable field,
     // the "input" handler above already captures the resulting fill via
     // \`safeFill(sel, '<value>')\`. Emitting an additional per-keystroke
