@@ -1,0 +1,891 @@
+/**
+ * StepResultsView — component-specific styles
+ *
+ * Scoped with `.srv-*` prefix (step-results-view).
+ * Covers: breadcrumb, split layout, activity log, browser chrome,
+ * step rows, tabs, visual diff panel, network table, console, DOM tree.
+ *
+ * No inline styles should exist in StepResultsView.jsx — add new rules here.
+ * Import after run-detail.css in index.css.
+ */
+
+/* ── Root wrapper ────────────────────────────────────────────────────────────── */
+.srv-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Breadcrumb ──────────────────────────────────────────────────────────────── */
+.srv-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 0.8rem;
+  color: var(--text3);
+}
+
+.srv-breadcrumb-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text2);
+  font-weight: 500;
+  font-size: 0.8rem;
+  padding: 4px 0;
+  font-family: var(--font-sans);
+  transition: color 0.12s;
+}
+
+.srv-breadcrumb-btn:hover { color: var(--text); }
+
+.srv-breadcrumb-sep { color: var(--border2); }
+
+.srv-breadcrumb-current {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+}
+
+.srv-breadcrumb-test-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.78rem;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  transition: opacity 0.12s;
+}
+
+.srv-breadcrumb-test-link:hover { opacity: 0.75; }
+
+/* ── Split layout ────────────────────────────────────────────────────────────── */
+.srv-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  min-height: 580px;
+}
+
+/* ── Shared panel base ───────────────────────────────────────────────────────── */
+.srv-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.srv-panel-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.srv-panel-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.srv-panel-count {
+  font-size: 0.68rem;
+  color: var(--text3);
+}
+
+/* ── Activity log (left panel) ───────────────────────────────────────────────── */
+.srv-log-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Test case prompt card inside the log */
+.srv-prompt-card {
+  margin: 10px 10px 6px;
+  padding: 10px 12px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 0.76rem;
+  color: var(--text);
+  line-height: 1.5;
+  position: relative;
+}
+
+.srv-prompt-label-row {
+  font-weight: 700;
+  font-size: 0.68rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.srv-prompt-test-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.68rem;
+  padding: 0;
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Empty state */
+.srv-log-empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--text3);
+  font-size: 0.8rem;
+}
+
+.srv-log-empty-sub {
+  font-size: 0.72rem;
+}
+
+/* ── Step row ────────────────────────────────────────────────────────────────── */
+.srv-step-row {
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  background: transparent;
+  transition: all 0.12s;
+}
+
+.srv-step-row.active   { background: var(--bg2); }
+.srv-step-row:last-child { border-bottom: none; }
+
+.srv-step-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+/* Step number circle */
+.srv-step-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;  /* colour set inline — driven by stepLeftColor() */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.srv-step-circle.passed  { background: var(--green-bg); }
+.srv-step-circle.failed  { background: var(--red-bg);   }
+.srv-step-circle.running { background: var(--blue-bg);  }
+.srv-step-circle.pending { background: var(--bg3);      }
+
+.srv-step-num-text {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+.srv-step-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.srv-step-badge { margin-left: auto; }
+
+/* Step description (clamped to 2 lines) */
+.srv-step-desc {
+  font-size: 0.76rem;
+  color: var(--text2);
+  line-height: 1.45;
+  padding-left: 30px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Timing */
+.srv-step-timing {
+  font-size: 0.65rem;
+  color: var(--text3);
+  padding-left: 30px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+
+/* Error inline block */
+.srv-step-error {
+  margin-top: 8px;
+  margin-left: 30px;
+  padding: 7px 10px;
+  background: var(--red-bg);
+  border-radius: 6px;
+  font-size: 0.71rem;
+  color: var(--red);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 2px solid var(--red);
+}
+
+/* Healing timeline wrapper */
+.srv-healing-wrap {
+  margin-left: 30px;
+  margin-top: 8px;
+}
+
+/* ── Status badge (inline pill) ──────────────────────────────────────────────── */
+.srv-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+/* ── Right panel: Browser view ───────────────────────────────────────────────── */
+.srv-browser-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.srv-browser-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.srv-browser-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.srv-browser-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+/* Tab pill group */
+.srv-tab-group {
+  display: flex;
+  gap: 2px;
+  background: var(--bg2);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.srv-tab-pill {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  background: transparent;
+  color: var(--text3);
+  box-shadow: none;
+  transition: all 0.12s;
+}
+
+.srv-tab-pill.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* Content area */
+.srv-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* ── Browser Chrome shell ─────────────────────────────────────────────────────── */
+.srv-chrome {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.10);
+  background: #f0f0f0;
+  display: flex;
+  flex-direction: column;
+}
+
+.srv-chrome-titlebar {
+  background: linear-gradient(180deg, #e8e8e8 0%, #d8d8d8 100%);
+  padding: 8px 12px 0;
+  border-bottom: 1px solid #c0c0c0;
+}
+
+.srv-chrome-toptray {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 6px;
+}
+
+.srv-chrome-lights {
+  display: flex;
+  gap: 6px;
+  margin-right: 12px;
+}
+
+.srv-chrome-light {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 0.5px solid rgba(0,0,0,0.15);
+}
+
+.srv-chrome-tab {
+  background: #fff;
+  border-radius: 6px 6px 0 0;
+  padding: 4px 14px 5px;
+  font-size: 0.72rem;
+  color: #333;
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-top: 1px solid #c0c0c0;
+  border-left: 1px solid #c0c0c0;
+  border-right: 1px solid #c0c0c0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.srv-chrome-addressbar {
+  background: #fff;
+  padding: 2px 4px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.srv-chrome-nav-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #666;
+}
+
+.srv-chrome-nav-btn.faded { opacity: 0.5; }
+
+.srv-chrome-url-bar {
+  flex: 1;
+  height: 28px;
+  background: #f5f5f5;
+  border-radius: 14px;
+  border: 1px solid #d0d0d0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.srv-chrome-url-text {
+  font-size: 0.75rem;
+  color: #333;
+  font-family: var(--font-sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.srv-chrome-loading-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+  z-index: 10;
+}
+
+.srv-chrome-content {
+  background: #fff;
+  position: relative;
+}
+
+/* Screenshot empty state */
+.srv-screenshot-empty {
+  padding: 60px 40px;
+  text-align: center;
+  background: #fafafa;
+  color: #94a3b8;
+}
+
+.srv-screenshot-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.3;
+}
+
+.srv-screenshot-empty-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #64748b;
+}
+
+.srv-screenshot-empty-desc {
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+/* ── Visual Diff panel ───────────────────────────────────────────────────────── */
+.srv-vdiff {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.srv-vdiff-banner {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.srv-vdiff-status {
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.srv-vdiff-stats {
+  font-size: 0.74rem;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+.srv-vdiff-msg {
+  font-size: 0.72rem;
+  color: var(--text3);
+  font-style: italic;
+}
+
+.srv-vdiff-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.srv-vdiff-mode-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: var(--surface);
+  color: var(--text2);
+}
+
+.srv-vdiff-mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.srv-vdiff-mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.srv-vdiff-accept-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text2);
+  transition: all 0.12s;
+}
+
+.srv-vdiff-accept-btn.accepted { background: var(--green-bg); color: var(--green); }
+.srv-vdiff-accept-btn:disabled { cursor: default; }
+
+.srv-vdiff-img-wrap {
+  display: flex;
+  justify-content: center;
+  background: #fafafa;
+}
+
+.srv-vdiff-img { max-width: 100%; max-height: 620px; display: block; }
+
+.srv-vdiff-no-img {
+  padding: 60px 20px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.srv-vdiff-error {
+  padding: 8px 14px;
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 0.74rem;
+}
+
+/* ── API result panel ────────────────────────────────────────────────────────── */
+.srv-api-panel {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.srv-api-header {
+  padding: 10px 14px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.srv-api-header-title {
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.srv-api-status-banner {
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.srv-api-status-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+
+.srv-api-status-label {
+  font-weight: 700;
+  font-size: 0.88rem;
+  margin-bottom: 4px;
+}
+
+.srv-api-duration {
+  font-size: 0.72rem;
+  color: var(--text3);
+}
+
+.srv-api-calls-section {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.srv-api-calls-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+/* Individual network call card */
+.srv-net-card {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.srv-net-card + .srv-net-card { margin-top: 10px; }
+
+.srv-net-card-header {
+  padding: 8px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.srv-net-method {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.srv-net-url {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.srv-net-status {
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+.srv-net-meta {
+  font-size: 0.68rem;
+  color: var(--text3);
+}
+
+/* Request/response sections inside a net card */
+.srv-net-section-label {
+  padding: 5px 12px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+
+.srv-net-sub-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text3);
+  margin-bottom: 3px;
+}
+
+.srv-net-pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+.srv-net-body-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: #0d1117;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.srv-net-no-body {
+  font-size: 0.72rem;
+  color: var(--text3);
+  font-style: italic;
+}
+
+/* ── Network table ───────────────────────────────────────────────────────────── */
+.srv-net-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.73rem;
+  font-family: var(--font-mono);
+}
+
+.srv-net-table th {
+  text-align: left;
+  padding: 7px 10px;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg2);
+  position: sticky;
+  top: 0;
+}
+
+.srv-net-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.srv-net-table td.url-cell {
+  color: var(--text2);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srv-net-empty {
+  text-align: center;
+  padding: 60px;
+  color: var(--text3);
+}
+
+.srv-net-empty-icon {
+  font-size: 28px;
+  margin-bottom: 10px;
+  opacity: 0.3;
+}
+
+/* ── Console panel ───────────────────────────────────────────────────────────── */
+.srv-console {
+  background: #0d1117;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.srv-console-header {
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.03);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.srv-console-header-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.srv-console-count {
+  font-size: 0.65rem;
+  color: #475569;
+  font-family: var(--font-mono);
+}
+
+.srv-console-body {
+  padding: 12px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.srv-console-row {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  line-height: 1.7;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.srv-console-time { color: #475569; flex-shrink: 0; }
+
+.srv-console-level {
+  font-weight: 600;
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.srv-console-empty {
+  padding: 20px;
+  text-align: center;
+  color: #475569;
+  font-size: 0.76rem;
+}
+
+/* ── DOM panel ───────────────────────────────────────────────────────────────── */
+.srv-dom-empty {
+  text-align: center;
+  padding: 60px;
+  color: var(--text3);
+}
+
+.srv-dom-empty-icon {
+  font-size: 28px;
+  margin-bottom: 10px;
+  opacity: 0.3;
+}
+
+/* DOM tree node */
+.srv-dom-node-wrap {
+  line-height: 1.8;
+}
+
+.srv-dom-node-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  color: #93c5fd;
+}
+
+/* ── Responsive: 900px ───────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .srv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Activity log: collapse to a compact horizontal scroll on small screens */
+  .srv-log-body {
+    max-height: 300px;
+  }
+}
+
+/* ── Responsive: 600px ───────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .srv-breadcrumb-current { max-width: 200px; }
+
+  .srv-tab-group {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .srv-content { padding: 10px; }
+}
