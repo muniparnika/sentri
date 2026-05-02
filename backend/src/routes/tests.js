@@ -55,6 +55,46 @@ import { randomUUID } from "crypto";
 
 const router = Router();
 
+/**
+ * Return `desiredName` if it's free within the project, otherwise append
+ * ` (2)`, ` (3)`, … until a non-colliding name is found. Compares
+ * case-insensitively (manual testers expect "Login" and "login" to be
+ * treated as the same name) and ignores soft-deleted tests because
+ * `testRepo.getByProjectId()` already filters them out.
+ *
+ * Used by the recorder stop handler so two recordings saved with the same
+ * name (or two no-name saves whose default ISO-timestamp collides at the
+ * same millisecond) don't produce two indistinguishable rows in the Tests
+ * list. Also covers the recorded-test path's MAX_RECORDING_MS auto-timeout
+ * recovery branch — both routes funnel through `dedupeTestName`.
+ *
+ * Hot-path consideration: `getByProjectId` does one indexed
+ * `SELECT * WHERE projectId = ?`. Recorder stop is a low-frequency event
+ * (one per user save), so the in-process scan is fine — we don't want to
+ * add a `(projectId, name)` UNIQUE index because the AI pipeline already
+ * suffixes its own names and adding a hard constraint would break
+ * legacy rows where duplicates already exist.
+ *
+ * @param {string} projectId
+ * @param {string} desiredName
+ * @returns {string} A name that doesn't collide with any existing test.
+ */
+function dedupeTestName(projectId, desiredName) {
+  const base = String(desiredName || "").trim();
+  if (!base) return base; // caller is responsible for never passing empty
+  const existing = testRepo.getByProjectId(projectId);
+  const taken = new Set(existing.map((t) => String(t.name || "").trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  // Walk suffix counters until we find a free slot. Cap at 999 to avoid an
+  // infinite loop on a pathological project — beyond that, fall through to
+  // the timestamped form which is effectively guaranteed unique.
+  for (let i = 2; i <= 999; i++) {
+    const candidate = `${base} (${i})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} (${new Date().toISOString()})`;
+}
+
 // ─── Test CRUD ────────────────────────────────────────────────────────────────
 
 router.get("/projects/:id/tests", (req, res) => {
@@ -1144,11 +1184,24 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
   // step-based edit/regeneration that indexes by position).
   const emittableActions = filterEmittableActions(dedupedActions);
 
+  // Dedupe the requested name against existing tests in the same project so
+  // two recordings saved with the same name (or two no-name saves whose
+  // default ISO-timestamp default collides at the same millisecond) don't
+  // produce two indistinguishable rows in the Tests list. If a collision
+  // resolves, the generated `playwrightCode` still carries the *original*
+  // name — regenerate the body with the deduped name so the code's `test(...)`
+  // label and the persisted `name` column stay in sync (test runners surface
+  // the embedded label in failure reports).
+  const uniqueName = dedupeTestName(project.id, name);
+  const playwrightCode = uniqueName !== name
+    ? actionsToPlaywrightCode(uniqueName, stopResult.url, emittableActions)
+    : stopResult.playwrightCode;
+
   const testId = generateTestId();
   const test = {
     id: testId,
     projectId: project.id,
-    name,
+    name: uniqueName,
     description: `Recorded from ${stopResult.url}`,
     // Match the human-readable step convention used by the AI generate/crawl
     // pipeline (`outputSchema.js`) and the manual-test creation path: short
@@ -1158,7 +1211,7 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
     // so visual alignment matters — recorder tests previously stuck out as the
     // only ones showing engineer-shaped output.
     steps: emittableActions.map((a) => recordedActionToStepText(a)),
-    playwrightCode: stopResult.playwrightCode,
+    playwrightCode,
     priority: "medium",
     type: "recorded",
     sourceUrl: stopResult.url,
@@ -1181,8 +1234,8 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
 
   logActivity({ ...actor(req),
     type: "test.record_stop", projectId: project.id, projectName: project.name,
-    testId, testName: name,
-    detail: `Recorder captured ${stopResult.actions.length} actions → Draft test`, status: "success",
+    testId, testName: uniqueName,
+    detail: `Recorder captured ${stopResult.actions.length} actions → Draft test${uniqueName !== name ? ` (renamed to "${uniqueName}" to avoid duplicate)` : ""}`, status: "success",
   });
 
   res.status(201).json({
