@@ -6,8 +6,15 @@ import { useSseStream } from "../../hooks/useSseStream.js";
 import { actionToStepText, actionRawLocator } from "../../utils/actionToStepText.js";
 import LiveBrowserView from "./LiveBrowserView.jsx";
 
-export default function RecorderModal({ open, onClose, onSaved, projectId, defaultUrl = "" }) {
+export default function RecorderModal({ open, onClose, onSaved, projectId, defaultUrl = "", projects = null }) {
   const [phase, setPhase] = useState("idle");
+  // Selected project — initialised from the `projectId` prop but mutable in the
+  // idle form so the user can route the recording to any project they belong
+  // to (without this, the "Record a test" quick action on /tests always saved
+  // into projects[0] regardless of which project the user actually wanted).
+  // When `projects` is null or has ≤ 1 entry the picker is hidden — the modal
+  // is already project-scoped (e.g. opened from ProjectDetail).
+  const [selectedProjectId, setSelectedProjectId] = useState(projectId);
   const [startUrl, setStartUrl] = useState(defaultUrl);
   const [sessionId, setSessionId] = useState(null);
   const [actions, setActions] = useState([]);
@@ -51,19 +58,35 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
 
   useEffect(() => { setStartUrl(defaultUrl); }, [defaultUrl]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
-  useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
+  // Mirror the *active* selection into the ref so handleInput() / cleanup
+  // hooks always target the project the recording was launched against,
+  // even if the parent's `projectId` prop has since changed.
+  useEffect(() => { projectIdRef.current = selectedProjectId; }, [selectedProjectId]);
+  // When the parent prop changes (e.g. modal re-opened for a different
+  // project), reset the local selection to match.
+  useEffect(() => { setSelectedProjectId(projectId); }, [projectId]);
+
+  // Auto-fill the Starting URL with the selected project's seed URL whenever
+  // the user picks a different project in the idle form (only while idle —
+  // never overwrite a URL the user has already started recording against).
+  useEffect(() => {
+    if (phase !== "idle" && phase !== "error") return;
+    if (!Array.isArray(projects)) return;
+    const proj = projects.find((p) => p.id === selectedProjectId);
+    if (proj?.url) setStartUrl(proj.url);
+  }, [selectedProjectId, projects, phase]);
 
   // Populate the Starting URL datalist with the project's seed URL + pages
   // discovered on the latest successful crawl. Best-effort — failures fall
   // through to an empty suggestion list rather than blocking the recorder.
   useEffect(() => {
-    if (!open || !projectId) return;
+    if (!open || !selectedProjectId) return;
     let cancelled = false;
-    api.getProjectPages(projectId)
+    api.getProjectPages(selectedProjectId)
       .then((res) => { if (!cancelled) setUrlOptions(res?.urls || []); })
       .catch(() => { if (!cancelled) setUrlOptions([]); });
     return () => { cancelled = true; };
-  }, [open, projectId]);
+  }, [open, selectedProjectId]);
 
   const sseUrl = sessionId ? `${API_PATH}/runs/${sessionId}/events` : null;
   useSseStream(sseUrl, useCallback((event) => {
@@ -82,6 +105,9 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
 
   async function handleStart() {
     setError(null); setActions([]); setFrames([]);
+    if (!selectedProjectId) {
+      setError("Select a project to record into."); return;
+    }
     if (!startUrl || !/^https?:\/\//i.test(startUrl)) {
       setError("Enter a valid http(s) URL to record from."); return;
     }
@@ -90,20 +116,20 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
       // Await discard so the previous browser is fully torn down before we
       // launch a new one. Fire-and-forget here let the new screencast race
       // the old session's Chromium close, producing black-canvas symptoms.
-      try { await api.recordDiscard(projectIdRef.current || projectId, stale); }
+      try { await api.recordDiscard(projectIdRef.current || selectedProjectId, stale); }
       catch { /* best-effort */ }
       sessionIdRef.current = null; setSessionId(null);
     }
     teardownStreams();
     setPhase("starting");
     try {
-      const { sessionId: sid, viewport: vp } = await api.recordStart(projectId, { startUrl });
+      const { sessionId: sid, viewport: vp } = await api.recordStart(selectedProjectId, { startUrl });
       setSessionId(sid);
       if (vp && vp.width > 0 && vp.height > 0) setViewport({ width: vp.width, height: vp.height });
       setPhase("recording");
       pollRef.current = setInterval(async () => {
         try {
-          const status = await api.recordStatus(projectId, sid);
+          const status = await api.recordStatus(selectedProjectId, sid);
           const incoming = status.actions || [];
           setActions((prev) => {
             const prevLen = prev.length;
@@ -141,7 +167,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     if (!sessionId) return;
     setPhase("stopping"); setError(null);
     try {
-      const result = await api.recordStop(projectId, sessionId, {
+      const result = await api.recordStop(selectedProjectId, sessionId, {
         name: name.trim() || `Recorded flow @ ${new Date().toISOString()}`,
       });
       teardownStreams();
@@ -163,7 +189,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     }
     setError(null);
     try {
-      await api.recordAddAssertion(projectId, sessionId, {
+      await api.recordAddAssertion(selectedProjectId, sessionId, {
         kind: assertKind,
         selector: assertKind === "assertUrl" ? undefined : assertSelector.trim(),
         label: assertLabel.trim() || undefined,
@@ -178,7 +204,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   async function armShortcutCapture() {
     if (!sessionId) return;
     try {
-      await api.recordInput(projectId, sessionId, { type: "shortcutCapture", count: 3 });
+      await api.recordInput(selectedProjectId, sessionId, { type: "shortcutCapture", count: 3 });
       setShortcutArmed(true);
       window.setTimeout(() => setShortcutArmed(false), 4000);
     } catch {}
@@ -211,7 +237,7 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     // frames produced on the new session, until a hard refresh.
     setConfirmDiscard(false);
     if (sessionId) {
-      try { await api.recordDiscard(projectId, sessionId); }
+      try { await api.recordDiscard(selectedProjectId, sessionId); }
       catch { /* best-effort — server may have already auto-torn-down */ }
     }
     teardownStreams();
@@ -272,6 +298,22 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
           <div className="recorder-idle__panel">
             <div className="recorder-idle__heading">New recording</div>
             <div className="recorder-idle__fields">
+              {Array.isArray(projects) && projects.length > 1 && (
+                <div>
+                  <label className="recorder-idle__label recorder-idle__label--required">
+                    Project <span className="recorder-idle__required">*</span>
+                  </label>
+                  <select
+                    className="input recorder-idle__input"
+                    value={selectedProjectId || ""}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="recorder-idle__label">Test name</label>
                 <input

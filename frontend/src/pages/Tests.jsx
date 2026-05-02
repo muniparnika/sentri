@@ -1074,9 +1074,14 @@ export default function Tests() {
           open={showRecorderModal}
           onClose={() => setShowRecorderModal(false)}
           projectId={recorderProjectId}
+          projects={projects}
           defaultUrl={projects.find(p => p.id === recorderProjectId)?.url || ""}
           onSaved={(t) => {
-            invalidateProjectDataCache(recorderProjectId);
+            // Use the saved test's projectId (not the seed `recorderProjectId`)
+            // because the user may have switched projects in the modal's idle
+            // form before launching — invalidating the wrong project's cache
+            // would leave the newly-recorded test invisible until a refresh.
+            invalidateProjectDataCache(t?.projectId || recorderProjectId);
             navigate(`/tests/${t.id}`);
           }}
         />
