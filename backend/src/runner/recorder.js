@@ -1202,7 +1202,6 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
 
     // Expose a binding for the injected script to relay captured events.
     await context.exposeBinding("__sentriRecord", (source, action) => {
-      console.error(formatLogLine("info", null, `[recorder] __sentriRecord fired kind=${action?.kind} sel=${(action?.selector || "").slice(0, 60)}`));
       if (session.status !== "recording") return;
       if (!action || typeof action !== "object") return;
       const sourcePage = source?.page || null;
@@ -1288,14 +1287,6 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     }
     if (bootstrap) await context.addInitScript(bootstrap);
 
-    // Diagnostic probe: a tiny known-good init script that JUST sets a sentinel.
-    // If __sentriProbe=true shows up on window but __sentriRecorderInstalled
-    // does NOT, then RECORDER_SCRIPT itself has a parse error (try/catch
-    // can't catch parse errors, so the in-script catch wouldn't fire either).
-    // Also log the script length + first/last 80 chars so we can verify it
-    // isn't being truncated by addInitScript serialization.
-    await context.addInitScript("window.__sentriProbe = true;");
-    console.error(formatLogLine("info", null, `[recorder] RECORDER_SCRIPT length=${RECORDER_SCRIPT.length} head=${JSON.stringify(RECORDER_SCRIPT.slice(0, 80))} tail=${JSON.stringify(RECORDER_SCRIPT.slice(-80))}`));
     await context.addInitScript(RECORDER_SCRIPT);
 
     // Now that the binding + init scripts are registered on the context,
@@ -1305,28 +1296,15 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     pageAliases.set(page, "page");
     session.page = page;
 
-    // Temporary diagnostic: pipe page console + errors into backend logs so
-    // we can see if RECORDER_SCRIPT throws during init or if the in-page
-    // listeners ever fire.
-    page.on("console", (msg) => {
-      console.error(formatLogLine("info", null, `[recorder/page-console] ${msg.type()}: ${msg.text()}`));
-    });
+    // Surface in-page recorder init failures via the backend log. The IIFE
+    // in `RECORDER_SCRIPT` is wrapped in try/catch and emits a
+    // `[sentri-recorder] init failed:` console.error on any thrown listener
+    // setup; piping page console here lets us notice silently broken
+    // recordings (no actions captured) instead of having to attach a
+    // debugger.
     page.on("pageerror", (err) => {
-      console.error(formatLogLine("warn", null, `[recorder/page-error] ${err.message}`));
-    });
-    // Sentinel: after the init script installs, log what's on window so we
-    // can verify __sentriRecord and __sentriRecorderInstalled exist.
-    page.on("load", async () => {
-      try {
-        const probe = await page.evaluate(() => ({
-          installed: !!window.__sentriRecorderInstalled,
-          hasBinding: typeof window.__sentriRecord === "function",
-          probeRan: !!window.__sentriProbe,
-          url: location.href,
-        }));
-        console.error(formatLogLine("info", null, `[recorder/probe] installed=${probe.installed} hasBinding=${probe.hasBinding} probeRan=${probe.probeRan} url=${probe.url}`));
-      } catch (err) {
-        console.error(formatLogLine("warn", null, `[recorder/probe] failed: ${err.message}`));
+      if (err && err.message && err.message.includes("sentri-recorder")) {
+        console.error(formatLogLine("warn", null, `[recorder/page-error] ${err.message}`));
       }
     });
     context.on("page", (p) => {
@@ -1540,7 +1518,6 @@ export async function forwardInput(sessionId, event) {
 
   const cdp = session.cdpSession;
   const { type } = event;
-  console.error(formatLogLine("info", null, `[recorder] forwardInput type=${type} x=${event.x} y=${event.y} key=${event.key || ""}`));
 
   try {
     if (type === "mousePressed" || type === "mouseReleased" || type === "mouseMoved") {
