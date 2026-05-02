@@ -1481,6 +1481,7 @@ export async function forwardInput(sessionId, event) {
 
   const cdp = session.cdpSession;
   const { type } = event;
+  console.error(formatLogLine("info", null, `[recorder] forwardInput type=${type} x=${event.x} y=${event.y} key=${event.key || ""}`));
 
   try {
     if (type === "mousePressed" || type === "mouseReleased" || type === "mouseMoved") {
