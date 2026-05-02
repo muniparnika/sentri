@@ -88,7 +88,7 @@ backend/           Node.js 20+ ESM server (Express 4, Playwright, LLM SDKs)
       schema.sql           Table definitions, indexes, counter seeds
       migrate.js           One-time JSON → SQLite migration
       repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, runLogRepo, activityRepo, healingRepo, passwordResetTokenRepo, verificationTokenRepo, webhookTokenRepo, scheduleRepo, workspaceRepo, notificationSettingsRepo, accountRepo, apiKeyRepo, baselineRepo)
-    aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/Ollama)
+    aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/OpenRouter/Ollama)
     selfHealing.js         Adaptive selector waterfall + healing history
     crawler.js             Link-crawl orchestrator
     testRunner.js          Parallel test execution orchestrator

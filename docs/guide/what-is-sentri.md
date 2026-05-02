@@ -11,7 +11,7 @@ Sentri is an **autonomous QA platform** that crawls your web app, generates Play
 | AI-generated tests are untrustworthy | Every test lands in a **Draft** queue. Nothing executes until a human approves |
 | You can't see what the test is doing | Live browser screencast, real-time log stream, per-step screenshots |
 | Tests fail and nobody knows why | AI classifies every failure and auto-regenerates the worst offenders |
-| Vendor lock-in on AI providers | Swap between Anthropic, OpenAI, Google, or Ollama with one setting |
+| Vendor lock-in on AI providers | Swap between Anthropic, OpenAI, Google, OpenRouter, or Ollama with one setting |
 
 ## How It Works
 

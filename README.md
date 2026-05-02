@@ -61,7 +61,7 @@ Most AI test generators stop at code generation. Sentri treats generation as ste
 | AI-generated tests are untrustworthy | Every test lands in a Draft queue — nothing executes without human approval |
 | Tests fail and nobody knows why | AI feedback loop classifies every failure and auto-regenerates failing tests |
 | No visibility into what the test is doing | Live browser screencast, real-time SSE log stream, per-step screenshots |
-| Vendor lock-in on AI providers | Switch between Anthropic, OpenAI, Google, or Ollama with a single setting |
+| Vendor lock-in on AI providers | Switch between Anthropic, OpenAI, Google, OpenRouter, or Ollama with a single setting |
 
 ---
 
@@ -119,9 +119,10 @@ For local development setup, optional Redis/PostgreSQL profiles, and Windows ins
 | Anthropic Claude | `ANTHROPIC_API_KEY` | claude-sonnet-4-20250514 |
 | OpenAI | `OPENAI_API_KEY` | gpt-4o-mini |
 | Google Gemini | `GOOGLE_API_KEY` | gemini-2.5-flash |
+| OpenRouter | `OPENROUTER_API_KEY` | openrouter/auto |
 | Ollama (local, free) | `AI_PROVIDER=local` | mistral:7b |
 
-Auto-detects in order: Anthropic → OpenAI → Google → Ollama. Switch at any time from the header dropdown or Settings page.
+Auto-detects in order: Anthropic → OpenAI → Google → OpenRouter → Ollama. Switch at any time from the header dropdown or Settings page.
 
 Full setup guide including Ollama: **[AI Providers →](https://rameshbabuprudhvi.github.io/sentri/docs/guide/ai-providers.html)**
 

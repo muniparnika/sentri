@@ -277,7 +277,7 @@ The `/api/v1/system` response includes `activeProvider`, `redis`, `postgres`, an
 
 - [What is Sentri?](/guide/what-is-sentri) — deeper overview
 - [Architecture](/guide/architecture) — how the pipeline and runner are structured
-- [AI Providers](/guide/ai-providers) — configure Anthropic, OpenAI, Google, or Ollama
+- [AI Providers](/guide/ai-providers) — configure Anthropic, OpenAI, Google, OpenRouter, or Ollama
 - [Environment Variables](/guide/env-vars) — full reference for all backend + frontend env vars
 - [Docker Deployment](/guide/docker) — production Docker setup
 - [Production Checklist](/guide/production) — what to harden before exposing Sentri to a team

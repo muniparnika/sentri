@@ -749,7 +749,7 @@ _(automated: smoke-level login → dashboard landing is covered in `tests/e2e/sp
 13. Sidebar nav → "AI Chat" entry visible and active when on `/chat`.
 
 **AI provider switching** (`README.md`):
-14. Header dropdown lists configured providers (Anthropic / OpenAI / Google / Ollama). Switch with one click → next chat message uses the new provider; auto-detection order is Anthropic → OpenAI → Google → Ollama.
+14. Header dropdown lists configured providers (Anthropic / OpenAI / Google / OpenRouter / Ollama). Switch with one click → next chat message uses the new provider; auto-detection order is Anthropic → OpenAI → Google → OpenRouter → Ollama.
 
 **Negative / edge:**
 - Ask about data in a workspace the user doesn't belong to → **must refuse**; no data leakage (severe bug if leaked).
