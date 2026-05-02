@@ -96,6 +96,13 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   useEffect(() => {
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      // Cancel any pending raw→resolved / flash-removal timers so they don't
+      // fire setResolvedIndices / setFlashIndices after the component has
+      // unmounted (e.g. user navigates away mid-recording). teardownStreams()
+      // clears the same map on stop/discard, but that path isn't taken when
+      // the parent unmounts us directly.
+      for (const t of resolveTimersRef.current.values()) clearTimeout(t);
+      resolveTimersRef.current.clear();
       if (sessionIdRef.current && projectIdRef.current) {
         api.recordDiscard(projectIdRef.current, sessionIdRef.current).catch(() => {});
         sessionIdRef.current = null;
