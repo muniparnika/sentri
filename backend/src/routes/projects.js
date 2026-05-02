@@ -249,31 +249,26 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
 
 /**
  * GET /api/v1/projects/:id/pages
- * Return URLs discovered on the latest successful crawl for this project,
- * with the project's seed URL prepended so the dropdown is never empty.
+ * Return URLs discovered on the latest successful crawl (or recorder run)
+ * for this project, with the project's seed URL prepended so the dropdown
+ * is never empty.
  *
- * `runRepo` doesn't expose a `listByProject({ kind, status, limit })` helper —
- * we filter in-process from `getByProjectId()` (sorted newest-first) and pick
- * the most recent crawl with a populated `pages[]`. Both `"completed"` and
- * `"passed"` are accepted as the success status for forward-compat.
+ * Backed by `runRepo.getLatestDiscoveredPageUrls()` so the query is a
+ * single `SELECT pages LIMIT 1` instead of `SELECT *` + per-row JSON parse
+ * of every run's heavy columns — the dropdown is fetched on every
+ * recorder modal open and previously scaled poorly on projects with long
+ * run history. We intentionally do NOT filter on `status = 'completed'`:
+ * `crawler.js` flips status to `"completed_empty"` when a crawl finishes
+ * without generating tests (auth-walled sites, SPAs with no interactive
+ * elements, AI-rate-limited runs), but those runs still persist a valid
+ * `run.pages` array — filtering them out caused the dropdown to show only
+ * the seed URL on any project whose latest crawl didn't yield tests.
  */
 router.get("/:id/pages", requireRole("viewer"), (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
-  // Walk newest-first and take the first crawl run that actually has pages
-  // persisted. We intentionally do NOT filter on status === "completed"
-  // because `crawler.js` flips the status to "completed_empty" whenever a
-  // crawl finished without generating any tests (auth-walled sites, SPAs
-  // with no interactive elements, AI-rate-limited runs). Those runs still
-  // persist `run.pages` at crawler.js:402 before the status flip, so their
-  // discovered URLs are a perfectly valid input to the dropdown. Filtering
-  // them out was causing the dropdown to show only the seed URL for any
-  // project whose most recent crawl didn't produce tests.
-  const runs = runRepo.getByProjectId(req.params.id);
-  const latest = runs.find(r => r.type === "crawl" && Array.isArray(r.pages) && r.pages.length > 0);
-  const pages = (latest?.pages || []).map(p => p?.url).filter(Boolean);
-  const seed = project.url;
-  const unique = Array.from(new Set([seed, ...pages].filter(Boolean)));
+  const pages = runRepo.getLatestDiscoveredPageUrls(req.params.id);
+  const unique = Array.from(new Set([project.url, ...pages].filter(Boolean)));
   res.json({ urls: unique });
 });
 

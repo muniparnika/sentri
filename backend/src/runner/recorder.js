@@ -983,7 +983,16 @@ export function actionsToPlaywrightCode(testName, startUrl, actions) {
     const base = alias === "page" ? "page" : `(await ensurePopup('${alias}'))`;
     const frameUrl = String(action?.frameUrl || "");
     if (!frameUrl) return base;
-    return `${base}.frameLocator('iframe[src*="${escapeJsSingleQuote(frameUrl)}"]').first()`;
+    // The frameLocator argument is a single-quoted JS string ('...') containing
+    // a CSS attribute selector that is itself double-quoted ([src*="..."]).
+    // `escapeJsSingleQuote` covers the outer JS string layer; we ALSO have to
+    // escape any literal `"` inside frameUrl so the inner attribute selector
+    // doesn't terminate early. Without this, a frame URL containing a `"`
+    // (rare in practice — usually `%22`-encoded — but possible from custom
+    // `src` values that bypass URL normalisation) produces a malformed
+    // selector like `iframe[src*="frame"hijack"]` that throws at runtime.
+    const escapedFrameUrl = escapeJsSingleQuote(frameUrl).replace(/"/g, '\\"');
+    return `${base}.frameLocator('iframe[src*="${escapedFrameUrl}"]').first()`;
   };
   lines.push(`const __popupPages = new Map();`);
   lines.push(`context.on('page', (p) => {`);
@@ -1350,8 +1359,19 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     // We capture the actual landed URL (after any server-side redirects)
     // from the page rather than the caller-supplied `startUrl` so the
     // generated goto reflects the canonical entry point.
+    //
+    // Also promote `session.url` to the landed URL so every downstream
+    // consumer that dedups against the first goto (`actionsToPlaywrightCode`'s
+    // hardcoded `await page.goto(startUrl)` + `lastGotoUrl` seed, and
+    // `routes/tests.js`'s persisted-steps dedup loop) sees the same URL the
+    // recorded `actions[0]` carries. Without this, any redirect at launch
+    // (http→https, apex→www, OAuth callback) leaves the pre-redirect URL
+    // seeded as `lastGotoUrl` while `actions[0].url` is the post-redirect
+    // value — the inequality bypasses dedup and the generated test emits
+    // two consecutive `page.goto(...)` calls for what is one navigation.
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT }).catch(() => {});
     const landedUrl = page.url() || startUrl;
+    session.url = landedUrl;
     session.actions.push({ kind: "goto", pageAlias: "page", url: landedUrl, ts: Date.now() });
 
     // Debounced framenavigated handler — fires for EVERY step in a redirect
