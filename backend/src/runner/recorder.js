@@ -1165,7 +1165,15 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     throw new Error("startUrl must be a valid http(s) URL.");
   }
 
-  const browser = await launchBrowser();
+  // Force "new" headless mode for the recorder. The default
+  // `chrome-headless-shell` (Playwright 1.40+) has a known issue where
+  // `Page.startScreencast` produces zero frames for sites that go through
+  // certain redirect / paint-deferral paths (playwright.dev, herokuapp,
+  // etc.) — google.com works because it paints synchronously on first
+  // load. Forcing `--headless=new` switches to the full-Chromium
+  // compositor which always emits frames for the screencast pipeline.
+  // This is the same flag the Playwright codegen tool uses internally.
+  const browser = await launchBrowser({ args: ["--headless=new", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] });
   let context;
   let page;
   try {
