@@ -1162,18 +1162,18 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     });
 
     const pageAliases = new Map();
-    page = await context.newPage();
-    pageAliases.set(page, "page");
-    session.page = page;
-    context.on("page", (p) => {
-      if (pageAliases.has(p)) return;
-      pageAliases.set(p, `popup${Math.max(1, pageAliases.size)}`);
-      p.on("framenavigated", (frame) => {
-        if (frame === p.mainFrame() && frame.url() && frame.url() !== "about:blank") {
-          session.actions.push({ kind: "goto", pageAlias: pageAliases.get(p), url: frame.url(), ts: Date.now() });
-        }
-      });
-    });
+
+    // CRITICAL ORDERING: `exposeBinding` and `addInitScript` only apply to
+    // pages / documents created AFTER they are registered. If we call
+    // `context.newPage()` before these, the resulting page never has
+    // `window.__sentriRecord` installed and `RECORDER_SCRIPT` may not run
+    // on its initial document — the symptom is the recorder only emitting
+    // `goto` actions (from the Node-side `framenavigated` listener) while
+    // every click/fill/keypress is silently dropped because the in-page
+    // emit guard `window.__sentriRecord && …` is falsy.
+    //
+    // Register the binding and init scripts on the context FIRST, then
+    // create the page.
 
     // Expose a binding for the injected script to relay captured events.
     await context.exposeBinding("__sentriRecord", (source, action) => {
@@ -1251,6 +1251,22 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     const bootstrap = buildInjectedBootstrapScript();
     if (bootstrap) await context.addInitScript(bootstrap);
     await context.addInitScript(RECORDER_SCRIPT);
+
+    // Now that the binding + init scripts are registered on the context,
+    // create the page. Both will be applied to this page's documents,
+    // including the initial about:blank and the upcoming `page.goto`.
+    page = await context.newPage();
+    pageAliases.set(page, "page");
+    session.page = page;
+    context.on("page", (p) => {
+      if (pageAliases.has(p)) return;
+      pageAliases.set(p, `popup${Math.max(1, pageAliases.size)}`);
+      p.on("framenavigated", (frame) => {
+        if (frame === p.mainFrame() && frame.url() && frame.url() !== "about:blank") {
+          session.actions.push({ kind: "goto", pageAlias: pageAliases.get(p), url: frame.url(), ts: Date.now() });
+        }
+      });
+    });
 
     // Navigate to the starting URL and record it as the first action.
     // We capture the actual landed URL (after any server-side redirects)
