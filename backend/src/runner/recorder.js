@@ -1165,15 +1165,18 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     throw new Error("startUrl must be a valid http(s) URL.");
   }
 
-  // Force "new" headless mode for the recorder. The default
-  // `chrome-headless-shell` (Playwright 1.40+) has a known issue where
-  // `Page.startScreencast` produces zero frames for sites that go through
-  // certain redirect / paint-deferral paths (playwright.dev, herokuapp,
-  // etc.) — google.com works because it paints synchronously on first
-  // load. Forcing `--headless=new` switches to the full-Chromium
-  // compositor which always emits frames for the screencast pipeline.
-  // This is the same flag the Playwright codegen tool uses internally.
-  const browser = await launchBrowser({ args: ["--headless=new", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] });
+  // Launch the recorder in headful mode to guarantee CDP `screencastFrame`
+  // events fire for every site. The default `chrome-headless-shell` binary
+  // (Playwright 1.40+) skips compositor paints for many sites unless the
+  // OS window is actually visible — symptom: the live canvas stays on
+  // "Waiting for browser stream…" indefinitely for sites like
+  // playwright.dev / herokuapp while google.com works fine.
+  // `chrome-headless-shell` does NOT support `--headless=new`, so the
+  // only universally-working fix is headful + a visible Chromium window.
+  // Test runs (executeTest.js) keep using headless because they capture
+  // their own video/trace/screenshot artifacts and don't need the live
+  // screencast pipeline.
+  const browser = await launchBrowser({ headless: false });
   let context;
   let page;
   try {
