@@ -48,16 +48,33 @@ export async function startScreencast(page, runId) {
   let cdpSession;
   try {
     cdpSession = await page.context().newCDPSession(page);
-    // Bring the page to the foreground BEFORE starting the screencast.
-    // Headless Chromium otherwise treats most pages as background and the
-    // compositor produces no frames — `Page.screencastFrame` never fires
-    // and the live canvas stays black indefinitely. Symptom is site-
-    // dependent (some sites' layouts trigger a paint anyway, others
-    // don't), so the fix has to apply unconditionally. This is the same
-    // call Playwright's own codegen makes before attaching its screencast.
-    // Best-effort — ignore failures since the screencast will still start
-    // and may produce frames for sites that don't need this hint.
+    // Force the page into a state where Chromium's compositor will
+    // actually produce frames. In headless_shell mode (the default
+    // Playwright binary since 2024) the page is considered "hidden" by
+    // default and `Page.screencastFrame` never fires — we saw this
+    // empirically with playwright.dev producing zero frames over 47s
+    // while google.com worked fine. Three defensive calls:
+    //
+    //   1. `Page.bringToFront` — marks the tab as foreground.
+    //   2. `Emulation.setFocusEmulationEnabled(true)` — keeps the page
+    //      focused even when the headless process isn't the OS foreground.
+    //   3. A visibilitychange "visible" + `requestAnimationFrame` nudge
+    //      via `page.evaluate` — some sites guard their first paint behind
+    //      `document.visibilityState === "visible"`, and without this the
+    //      Docusaurus / React-heavy sites stay on an empty body forever.
+    //
+    // All best-effort — ignore failures since the screencast will still
+    // start; the degraded path (no frames) is what we're fixing.
     await cdpSession.send("Page.bringToFront").catch(() => {});
+    await cdpSession.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+    await page.evaluate(() => {
+      try {
+        Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
+        Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+        requestAnimationFrame(() => {});
+      } catch (_) { /* best-effort */ }
+    }).catch(() => {});
     await cdpSession.send("Page.startScreencast", {
       format: "jpeg",
       quality: 50,
