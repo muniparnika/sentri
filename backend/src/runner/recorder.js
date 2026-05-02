@@ -244,6 +244,47 @@ const RECORDER_SCRIPT = `
   if (window.__sentriRecorderInstalled) return;
   window.__sentriRecorderInstalled = true;
 
+  // Force-keep the compositor active so CDP \`Page.screencastFrame\`
+  // events fire on a regular cadence, not just when the user interacts
+  // with the page. Chromium's compositor only produces a new frame when
+  // something visually changes — on a static page (playwright.dev,
+  // herokuapp, Docusaurus-based docs) it sits idle and CDP screencast
+  // emits zero frames, leaving the live canvas stuck on "Waiting for
+  // browser stream…". Injecting a 1×1 px transparent element with a
+  // continuous CSS animation forces a compositor frame every animation
+  // tick (~60fps), without affecting the page visually or interfering
+  // with the user's interactions. Cheap (one transform per frame, GPU
+  // accelerated), invisible (1px transparent), and below all clickable
+  // content (\`pointer-events: none; z-index: -1\`).
+  function installCompositorTick() {
+    if (!document.body) {
+      // Body not ready yet (script ran from <head>). Retry once on
+      // DOMContentLoaded so the element actually attaches.
+      document.addEventListener("DOMContentLoaded", installCompositorTick, { once: true });
+      return;
+    }
+    if (document.getElementById("__sentri-compositor-tick")) return;
+    const style = document.createElement("style");
+    style.textContent = "@keyframes __sentriTick { 0% { opacity: 0.99 } 50% { opacity: 1 } 100% { opacity: 0.99 } }";
+    document.head?.appendChild(style);
+    const tick = document.createElement("div");
+    tick.id = "__sentri-compositor-tick";
+    tick.setAttribute("aria-hidden", "true");
+    tick.style.cssText = [
+      "position: fixed",
+      "left: 0",
+      "top: 0",
+      "width: 1px",
+      "height: 1px",
+      "background: transparent",
+      "pointer-events: none",
+      "z-index: -2147483648",
+      "animation: __sentriTick 16ms linear infinite",
+    ].join("; ");
+    document.body.appendChild(tick);
+  }
+  installCompositorTick();
+
   // CSS-only fallback used both as the final branch in selectorGenerator
   // AND by the nth=N disambiguator (which needs a CSS string to count
   // matches via document.querySelectorAll).
@@ -1165,16 +1206,16 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     throw new Error("startUrl must be a valid http(s) URL.");
   }
 
-  // Launch the recorder in headful mode to guarantee CDP `screencastFrame`
-  // events fire for every site. The default `chrome-headless-shell` binary
-  // (Playwright 1.40+) skips compositor paints for many sites unless the
-  // OS window is actually visible — symptom: the live canvas stays on
-  // "Waiting for browser stream…" indefinitely for sites like
-  // playwright.dev / herokuapp while google.com works fine.
-  // `chrome-headless-shell` does NOT support `--headless=new`, so the
-  // only universally-working fix is headful + a visible Chromium window.
+  // Launch the recorder in headful mode. The default
+  // `chrome-headless-shell` (Playwright 1.40+) has a broken compositor
+  // pipeline that emits zero `Page.screencastFrame` events for many
+  // sites (playwright.dev, herokuapp, Docusaurus-based docs sites)
+  // while google.com works only because the blinking search-box cursor
+  // keeps the compositor active. Playwright's `headless` option is
+  // strictly boolean — there is no way to switch to the full Chromium
+  // binary via API, so the only universally-working fix is headful.
   // Test runs (executeTest.js) keep using headless because they capture
-  // their own video/trace/screenshot artifacts and don't need the live
+  // video/trace/screenshot artifacts directly and don't need the live
   // screencast pipeline.
   const browser = await launchBrowser({ headless: false });
   let context;
