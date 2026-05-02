@@ -403,7 +403,12 @@ const RECORDER_SCRIPT = `
   let lastHoverSelector = "";
   document.addEventListener("mouseover", (ev) => {
     const raw = eventElement(ev);
-    const el = raw.closest ? (raw.closest("a, button, input, textarea, select, [role], [data-testid], [data-test-id], [contenteditable='true']") || raw) : raw;
+    // Only capture hovers on interactive ancestors — do NOT fall back to the
+    // raw element. The `|| raw` pattern that was here previously caused every
+    // mouseover on a generic container (div, section, body) to emit a hover
+    // action with a noisy CSS selector, flooding the captured steps list with
+    // drive-by movements across layout elements.
+    const el = raw.closest ? raw.closest("a, button, input, textarea, select, [role], [data-testid], [data-test-id], [contenteditable='true']") : null;
     if (!el) return;
     const sel = selectorGenerator(el);
     if (!sel) return;
@@ -1129,6 +1134,20 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
           }
         }
       }
+      // Strip consecutive hovers — when a new hover arrives and the last
+      // recorded action is ALSO a hover, replace it in-place. A hover chain
+      // produced by the user sweeping the mouse across the page (A → B → C)
+      // is always noise; only the final resting position before a real
+      // interaction is meaningful. Replacing instead of appending keeps the
+      // steps list clean without discarding intentional hovers (tooltip
+      // triggers, dropdown openers) — the last hover before a pause is still
+      // preserved.
+      if (row.kind === "hover") {
+        const last = session.actions[session.actions.length - 1];
+        if (last && last.kind === "hover") {
+          session.actions.pop();
+        }
+      }
       // Drop noisy hover actions that immediately precede a real interaction
       // on the same selector. The in-page `HOVER_DWELL_MS` filter catches
       // drive-by mouseovers, but a user pausing on a button before clicking
@@ -1159,15 +1178,45 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     await context.addInitScript(RECORDER_SCRIPT);
 
     // Navigate to the starting URL and record it as the first action.
+    // We capture the actual landed URL (after any server-side redirects)
+    // from the page rather than the caller-supplied `startUrl` so the
+    // generated goto reflects the canonical entry point.
     await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT }).catch(() => {});
-    session.actions.push({ kind: "goto", pageAlias: "page", url: startUrl, ts: Date.now() });
+    const landedUrl = page.url() || startUrl;
+    session.actions.push({ kind: "goto", pageAlias: "page", url: landedUrl, ts: Date.now() });
 
-    // Capture subsequent in-page navigations (form submit, link click that
-    // triggers a full load) so the generated script replays them via goto.
+    // Debounced framenavigated handler — fires for EVERY step in a redirect
+    // chain (including intermediate tracking hops like /sorry/index). Without
+    // debouncing, a search-form submit that redirects three times before
+    // settling on the results page produces three consecutive goto steps, all
+    // of which show up in the sidebar as "Navigate to …". We defer the push
+    // by FRAME_NAV_DEBOUNCE_MS so only the URL the browser actually lands on
+    // after the chain has settled is recorded. Each new framenavigated event
+    // during the window resets the timer and promotes the newer URL — the
+    // final flush captures the canonical destination.
+    //
+    // Dedup: if the settled URL matches the last recorded goto (e.g. the
+    // listener fires for the initial page.goto that already pushed an action
+    // above, or a hash-only change on an SPA), the action is silently dropped.
+    const FRAME_NAV_DEBOUNCE_MS = 800;
+    let frameNavTimer = null;
+    let pendingFrameUrl = "";
     page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame() && frame.url() && frame.url() !== "about:blank") {
-        session.actions.push({ kind: "goto", pageAlias: "page", url: frame.url(), ts: Date.now() });
-      }
+      if (frame !== page.mainFrame()) return;
+      const url = frame.url();
+      if (!url || url === "about:blank") return;
+      pendingFrameUrl = url;
+      if (frameNavTimer) { clearTimeout(frameNavTimer); frameNavTimer = null; }
+      frameNavTimer = setTimeout(() => {
+        frameNavTimer = null;
+        if (session.status !== "recording") return;
+        // Deduplicate: skip if the settled URL is the same as the last
+        // recorded goto so initial-page echoes and trivial hash changes
+        // don't produce spurious Navigate steps in the sidebar.
+        const last = [...session.actions].reverse().find((a) => a.kind === "goto");
+        if (last && last.url === pendingFrameUrl) return;
+        session.actions.push({ kind: "goto", pageAlias: "page", url: pendingFrameUrl, ts: Date.now() });
+      }, FRAME_NAV_DEBOUNCE_MS);
     });
 
     // Start CDP screencast so the RecorderModal can show the live browser.

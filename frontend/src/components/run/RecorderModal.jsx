@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "../../api.js";
 import { API_PATH } from "../../utils/apiBase.js";
 import { useSseStream } from "../../hooks/useSseStream.js";
+import { actionToStepText, actionRawLocator } from "../../utils/actionToStepText.js";
 import LiveBrowserView from "./LiveBrowserView.jsx";
 
 export default function RecorderModal({ open, onClose, onSaved, projectId, defaultUrl = "" }) {
@@ -12,6 +13,12 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
   const [actions, setActions] = useState([]);
   const [frames, setFrames] = useState([]);
   const [name, setName] = useState("");
+  // resolvedIndices: Set of action indices that have transitioned from the
+  // brief "raw locator" phase to the human-readable label phase. flashIndices
+  // tracks which of those should currently show the yellow highlight.
+  const [resolvedIndices, setResolvedIndices] = useState(new Set());
+  const [flashIndices, setFlashIndices] = useState(new Set());
+  const resolveTimersRef = useRef(new Map()); // index → timeoutId
   const [assertKind, setAssertKind] = useState("assertVisible");
   const [assertSelector, setAssertSelector] = useState("");
   const [assertValue, setAssertValue] = useState("");
@@ -76,7 +83,29 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
       pollRef.current = setInterval(async () => {
         try {
           const status = await api.recordStatus(projectId, sid);
-          setActions(status.actions || []);
+          const incoming = status.actions || [];
+          setActions((prev) => {
+            const prevLen = prev.length;
+            if (incoming.length > prevLen) {
+              // Schedule raw→resolved transitions for every newly arrived step.
+              // Each step shows as a dim italic raw locator for 600 ms, then
+              // flips to human-readable prose with a yellow highlight flash.
+              for (let i = prevLen; i < incoming.length; i++) {
+                const idx = i;
+                const timerId = setTimeout(() => {
+                  resolveTimersRef.current.delete(idx);
+                  setResolvedIndices((r) => new Set([...r, idx]));
+                  setFlashIndices((f) => new Set([...f, idx]));
+                  // Remove flash class after animation completes (1.2 s)
+                  setTimeout(() => {
+                    setFlashIndices((f) => { const n = new Set(f); n.delete(idx); return n; });
+                  }, 1200);
+                }, 600);
+                resolveTimersRef.current.set(idx, timerId);
+              }
+            }
+            return incoming;
+          });
         } catch (e) {
           if (e.status === 404) { clearInterval(pollRef.current); pollRef.current = null; }
         }
@@ -136,6 +165,10 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
 
   function teardownStreams() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    for (const t of resolveTimersRef.current.values()) clearTimeout(t);
+    resolveTimersRef.current.clear();
+    setResolvedIndices(new Set());
+    setFlashIndices(new Set());
   }
 
   function handleCancel() {
@@ -274,15 +307,26 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
                   </div>
                 ) : (
                   <ol className="recorder-sidebar__steps-ol">
-                    {actions.map((a, i) => (
-                      <li key={i}>
-                        <span className="recorder-step__kind">{a.kind}</span>
-                        {a.selector && <span className="recorder-step__selector"> → {a.selector}</span>}
-                        {a.value && <span className="recorder-step__value"> = "{a.value.slice(0, 40)}"</span>}
-                        {a.url && <span className="recorder-step__url"> {a.url}</span>}
-                        {a.key && <span className="recorder-step__key"> {a.key}</span>}
-                      </li>
-                    ))}
+                    {actions.map((a, i) => {
+                      const isResolved = resolvedIndices.has(i);
+                      const isFlash = flashIndices.has(i);
+                      const stepClass = [
+                        "recorder-step",
+                        isResolved ? "recorder-step--resolved" : "recorder-step--raw",
+                        isFlash ? "recorder-step--flash" : "",
+                      ].filter(Boolean).join(" ");
+                      return (
+                        <li key={i}>
+                          <span className={stepClass}>
+                            <span className="recorder-step__text">
+                              {isResolved
+                                ? actionToStepText(a)
+                                : actionRawLocator(a)}
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ol>
                 )}
               </div>
