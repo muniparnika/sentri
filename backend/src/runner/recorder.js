@@ -1263,6 +1263,35 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
           session.actions.pop();
         }
       }
+      // Collapse consecutive `fill` actions on the same selector — the
+      // in-page 300 ms debounce emits one fill per typing pause, so
+      // typing "iphone" with a micro-pause after "i" produces two
+      // steps: `fill 'i'` then `fill 'iphone'`. The second supersedes
+      // the first (same field, final value wins), so drop the earlier
+      // row in place instead of appending a new one. Matches the
+      // consecutive-hover dedup pattern above.
+      if (row.kind === "fill" && row.selector) {
+        const last = session.actions[session.actions.length - 1];
+        if (last && last.kind === "fill" && last.selector === row.selector) {
+          session.actions.pop();
+        }
+      }
+      // Drop `click` / `hover` / `rightClick` / `dblclick` rows that
+      // arrive with neither a friendly label NOR a semantic selector
+      // (role=, text=, data-testid=, label=). These are produced when the
+      // user clicks on a layout container with no accessible name and no
+      // test-id, and render in the Steps panel as bare "Click" or
+      // "Hover over" — noise that confuses reviewers. The CSS-fallback
+      // selector is still useful for replay in `playwrightCode`, but in
+      // the human-readable sidebar it's just visual clutter.
+      const POINTER_KINDS = new Set(["click", "dblclick", "rightClick", "hover"]);
+      if (POINTER_KINDS.has(row.kind) && !row.label) {
+        const sel = row.selector || "";
+        const hasSemanticSelector = /^(?:role=|text=|data-testid=|label=|placeholder=|alt=|title=)/.test(sel);
+        if (!hasSemanticSelector) {
+          return; // drop entirely
+        }
+      }
       session.actions.push(row);
     });
     // Inject Playwright's own InjectedScript bootstrap before our
