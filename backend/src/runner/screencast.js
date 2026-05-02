@@ -48,6 +48,16 @@ export async function startScreencast(page, runId) {
   let cdpSession;
   try {
     cdpSession = await page.context().newCDPSession(page);
+    // Bring the page to the foreground BEFORE starting the screencast.
+    // Headless Chromium otherwise treats most pages as background and the
+    // compositor produces no frames — `Page.screencastFrame` never fires
+    // and the live canvas stays black indefinitely. Symptom is site-
+    // dependent (some sites' layouts trigger a paint anyway, others
+    // don't), so the fix has to apply unconditionally. This is the same
+    // call Playwright's own codegen makes before attaching its screencast.
+    // Best-effort — ignore failures since the screencast will still start
+    // and may produce frames for sites that don't need this hint.
+    await cdpSession.send("Page.bringToFront").catch(() => {});
     await cdpSession.send("Page.startScreencast", {
       format: "jpeg",
       quality: 50,
@@ -99,6 +109,7 @@ export async function startScreencast(page, runId) {
   const stop = async () => {
     await cdpSession.send("Page.stopScreencast").catch(() => {});
     await cdpSession.detach().catch(() => {});
+    console.log(formatLogLine("info", null, `[screencast] stopped for run=${runId} (frames=${frameCount})`));
   };
   return { stop, cdpSession };
 }
