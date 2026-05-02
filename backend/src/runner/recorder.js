@@ -1285,20 +1285,24 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
           session.actions.pop();
         }
       }
-      // Drop `click` / `hover` / `rightClick` / `dblclick` rows that
-      // arrive with neither a friendly label NOR a semantic selector
-      // (role=, text=, data-testid=, label=). These are produced when the
-      // user clicks on a layout container with no accessible name and no
-      // test-id, and render in the Steps panel as bare "Click" or
-      // "Hover over" — noise that confuses reviewers. The CSS-fallback
-      // selector is still useful for replay in `playwrightCode`, but in
-      // the human-readable sidebar it's just visual clutter.
+      // Tag `click` / `dblclick` / `rightClick` / `hover` rows that arrive
+      // without a friendly label AND without a semantic selector prefix
+      // (role=, text=, data-testid=, label=, placeholder=, alt=, title=).
+      // These come from layout-container clicks with no accessible name,
+      // and rendering them as bare "Click" / "Hover over" entries in the
+      // Steps panel is noise that hurts step-quality. We keep the row in
+      // `session.actions` (so the CSS-fallback selector still drives
+      // `playwrightCode` replay) but mark it with `_noLabel: true` so the
+      // sidebar / persisted `steps[]` formatter can hide it from the
+      // human-readable view. Replay fidelity AND step quality both
+      // preserved — earlier revisions dropped the row entirely, which
+      // silently broke replay for icon-only buttons.
       const POINTER_KINDS = new Set(["click", "dblclick", "rightClick", "hover"]);
       if (POINTER_KINDS.has(row.kind) && !row.label) {
         const sel = row.selector || "";
         const hasSemanticSelector = /^(?:role=|text=|data-testid=|label=|placeholder=|alt=|title=)/.test(sel);
         if (!hasSemanticSelector) {
-          return; // drop entirely
+          row._noLabel = true;
         }
       }
       session.actions.push(row);
