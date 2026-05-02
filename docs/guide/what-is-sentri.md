@@ -61,6 +61,7 @@ Dashboard with pass rate, defect categories, flaky test detection, test growth s
 │  ├── Anthropic Claude                       │
 │  ├── OpenAI GPT-4o-mini                     │
 │  ├── Google Gemini                          │
+│  ├── OpenRouter (200+ models)               │
 │  └── Ollama (local, free)                   │
 └─────────────────────────────────────────────┘
 ```
