@@ -247,6 +247,27 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
 });
 
 
+/**
+ * GET /api/v1/projects/:id/pages
+ * Return URLs discovered on the latest successful crawl for this project,
+ * with the project's seed URL prepended so the dropdown is never empty.
+ *
+ * `runRepo` doesn't expose a `listByProject({ kind, status, limit })` helper —
+ * we filter in-process from `getByProjectId()` (sorted newest-first) and pick
+ * the most recent crawl with a populated `pages[]`. Both `"completed"` and
+ * `"passed"` are accepted as the success status for forward-compat.
+ */
+router.get("/:id/pages", requireRole("viewer"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const runs = runRepo.getByProjectId(req.params.id);
+  const latest = runs.find(r => r.type === "crawl" && (r.status === "completed" || r.status === "passed"));
+  const pages = (latest?.pages || []).map(p => p?.url).filter(Boolean);
+  const seed = project.url;
+  const unique = Array.from(new Set([seed, ...pages].filter(Boolean)));
+  res.json({ urls: unique });
+});
+
 router.get("/:id/quality-gates", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
