@@ -87,7 +87,11 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     }
     const stale = sessionIdRef.current;
     if (stale) {
-      api.recordDiscard(projectIdRef.current || projectId, stale).catch(() => {});
+      // Await discard so the previous browser is fully torn down before we
+      // launch a new one. Fire-and-forget here let the new screencast race
+      // the old session's Chromium close, producing black-canvas symptoms.
+      try { await api.recordDiscard(projectIdRef.current || projectId, stale); }
+      catch { /* best-effort */ }
       sessionIdRef.current = null; setSessionId(null);
     }
     teardownStreams();
@@ -197,13 +201,25 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
     doDiscard();
   }
 
-  function doDiscard() {
-    if (sessionId) api.recordDiscard(projectId, sessionId).catch(() => {});
+  async function doDiscard() {
+    // Await the discard so the previous session's browser teardown
+    // completes before the modal closes / re-launches. Fire-and-forget
+    // here caused a race where the next `startRecording` raced against
+    // the previous session's `stopRecording()` (which closes Chromium),
+    // leaving the new session's CDP screencast attached to a browser
+    // that was still in mid-teardown — symptom: black canvas with no
+    // frames produced on the new session, until a hard refresh.
+    setConfirmDiscard(false);
+    if (sessionId) {
+      try { await api.recordDiscard(projectId, sessionId); }
+      catch { /* best-effort — server may have already auto-torn-down */ }
+    }
     teardownStreams();
     sessionIdRef.current = null;
-    setConfirmDiscard(false);
     setPhase("idle");
     setSessionId(null);
+    setFrames([]);
+    setActions([]);
     onClose?.();
   }
 
