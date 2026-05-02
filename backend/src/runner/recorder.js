@@ -1165,17 +1165,6 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     throw new Error("startUrl must be a valid http(s) URL.");
   }
 
-  // Launch the recorder in headful mode. The default
-  // `chrome-headless-shell` (Playwright 1.40+) has a broken compositor
-  // pipeline that emits zero `Page.screencastFrame` events for many
-  // sites (playwright.dev, herokuapp, Docusaurus-based docs sites)
-  // while google.com works only because the blinking search-box cursor
-  // keeps the compositor active. Playwright's `headless` option is
-  // strictly boolean — there is no way to switch to the full Chromium
-  // binary via API, so the only universally-working fix is headful.
-  // Test runs (executeTest.js) keep using headless because they capture
-  // video/trace/screenshot artifacts directly and don't need the live
-  // screencast pipeline.
   const browser = await launchBrowser();
   let context;
   let page;
