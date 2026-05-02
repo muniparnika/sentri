@@ -1177,6 +1177,7 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
 
     // Expose a binding for the injected script to relay captured events.
     await context.exposeBinding("__sentriRecord", (source, action) => {
+      console.error(formatLogLine("info", null, `[recorder] __sentriRecord fired kind=${action?.kind} sel=${(action?.selector || "").slice(0, 60)}`));
       if (session.status !== "recording") return;
       if (!action || typeof action !== "object") return;
       const sourcePage = source?.page || null;
