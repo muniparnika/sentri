@@ -1415,7 +1415,7 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     // Start CDP screencast so the RecorderModal can show the live browser.
     // startScreencast now returns { stop, cdpSession } — store both so the
     // recorder can forward mouse/keyboard events from the canvas overlay.
-    const screencastResult = await startScreencast(page, sessionId);
+    const screencastResult = await startScreencast(page, sessionId, { interactive: true });
     if (screencastResult) {
       session.stopScreencast = screencastResult.stop;
       session.cdpSession = screencastResult.cdpSession;
