@@ -1287,6 +1287,15 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
       console.error(formatLogLine("warn", null, `[recorder] buildInjectedBootstrapScript failed — falling back to hand-rolled selectorGenerator: ${err.message}`));
     }
     if (bootstrap) await context.addInitScript(bootstrap);
+
+    // Diagnostic probe: a tiny known-good init script that JUST sets a sentinel.
+    // If __sentriProbe=true shows up on window but __sentriRecorderInstalled
+    // does NOT, then RECORDER_SCRIPT itself has a parse error (try/catch
+    // can't catch parse errors, so the in-script catch wouldn't fire either).
+    // Also log the script length + first/last 80 chars so we can verify it
+    // isn't being truncated by addInitScript serialization.
+    await context.addInitScript("window.__sentriProbe = true;");
+    console.error(formatLogLine("info", null, `[recorder] RECORDER_SCRIPT length=${RECORDER_SCRIPT.length} head=${JSON.stringify(RECORDER_SCRIPT.slice(0, 80))} tail=${JSON.stringify(RECORDER_SCRIPT.slice(-80))}`));
     await context.addInitScript(RECORDER_SCRIPT);
 
     // Now that the binding + init scripts are registered on the context,
@@ -1312,9 +1321,10 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
         const probe = await page.evaluate(() => ({
           installed: !!window.__sentriRecorderInstalled,
           hasBinding: typeof window.__sentriRecord === "function",
+          probeRan: !!window.__sentriProbe,
           url: location.href,
         }));
-        console.error(formatLogLine("info", null, `[recorder/probe] installed=${probe.installed} hasBinding=${probe.hasBinding} url=${probe.url}`));
+        console.error(formatLogLine("info", null, `[recorder/probe] installed=${probe.installed} hasBinding=${probe.hasBinding} probeRan=${probe.probeRan} url=${probe.url}`));
       } catch (err) {
         console.error(formatLogLine("warn", null, `[recorder/probe] failed: ${err.message}`));
       }
