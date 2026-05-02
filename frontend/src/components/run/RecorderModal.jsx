@@ -46,7 +46,11 @@ export default function RecorderModal({ open, onClose, onSaved, projectId, defau
       if (now - lastMoveRef.current < 33) return;
       lastMoveRef.current = now;
     }
-    api.recordInput(pid, sid, event).catch(() => {});
+    api.recordInput(pid, sid, event).catch((err) => {
+      // Temporary: surface recordInput errors to the console so we can
+      // diagnose why canvas input isn't reaching the backend recorder.
+      console.error("[recorder] recordInput failed:", event?.type, err);
+    });
   }, []);
 
   useEffect(() => { setStartUrl(defaultUrl); }, [defaultUrl]);
