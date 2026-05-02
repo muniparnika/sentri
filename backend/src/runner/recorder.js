@@ -244,47 +244,6 @@ const RECORDER_SCRIPT = `
   if (window.__sentriRecorderInstalled) return;
   window.__sentriRecorderInstalled = true;
 
-  // Force-keep the compositor active so CDP \`Page.screencastFrame\`
-  // events fire on a regular cadence, not just when the user interacts
-  // with the page. Chromium's compositor only produces a new frame when
-  // something visually changes — on a static page (playwright.dev,
-  // herokuapp, Docusaurus-based docs) it sits idle and CDP screencast
-  // emits zero frames, leaving the live canvas stuck on "Waiting for
-  // browser stream…". Injecting a 1×1 px transparent element with a
-  // continuous CSS animation forces a compositor frame every animation
-  // tick (~60fps), without affecting the page visually or interfering
-  // with the user's interactions. Cheap (one transform per frame, GPU
-  // accelerated), invisible (1px transparent), and below all clickable
-  // content (\`pointer-events: none; z-index: -1\`).
-  function installCompositorTick() {
-    if (!document.body) {
-      // Body not ready yet (script ran from <head>). Retry once on
-      // DOMContentLoaded so the element actually attaches.
-      document.addEventListener("DOMContentLoaded", installCompositorTick, { once: true });
-      return;
-    }
-    if (document.getElementById("__sentri-compositor-tick")) return;
-    const style = document.createElement("style");
-    style.textContent = "@keyframes __sentriTick { 0% { opacity: 0.99 } 50% { opacity: 1 } 100% { opacity: 0.99 } }";
-    document.head?.appendChild(style);
-    const tick = document.createElement("div");
-    tick.id = "__sentri-compositor-tick";
-    tick.setAttribute("aria-hidden", "true");
-    tick.style.cssText = [
-      "position: fixed",
-      "left: 0",
-      "top: 0",
-      "width: 1px",
-      "height: 1px",
-      "background: transparent",
-      "pointer-events: none",
-      "z-index: -2147483648",
-      "animation: __sentriTick 16ms linear infinite",
-    ].join("; ");
-    document.body.appendChild(tick);
-  }
-  installCompositorTick();
-
   // CSS-only fallback used both as the final branch in selectorGenerator
   // AND by the nth=N disambiguator (which needs a CSS string to count
   // matches via document.querySelectorAll).
