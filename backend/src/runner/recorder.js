@@ -240,6 +240,7 @@ const COMPLETED_TTL_MS = TIMINGS.COMPLETED_TTL_MS;
  */
 const RECORDER_SCRIPT = `
 (() => {
+  try {
   if (window.__sentriRecorderInstalled) return;
   window.__sentriRecorderInstalled = true;
 
@@ -269,11 +270,24 @@ const RECORDER_SCRIPT = `
     return cssSel + " >> nth=" + idx;
   }
 
-  // DIF-015b Gap 2 — interpolated from the Node-side \`isNoisyTestId()\` export
-  // so the heuristic has a single source of truth across the Node boundary.
-  // Unit tests exercise the Node-side function with fixture values; this
-  // line keeps the in-page copy byte-identical without drift risk.
-  ${isNoisyTestId.toString()}
+  // DIF-015b Gap 2 — inlined hand-rolled copy of the Node-side
+  // \`isNoisyTestId()\` (kept in source above). Previously this was injected
+  // via \`\${isNoisyTestId.toString()}\` interpolation, but the interpolation
+  // produced a \"SyntaxError: Unexpected end of input\" at page-init time
+  // (the function body's regex literals contained \\\\d / \\\\s sequences that
+  // collided with the outer template-literal escaping rules), which caused
+  // the entire IIFE to abort before any DOM listeners were attached — the
+  // symptom was the recorder only ever capturing \`goto\` actions while
+  // every click/fill/keypress was silently dropped. Inlining the function
+  // body as static script text avoids the interpolation altogether.
+  function isNoisyTestId(value) {
+    const v = (value || "").trim();
+    if (!v) return true;
+    if (/^[0-9]+$/.test(v)) return true;
+    if (/^(?:el_|comp-|t-)[a-z0-9_-]*[0-9a-f]{4,}$/i.test(v)) return true;
+    if (v.length > 30 && !/[-_:.]/.test(v)) return true;
+    return false;
+  }
 
   function selectorGenerator(el) {
     if (!el || el.nodeType !== 1) return "";
@@ -666,6 +680,17 @@ const RECORDER_SCRIPT = `
     });
     dragSource = "";
   }, true);
+  } catch (err) {
+    // Surface init-time failures via console.error — the backend pipes page
+    // console output to its log so this lands in the same stream as the
+    // \`[recorder/page-error]\` warnings. Without this, a thrown listener
+    // setup leaves the recorder in a half-installed state where the binding
+    // exists but no DOM events are wired up — the symptom is "only goto
+    // actions are captured" (which is the only kind that comes from the
+    // Node-side \`framenavigated\` listener, not the in-page script).
+    console.error("[sentri-recorder] init failed:", err && err.stack ? err.stack : err);
+    window.__sentriRecorderInstalled = false;
+  }
 })();
 `;
 
