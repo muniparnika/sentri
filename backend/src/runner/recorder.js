@@ -1248,7 +1248,18 @@ export async function startRecording({ sessionId, projectId, startUrl }) {
     // can't be loaded) is a no-op — addInitScript accepts empty strings
     // without complaint, but skip the call to keep the page-init log
     // clean.
-    const bootstrap = buildInjectedBootstrapScript();
+    // Defence-in-depth: if `buildInjectedBootstrapScript()` throws (e.g.
+    // playwright-core layout drift), swallow the error so the recorder
+    // script below is still registered. Without this guard a thrown
+    // bootstrap would skip `addInitScript(RECORDER_SCRIPT)` entirely and
+    // the page would have no `window.__sentriRecord` binding — the
+    // symptom is the recorder only emitting `goto` actions while every
+    // click/fill/keypress is silently dropped.
+    let bootstrap = "";
+    try { bootstrap = buildInjectedBootstrapScript(); }
+    catch (err) {
+      console.error(formatLogLine("warn", null, `[recorder] buildInjectedBootstrapScript failed — falling back to hand-rolled selectorGenerator: ${err.message}`));
+    }
     if (bootstrap) await context.addInitScript(bootstrap);
     await context.addInitScript(RECORDER_SCRIPT);
 
