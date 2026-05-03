@@ -23,6 +23,7 @@ import { useRunSSE } from "../hooks/useRunSSE.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { fmtRelativeDate } from "../utils/formatters.js";
+import SiteGraph from "../components/crawl/SiteGraph.jsx";
 
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -792,32 +793,69 @@ export default function TestLab() {
                 {selectedProject?.name?.toUpperCase()} · {activeRun?.type === "crawl" ? "LINK CRAWL" : "REQUIREMENT"}
               </div>
 
-              <div className="tl-inner-tabs">
-                {["pipeline", "logs"].map(t => (
-                  <button
-                    key={t}
-                    className={`tl-inner-tab${innerTab === t ? " tl-inner-tab--active" : ""}`}
-                    onClick={() => setInnerTab(t)}
-                  >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
+              {(() => {
+                // Site Graph is only meaningful for crawl runs — the
+                // requirement flow doesn't produce a page graph. Same shape as
+                // CrawlView's `graphPages` derivation (`run.pages` or
+                // `run.snapshots`, normalised to an array).
+                const isCrawl = activeRun?.type === "crawl";
+                const rawPages = runData?.pages ?? runData?.snapshots ?? [];
+                const graphPages = Array.isArray(rawPages)
+                  ? rawPages
+                  : (typeof rawPages === "object" ? Object.values(rawPages) : []);
+                // Derive the page currently being crawled from the latest log
+                // line — mirrors CrawlView.jsx:48-54.
+                let activePage = null;
+                for (let i = logLines.length - 1; i >= 0; i--) {
+                  const m = logLines[i].match(/https?:\/\/[^\s)]+/);
+                  if (m) { activePage = m[0]; break; }
+                }
+                const innerTabs = isCrawl
+                  ? ["pipeline", "sitegraph", "logs"]
+                  : ["pipeline", "logs"];
+                const labelFor = (t) => t === "sitegraph" ? "Site graph"
+                  : t.charAt(0).toUpperCase() + t.slice(1);
+                return (
+                  <>
+                    <div className="tl-inner-tabs">
+                      {innerTabs.map(t => (
+                        <button
+                          key={t}
+                          className={`tl-inner-tab${innerTab === t ? " tl-inner-tab--active" : ""}`}
+                          onClick={() => setInnerTab(t)}
+                        >
+                          {labelFor(t)}
+                        </button>
+                      ))}
+                    </div>
 
-              {innerTab === "pipeline" && (
-                <PipelinePanel run={runData} />
-              )}
+                    {innerTab === "pipeline" && (
+                      <PipelinePanel run={runData} />
+                    )}
 
-              {innerTab === "logs" && (
-                <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                  <LiveLog lines={logLines} />
-                </div>
-              )}
+                    {innerTab === "sitegraph" && isCrawl && (
+                      <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
+                        <SiteGraph
+                          pages={graphPages}
+                          activePage={activePage}
+                          isRunning={isRunActive}
+                        />
+                      </div>
+                    )}
 
-              {/* Always show log preview at bottom in pipeline view */}
-              {innerTab === "pipeline" && logLines.length > 0 && (
-                <LiveLog lines={logLines} />
-              )}
+                    {innerTab === "logs" && (
+                      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                        <LiveLog lines={logLines} />
+                      </div>
+                    )}
+
+                    {/* Always show log preview at bottom in pipeline view */}
+                    {innerTab === "pipeline" && logLines.length > 0 && (
+                      <LiveLog lines={logLines} />
+                    )}
+                  </>
+                );
+              })()}
             </div>
           ) : (
             // ── Idle / Done: configuration ──
