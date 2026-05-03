@@ -17,7 +17,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
   ArrowRight, ChevronRight, RotateCcw, Atom, Video,
-  Upload, Paperclip, Trash2, Copy, Check,
+  Upload, Paperclip, Trash2, Copy, Check, RefreshCw,
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE } from "../hooks/useRunSSE.js";
@@ -92,6 +92,16 @@ function isTextMime(file) {
 const STORAGE_KEY = "sentri.testLab.activeRun";
 const LOG_CAP     = 200; // bound storage size — the LiveLog UI slices at -40
 
+// Test Lab's Queue + Active Runs panels only describe AI generation runs —
+// the pipeline visualisation, "Step N/8" subtitle, and the attach-to-live
+// view all assume the 8-stage crawl/generate pipeline. Regression `test_run`
+// and recorder `record` runs use a different step model and would render
+// as "Step ?/8" with a nonsensical "Crawl & Generate" / "Requirement" label,
+// so we exclude them. Mirrors `backend/src/routes/dashboard.js:200`.
+// Module-scoped so React's dependency analysis doesn't see a new function
+// reference every render.
+const isGenerationRun = (r) => r.type === "crawl" || r.type === "generate";
+
 function loadPersistedRun() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
@@ -127,7 +137,7 @@ function clearPersistedRun() {
 /** Derive stage state for a pipeline step given the run's currentStep. */
 function stageStatus(step, currentStep, status) {
   if (status === "completed" || status === "completed_empty") {
-    return step === 8 ? "done" : "done";
+    return "done";
   }
   // For failed/aborted runs, freeze the pipeline at the step where it died
   // rather than leaving it pulsing as if still running. The step the run
@@ -608,7 +618,11 @@ export default function TestLab() {
   const sseInitialStatus = activeRun
     ? (runData?.status === "running" || runData?.status == null ? "running" : runData.status)
     : undefined;
-  useRunSSE(activeRun?.runId ?? null, handleSSEEvent, sseInitialStatus);
+  // Capture `sseDown` / `retryIn` so we can surface SSE drops to the user —
+  // mirrors RunDetail.jsx's reconnect / polling-fallback banners. Without
+  // this, an SSE outage mid-run would silently stall the pipeline view with
+  // no indication that updates have stopped.
+  const { sseDown, retryIn } = useRunSSE(activeRun?.runId ?? null, handleSSEEvent, sseInitialStatus);
 
   // ── Persist the active run to sessionStorage on every change ──
   // Clearing activeRun (via handleReset / Dismiss) also clears storage so the
@@ -627,13 +641,9 @@ export default function TestLab() {
   }, [projectRuns, selectedId]);
 
   // `allRuns` from useProjectData is already sorted newest-first.
-  // Test Lab's Queue + Active Runs panels only describe AI generation runs —
-  // the pipeline visualisation, "Step N/8" subtitle, and the attach-to-live
-  // view all assume the 8-stage crawl/generate pipeline. Regression `test_run`
-  // and recorder `record` runs use a different step model and would render
-  // as "Step ?/8" with a nonsensical "Crawl & Generate" / "Requirement" label,
-  // so we exclude them here. Mirrors `backend/src/routes/dashboard.js:200`.
-  const isGenerationRun = (r) => r.type === "crawl" || r.type === "generate";
+  // `isGenerationRun` is module-scoped (see above) to keep the `useMemo`
+  // dependency arrays honest — a fresh closure every render would otherwise
+  // invalidate the memo on every render.
   const activeQueueRuns = useMemo(
     () => allRuns.filter(r => isGenerationRun(r) && r.status === "running"),
     [allRuns],
@@ -729,7 +739,10 @@ export default function TestLab() {
         description: fullDescription,
         dialsConfig,
       });
-      setActiveRun({ runId, projectId: selectedId, type: "requirement" });
+      // Use backend's canonical type name (`"generate"`) so
+      // `activeRun.type` matches `run.type` on re-attach and any future
+      // strict equality checks don't silently fork.
+      setActiveRun({ runId, projectId: selectedId, type: "generate" });
       setInnerTab("pipeline");
     } catch (err) {
       setError(err.message || "Failed to generate tests.");
@@ -1085,6 +1098,22 @@ export default function TestLab() {
                   </span>
                 )}
               </div>
+
+              {/* SSE reconnection / polling-fallback banners — only shown
+                  while the run is actively running. Mirrors RunDetail.jsx so
+                  users get the same feedback wherever they monitor a run. */}
+              {isRunActive && retryIn != null && !sseDown && (
+                <div className="banner banner-info" style={{ margin: "10px 14px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                  <RefreshCw size={13} style={{ flexShrink: 0 }} />
+                  <span>Connection lost — reconnecting in {retryIn}s…</span>
+                </div>
+              )}
+              {isRunActive && sseDown && (
+                <div className="banner banner-warning" style={{ margin: "10px 14px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                  <RefreshCw size={13} className="spin" style={{ flexShrink: 0 }} />
+                  <span>Live updates unavailable — refreshing every 5s.</span>
+                </div>
+              )}
 
               {/* Terminal banners — rendered at the top of the run view so the
                   pipeline / logs stay visible underneath for review. */}
