@@ -17,6 +17,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
   ArrowRight, ChevronRight, RotateCcw, FlaskConical, Video,
+  Upload, Paperclip, Trash2,
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE } from "../hooks/useRunSSE.js";
@@ -53,6 +54,29 @@ const REQ_EXAMPLES = [
   "Form validation blocks invalid input",
   "Password reset flow end-to-end",
 ];
+
+// ── Attachment limits ────────────────────────────────────────────────────────
+// Mirror the legacy GenerateTestModal contract (40 KB per file, 45 KB total —
+// backend caps `description` at 50 KB so we leave headroom for the prompt
+// scaffold). Same MIME-allowlist + binary-detection guards prevent users from
+// pasting screenshots / PDFs that would blow up token counts.
+const ACCEPTED_EXTENSIONS = ".txt,.md,.csv,.json,.xml,.html,.yml,.yaml,.feature,.gherkin";
+const MAX_ATTACHMENT_SIZE  = 40_000;
+const MAX_TOTAL_ATTACHMENT = 45_000;
+const TEXT_MIME_PREFIXES   = ["text/", "application/json", "application/xml", "application/x-yaml", "application/yaml"];
+const TEXT_MIME_EXACT      = new Set([
+  "text/plain", "text/csv", "text/html", "text/markdown", "text/xml", "text/yaml",
+  "application/json", "application/xml", "application/x-yaml", "application/yaml",
+]);
+
+function isTextMime(file) {
+  const mime = (file.type || "").toLowerCase();
+  // No MIME (e.g. .feature, .gherkin) — allow because the OS picker already
+  // filtered by the ACCEPTED_EXTENSIONS list.
+  if (!mime) return true;
+  if (TEXT_MIME_EXACT.has(mime)) return true;
+  return TEXT_MIME_PREFIXES.some(p => mime.startsWith(p));
+}
 
 // ── Persistence ──────────────────────────────────────────────────────────────
 //
@@ -316,6 +340,17 @@ export default function TestLab() {
   const [tab, setTab]                     = useState(searchParams.get("tab") || "crawl");
   const [dialsConfig, setDialsConfig]     = useState(() => loadSavedConfig());
   const [requirement, setRequirement]     = useState("");
+  // Optional override — if blank we derive from the requirement's first line
+  // at submit time (matches GenerateTestModal's old behaviour, just gives the
+  // user a chance to fix a noisy auto-derived name).
+  const [testName, setTestName]           = useState("");
+  // Plain-text attachments folded into the AI prompt's `description`. Mirrors
+  // GenerateTestModal — same 40 KB / 45 KB caps, same MIME allowlist.
+  const [attachments, setAttachments]     = useState([]); // [{ name, content }]
+  const [showImportIssue, setShowImportIssue] = useState(false);
+  const [importIssueText, setImportIssueText] = useState("");
+  const fileInputRef    = useRef(null);
+  const requirementRef  = useRef(null);
 
   // ── Run state ──
   // Rehydrate from sessionStorage so navigating away and back resumes the live
@@ -373,6 +408,86 @@ export default function TestLab() {
   useEffect(() => {
     setSearchParams(tab === "crawl" ? {} : { tab }, { replace: true });
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Autofocus the requirement textarea on tab switch ──
+  // Mirrors GenerateTestModal's `nameRef.current?.focus()` on mount — when the
+  // user switches into the Requirement tab we put the cursor in the textarea
+  // so they can start typing immediately.
+  useEffect(() => {
+    if (tab !== "requirement") return;
+    if (activeRun) return;          // skip when the run view is mounted
+    const t = setTimeout(() => requirementRef.current?.focus(), 60);
+    return () => clearTimeout(t);
+  }, [tab, activeRun]);
+
+  // ── Attachment helpers ──
+  // Read user-supplied text files into memory so we can fold them into the
+  // requirement when launching. Each file is MIME-checked and binary-scanned
+  // (>5% non-printable bytes in the first 1 KB → reject) before being added,
+  // and we strip common prompt-injection markers (matches the backend
+  // `testDials.js` sanitisation).
+  function handleFileSelect(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-selecting the same file after removal
+    for (const file of files) {
+      if (!isTextMime(file)) {
+        setError(`"${file.name}" appears to be a binary file (${file.type || "unknown type"}). Only text-based files are supported.`);
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        setError(`"${file.name}" is too large (${Math.round(file.size / 1000)} KB). Max is 40 KB per file.`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = reader.result;
+        const sample = raw.slice(0, 1024);
+        const nonPrintable = [...sample].filter(c => {
+          const code = c.charCodeAt(0);
+          return code < 32 && code !== 9 && code !== 10 && code !== 13;
+        }).length;
+        if (sample.length > 0 && nonPrintable / sample.length > 0.05) {
+          setError(`"${file.name}" contains binary data and cannot be used as a text attachment.`);
+          return;
+        }
+        const content = raw
+          .replace(/^(SYSTEM|ASSISTANT|USER|HUMAN|AI)\s*:/gim, "")
+          .replace(/```/g, "");
+        setAttachments(prev => {
+          if (prev.some(a => a.name === file.name)) return prev;
+          const totalSize = prev.reduce((n, a) => n + a.content.length, 0) + content.length;
+          if (totalSize > MAX_TOTAL_ATTACHMENT) {
+            setError("Total attachment size would exceed 45 KB. Remove an existing file first.");
+            return prev;
+          }
+          return [...prev, { name: file.name, content }];
+        });
+      };
+      reader.onerror = () => setError(`Failed to read "${file.name}".`);
+      reader.readAsText(file);
+    }
+  }
+
+  function removeAttachment(fileName) {
+    setAttachments(prev => prev.filter(a => a.name !== fileName));
+  }
+
+  // Parse pasted Jira issue text into name + description. Accepts:
+  //   "PROJ-123 Login fails for SSO users\nAs a user…"
+  //   "Login fails for SSO users\nAs a user…"
+  function handleImportIssue() {
+    const raw = importIssueText.trim();
+    if (!raw) return;
+    const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+    const firstLine = lines[0] || "";
+    const parsedName = firstLine.replace(/^[A-Z][A-Z0-9]+-\d+\s*[-:.]?\s*/, "").trim();
+    const parsedDesc = lines.slice(1).join("\n").trim();
+    if (parsedName) setTestName(parsedName);
+    if (parsedDesc) setRequirement(prev => prev ? `${prev}\n\n${parsedDesc}` : parsedDesc);
+    setImportIssueText("");
+    setShowImportIssue(false);
+    if (error) setError(null);
+  }
 
   // ── SSE handler for active run ──
   const handleSSEEvent = useCallback((event) => {
@@ -450,9 +565,29 @@ export default function TestLab() {
   // object straight through — no per-field re-packing — so adding a new dial
   // upstream automatically reaches the backend.
 
+  /**
+   * Confirm the backend has at least one usable AI provider before we kick off
+   * a long-running pipeline. Mirrors the legacy CrawlProjectModal /
+   * GenerateTestModal pre-flight — without it the user gets a generic 4xx
+   * several seconds in instead of an actionable "go to Settings" message.
+   * Failures here are non-fatal: if `/config` itself errors we fall through
+   * and let the actual API call surface the real problem.
+   */
+  async function ensureAiProvider() {
+    try {
+      const config = await api.getConfig();
+      if (config && config.hasProvider === false) {
+        setError("No AI provider configured — open Settings to add an API key or enable Ollama.");
+        return false;
+      }
+    } catch { /* non-fatal — proceed and surface the real error from the run call */ }
+    return true;
+  }
+
   async function handleStartCrawl() {
     if (!selectedId) return;
     setError(null);
+    if (!(await ensureAiProvider())) return;
     setLaunching(true);
     // Detach from any previous run BEFORE clearing runData. Otherwise the SSE
     // hook would re-evaluate `sseInitialStatus` as "running" (activeRun still
@@ -477,6 +612,7 @@ export default function TestLab() {
   async function handleGenerateFromRequirement() {
     if (!selectedId || !requirement.trim()) return;
     setError(null);
+    if (!(await ensureAiProvider())) return;
     setLaunching(true);
     // See handleStartCrawl — detach from any previous run before clearing
     // runData to avoid an SSE reconnect race.
@@ -485,17 +621,26 @@ export default function TestLab() {
     setRunData(null);
     clearPersistedRun();
     try {
-      // Backend requires `name` — derive it from the first line of the
-      // requirement (trimmed to a reasonable length). The full requirement
-      // becomes the `description`, which is what the prompt pipeline consumes.
+      // Backend requires `name`. Prefer the user-supplied override; otherwise
+      // derive from the requirement's first line (trimmed to ~80 chars).
       const reqText = requirement.trim();
       const firstLine = reqText.split("\n")[0].trim();
       const derivedName = firstLine.length > 80
         ? firstLine.slice(0, 77) + "…"
         : firstLine;
+      const finalName = testName.trim() || derivedName;
+      // Fold attachments into `description` — same shape the legacy modal
+      // used, so the backend `userRequestedPrompt` path sees identical input.
+      let fullDescription = reqText;
+      if (attachments.length > 0) {
+        const block = attachments
+          .map(a => `--- Attached file: ${a.name} ---\n${a.content}`)
+          .join("\n\n");
+        fullDescription = fullDescription ? `${fullDescription}\n\n${block}` : block;
+      }
       const { runId } = await api.generateTest(selectedId, {
-        name: derivedName,
-        description: reqText,
+        name: finalName,
+        description: fullDescription,
         dialsConfig,
       });
       setActiveRun({ runId, projectId: selectedId, type: "requirement" });
@@ -949,21 +1094,162 @@ export default function TestLab() {
                   </div>
                 )}
 
-                {/* ── Requirement textarea (Requirement tab only) ── */}
+                {/* ── Requirement input + extras (Requirement tab only) ── */}
                 {tab === "requirement" && (
-                  <div className="tl-section">
-                    <div className="tl-section-label">Requirement / User Story</div>
-                    <textarea
-                      className="tl-req-area"
-                      placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
-                      value={requirement}
-                      onChange={e => setRequirement(e.target.value)}
-                      rows={5}
-                    />
-                    <div className="tl-req-hint">
-                      Plain English, user stories, Gherkin, or paste a Jira ticket.
+                  <>
+                    {/* Test Name override — optional. Blank = auto-derive
+                        from the first line of the requirement at submit. */}
+                    <div className="tl-section">
+                      <div className="tl-section-label">
+                        Test Name
+                        <span style={{ marginLeft: 6, color: "var(--text3)", fontWeight: 400, textTransform: "none", letterSpacing: "normal" }}>
+                          (optional — auto-derived from the requirement if blank)
+                        </span>
+                      </div>
+                      <input
+                        className="tl-select"
+                        type="text"
+                        value={testName}
+                        onChange={e => setTestName(e.target.value)}
+                        placeholder="e.g. Dashboard loads all employee charts"
+                        style={{ width: "100%", backgroundImage: "none", paddingRight: 10, height: 36 }}
+                      />
                     </div>
-                  </div>
+
+                    {/* Import Issue panel — paste Jira issue text and split it
+                        into a name + appended description block. */}
+                    <div className="tl-section">
+                      <div className="tl-section-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>Requirement / User Story</span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs"
+                          style={{ marginLeft: "auto", gap: 5 }}
+                          onClick={() => setShowImportIssue(v => !v)}
+                        >
+                          <Upload size={11} /> Import Issue
+                        </button>
+                      </div>
+
+                      {showImportIssue && (
+                        <div style={{
+                          marginBottom: 10, padding: 12, background: "var(--bg2)",
+                          border: "1px solid var(--border)", borderRadius: "var(--radius)",
+                          display: "flex", flexDirection: "column", gap: 8,
+                        }}>
+                          <div style={{ fontSize: "0.78rem", color: "var(--text2)", fontWeight: 500 }}>
+                            Paste a Jira issue (title on first line, description below)
+                          </div>
+                          <textarea
+                            className="tl-req-area"
+                            value={importIssueText}
+                            onChange={e => setImportIssueText(e.target.value)}
+                            placeholder={"PROJ-123 Login fails for SSO users\nAs a user with SSO enabled I expect to be redirected to the IdP…"}
+                            rows={4}
+                            style={{ minHeight: 88 }}
+                            autoFocus
+                          />
+                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button
+                              className="btn btn-ghost btn-xs"
+                              onClick={() => { setShowImportIssue(false); setImportIssueText(""); }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className="btn btn-primary btn-xs"
+                              onClick={handleImportIssue}
+                              disabled={!importIssueText.trim()}
+                            >
+                              Import
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <textarea
+                        ref={requirementRef}
+                        className="tl-req-area"
+                        placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
+                        value={requirement}
+                        onChange={e => setRequirement(e.target.value)}
+                        // Cmd/Ctrl+Enter submits — matches GenerateTestModal's
+                        // single-key submit, but scoped to a modifier so plain
+                        // Enter still inserts a newline in this multi-line area.
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            if (requirement.trim() && selectedProject && !launching) {
+                              handleGenerateFromRequirement();
+                            }
+                          }
+                        }}
+                        rows={5}
+                      />
+                      <div className="tl-req-hint">
+                        Plain English, user stories, Gherkin, or paste a Jira ticket. Press <kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> to generate.
+                      </div>
+                    </div>
+
+                    {/* Attachments — text-only files (.md, .json, .yaml,
+                        .feature, …). Folded into description at submit time
+                        so the backend prompt receives a single combined
+                        payload, matching legacy GenerateTestModal output. */}
+                    <div className="tl-section">
+                      <div className="tl-section-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>Attachments {attachments.length > 0 && `(${attachments.length})`}</span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs"
+                          style={{ marginLeft: "auto", gap: 5 }}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <Paperclip size={11} /> Add attachment
+                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept={ACCEPTED_EXTENSIONS}
+                          multiple
+                          onChange={handleFileSelect}
+                          style={{ display: "none" }}
+                        />
+                      </div>
+                      {attachments.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {attachments.map(a => (
+                            <div key={a.name} style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "5px 10px", background: "var(--bg2)",
+                              border: "1px solid var(--border)", borderRadius: "var(--radius)",
+                              fontSize: "0.78rem",
+                            }}>
+                              <Paperclip size={11} color="var(--text3)" style={{ flexShrink: 0 }} />
+                              <span style={{
+                                flex: 1, color: "var(--text)", overflow: "hidden",
+                                textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}>
+                                {a.name}
+                              </span>
+                              <span style={{ fontSize: "0.7rem", color: "var(--text3)", flexShrink: 0 }}>
+                                {Math.round(a.content.length / 1000)}k chars
+                              </span>
+                              <button
+                                onClick={() => removeAttachment(a.name)}
+                                style={{
+                                  background: "none", border: "none", cursor: "pointer",
+                                  color: "var(--text3)", padding: 0, display: "flex",
+                                }}
+                                title="Remove attachment"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
 
                 {/* ── Unified Test Dials surface ──
