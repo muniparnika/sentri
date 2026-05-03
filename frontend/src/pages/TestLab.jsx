@@ -225,15 +225,16 @@ function LiveLog({ lines }) {
   return (
     <div className="tl-live-log">
       {lines.slice(-40).map((line, i) => {
-        // Prefix-based classifier — mirrors backend log conventions
-        // (`✓` success, `→` info, `✗`/`Error` failure, `⚠`/`Warning` warn).
-        // Anything else inherits the parent colour so default lines stay
-        // readable on the dark surface.
-        const cls = line.startsWith("✓") ? "tl-log-ok"
-                  : line.startsWith("→") ? "tl-log-info"
-                  : (line.startsWith("✗") || /^(error|fail)/i.test(line)) ? "tl-log-error"
-                  : (line.startsWith("⚠") || /^warn/i.test(line)) ? "tl-log-warn"
-                  : "tl-log-dim";
+        // Backend emits lines as `[ISO timestamp] <emoji> <message>` (see
+        // `backend/src/utils/runLogger.js` and `backend/src/crawler.js`), so
+        // we can't anchor the classifier at index 0 — the leading bracketed
+        // timestamp pushes the emoji past the start. Scan for the first
+        // recognisable marker anywhere in the line; first match wins.
+        let cls = "tl-log-dim";
+        if (/[✅✓]/.test(line) || /\bPASSED\b/.test(line))           cls = "tl-log-ok";
+        else if (/[❌✗]/.test(line) || /\b(FAILED|ERROR)\b/i.test(line)) cls = "tl-log-error";
+        else if (/[⚠️]/.test(line) || /\bWARN(ING)?\b/i.test(line))     cls = "tl-log-warn";
+        else if (/[🏁🚀🕷️🔍🤖→▶]/.test(line))                          cls = "tl-log-info";
         return <div key={i} className={cls}>{line}</div>;
       })}
       <div ref={endRef} />
