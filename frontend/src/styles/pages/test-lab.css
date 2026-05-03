@@ -1146,6 +1146,7 @@
 .tl-pipeline-log-col .tl-live-log {
   flex: 1;
   min-height: 0;
+  max-height: none;
   height: auto;
   border-top: none;
   /* Allow long monospace tokens (URLs, stack frames) to wrap instead of
