@@ -432,6 +432,15 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  /* `.tl-run-center` is a CSS grid cell of `.tl-grid` whose default
+     `min-height` is `auto`, meaning the cell grows to whatever its content
+     wants. Without this `min-height: 0` the inner flex chain (run-label →
+     banners → inner-tabs → pipeline-view) can't bound — the LiveLog inside
+     `.tl-pipeline-view` then escapes the parent height and the whole right
+     panel is shoved off-screen. Same `min-width: 0` reason for horizontal
+     monospace overflow. */
+  min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -493,7 +502,13 @@
   color: var(--text3);
 }
 
-/* ── Live output log ─────────────────────────────────────────────────────────── */
+/* ── Live output log ──────────────────────────────────────────────────────────
+   Used in two layouts:
+     1. Standalone (logs inner-tab) — fills its flex parent.
+     2. Embedded in `.tl-pipeline-log-col` — inherits column height; that
+        rule's `flex: 1; min-height: 0` overrides the `max-height` here.
+   Either way the content never escapes the card: the log clips with its own
+   vertical scrollbar, never with horizontal overflow into siblings. */
 .tl-live-log {
   background: #0d1117;
   border-top: 1px solid var(--border);
@@ -502,9 +517,18 @@
   font-size: 0.75rem;
   color: #8b9cf4;
   line-height: 1.75;
-  height: 130px;
+  /* Cap height in the standalone case so the log doesn't grow indefinitely
+     when wrapped in flex parents that don't supply their own bound. The
+     `.tl-pipeline-log-col` override sets `height: auto` + `flex: 1` so the
+     embedded variant fills the column instead. */
+  max-height: 220px;
+  min-height: 0;
+  flex: 0 0 auto;
   overflow-y: auto;
-  flex-shrink: 0;
+  /* Wrap long URLs / stack frames instead of triggering horizontal scroll
+     across the whole card. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .tl-log-ok   { color: #4ade80; }
 .tl-log-info { color: #60a5fa; }
