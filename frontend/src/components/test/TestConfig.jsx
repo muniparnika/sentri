@@ -135,6 +135,13 @@ export default function TestConfig({
       exploreMaxDepth:      DEFAULT_CONFIG.exploreMaxDepth,
       exploreMaxActions:    DEFAULT_CONFIG.exploreMaxActions,
       exploreActionTimeout: DEFAULT_CONFIG.exploreActionTimeout,
+      // Also reset extra options + custom instructions so the new preset
+      // gives a clean slate (matches the legacy TestDials.jsx applyProfile
+      // behaviour). Without this, e.g. "Add selector hints" stays enabled
+      // and the user's custom-instructions text carries over into every
+      // subsequent profile switch.
+      options:              { ...DEFAULT_CONFIG.options },
+      customInstructions:   "",
     });
   }
   const togglePerspective = (id) => update({
