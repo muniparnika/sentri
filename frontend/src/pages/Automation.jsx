@@ -25,7 +25,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { userHasRole } from "../utils/roles.js";
 import { useNotifications } from "../context/NotificationContext.jsx";
 import ProjectAutomationCard from "../components/automation/ProjectAutomationCard.jsx";
-import ProjectQualityCard from "../components/automation/ProjectConfigPanel.jsx";
+import ProjectQualityCard from "../components/automation/ProjectQualityCard.jsx";
 import IntegrationCards from "../components/automation/IntegrationCards.jsx";
 import IntegrationSnippets from "../components/automation/IntegrationSnippets.jsx";
 
