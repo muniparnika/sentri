@@ -118,6 +118,14 @@ function stageStatus(step, currentStep, status) {
   if (status === "completed" || status === "completed_empty") {
     return step === 8 ? "done" : "done";
   }
+  // For failed/aborted runs, freeze the pipeline at the step where it died
+  // rather than leaving it pulsing as if still running. The step the run
+  // stopped on is marked "done" (we reached it) but no step is "active".
+  if (status === "failed" || status === "aborted") {
+    if (currentStep == null) return "pending";
+    if (step <= currentStep) return "done";
+    return "pending";
+  }
   if (currentStep == null) return "pending";
   if (step < currentStep) return "done";
   if (step === currentStep) return "active";
@@ -374,8 +382,14 @@ export default function TestLab() {
     const routeMatch = routeProjectId && projects.some(p => p.id === routeProjectId)
       ? routeProjectId
       : null;
-    setSelectedId(prev => routeMatch ?? prev ?? projects[0].id);
-  }, [routeProjectId, projects]);
+    // If a run was rehydrated from sessionStorage on the non-project-scoped
+    // `/test-lab` route, prefer its project over `projects[0]` so the header
+    // label and any subsequent launch target the correct project.
+    const activeMatch = activeRun?.projectId && projects.some(p => p.id === activeRun.projectId)
+      ? activeRun.projectId
+      : null;
+    setSelectedId(prev => routeMatch ?? prev ?? activeMatch ?? projects[0].id);
+  }, [routeProjectId, projects, activeRun?.projectId]);
 
   // ── Derive runs grouped by project (replaces the old `projectRuns` state) ──
   const projectRuns = useMemo(() => {
@@ -401,7 +415,13 @@ export default function TestLab() {
       setRunData(prev => ({ ...prev, ...event.run }));
     }
     if (event.type === "log" && event.message) {
-      setLogLines(prev => [...prev, event.message]);
+      // Cap in-memory log buffer to bound memory + avoid O(n²) re-allocation
+      // on long runs. `LiveLog` only renders the last 40 lines anyway, and
+      // `persistRun` already caps its sessionStorage copy at LOG_CAP.
+      setLogLines(prev => {
+        const next = [...prev, event.message];
+        return next.length > LOG_CAP ? next.slice(-LOG_CAP) : next;
+      });
     }
     // The hook fires its own `type: "done"` event when SSE closes, with
     // `status` at the top level (not under `event.run`). Handle both shapes.
@@ -489,8 +509,15 @@ export default function TestLab() {
     if (!selectedId) return;
     setError(null);
     setLaunching(true);
+    // Detach from any previous run BEFORE clearing runData. Otherwise the SSE
+    // hook would re-evaluate `sseInitialStatus` as "running" (activeRun still
+    // set + runData null) and reconnect to the old completed run during the
+    // await window, poisoning runData with stale terminal state and blocking
+    // SSE for the new run (`alreadyDone` guard in useRunSSE).
+    setActiveRun(null);
     setLogLines([]);
     setRunData(null);
+    clearPersistedRun();
     try {
       const { runId } = await api.crawl(selectedId, { dialsConfig: buildDialsConfig() });
       setActiveRun({ runId, projectId: selectedId, type: "crawl" });
@@ -506,8 +533,12 @@ export default function TestLab() {
     if (!selectedId || !requirement.trim()) return;
     setError(null);
     setLaunching(true);
+    // See handleStartCrawl — detach from any previous run before clearing
+    // runData to avoid an SSE reconnect race.
+    setActiveRun(null);
     setLogLines([]);
     setRunData(null);
+    clearPersistedRun();
     try {
       // Backend requires `name` — derive it from the first line of the
       // requirement (trimmed to a reasonable length). The full requirement
