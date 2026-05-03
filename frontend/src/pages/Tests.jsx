@@ -542,8 +542,11 @@ export default function Tests() {
       action: () => projects.length === 0
         ? navigate("/projects/new")
         // Migrated out of CrawlProjectModal — the Test Lab page is now the
-        // single home for crawl & AI generation.
-        : navigate(`/projects/${filtered[0]?.projectId || projects[0]?.id}/test-lab?tab=crawl`),
+        // single home for crawl & AI generation. Use `projects[0]` (not
+        // `filtered[0]?.projectId`) so the target project doesn't depend on
+        // whatever filter happens to be active on the Tests page; users can
+        // switch projects from Test Lab's sidebar.
+        : navigate(`/projects/${projects[0]?.id}/test-lab?tab=crawl`),
     },
     {
       icon: <Sparkles size={16} />,
@@ -553,7 +556,7 @@ export default function Tests() {
       iconColor: "var(--accent)",
       action: () => projects.length === 0
         ? navigate("/projects/new")
-        : navigate(`/projects/${filtered[0]?.projectId || projects[0]?.id}/test-lab?tab=requirement`),
+        : navigate(`/projects/${projects[0]?.id}/test-lab?tab=requirement`),
     },
     {
       // DIF-015 — Interactive browser recorder

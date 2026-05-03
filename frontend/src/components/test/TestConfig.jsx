@@ -212,7 +212,7 @@ export default function TestConfig({
                       key={p.id}
                       type="button"
                       className={`tl-chip${activePreset === p.id ? " tl-chip--on" : ""}`}
-                      onClick={() => onChange?.({ ...cfg, ...p.values })}
+                      onClick={() => update(p.values)}
                       title={p.desc}
                     >
                       {p.icon} {p.label} <span style={{ color: "var(--text3)", marginLeft: 4 }}>{p.desc}</span>
@@ -364,7 +364,7 @@ export default function TestConfig({
                       key={p.id}
                       type="button"
                       className={`tl-chip${activePreset === p.id ? " tl-chip--on" : ""}`}
-                      onClick={() => onChange?.({ ...cfg, ...p.values })}
+                      onClick={() => update(p.values)}
                       title={p.desc}
                     >
                       {p.icon} {p.label} <span style={{ color: "var(--text3)", marginLeft: 4 }}>{p.desc}</span>

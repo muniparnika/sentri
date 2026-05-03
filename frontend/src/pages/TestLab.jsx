@@ -445,7 +445,16 @@ export default function TestLab() {
     const activeMatch = activeRun?.projectId && projects.some(p => p.id === activeRun.projectId)
       ? activeRun.projectId
       : null;
-    setSelectedId(prev => routeMatch ?? prev ?? activeMatch ?? projects[0].id);
+    setSelectedId(prev => {
+      // Validate `prev` against the loaded project list — a stale bookmark
+      // (e.g. `/projects/DELETED-ID/test-lab`) seeds `prev` with a non-null
+      // ID that doesn't exist, and without this check the `??` chain would
+      // stop there and never fall through to `activeMatch` / `projects[0]`,
+      // leaving the UI with no selected project and the Start button
+      // permanently disabled.
+      const prevValid = prev && projects.some(p => p.id === prev) ? prev : null;
+      return routeMatch ?? prevValid ?? activeMatch ?? projects[0].id;
+    });
   }, [routeProjectId, projects, activeRun?.projectId]);
 
   // ── Derive runs grouped by project (replaces the old `projectRuns` state) ──
@@ -459,8 +468,16 @@ export default function TestLab() {
   }, [allRuns]);
 
   // ── Sync tab to URL param ──
+  // Use a functional updater so we preserve any other search params that may
+  // have been set by external navigation or future features — naively passing
+  // `{}` / `{ tab }` would strip everything else on every tab change.
   useEffect(() => {
-    setSearchParams(tab === "crawl" ? {} : { tab }, { replace: true });
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (tab === "crawl") next.delete("tab");
+      else next.set("tab", tab);
+      return next;
+    }, { replace: true });
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Autofocus the requirement textarea on tab switch ──
@@ -602,12 +619,19 @@ export default function TestLab() {
   }, [projectRuns, selectedId]);
 
   // `allRuns` from useProjectData is already sorted newest-first.
+  // Test Lab's Queue + Active Runs panels only describe AI generation runs —
+  // the pipeline visualisation, "Step N/8" subtitle, and the attach-to-live
+  // view all assume the 8-stage crawl/generate pipeline. Regression `test_run`
+  // and recorder `record` runs use a different step model and would render
+  // as "Step ?/8" with a nonsensical "Crawl & Generate" / "Requirement" label,
+  // so we exclude them here. Mirrors `backend/src/routes/dashboard.js:200`.
+  const isGenerationRun = (r) => r.type === "crawl" || r.type === "generate";
   const activeQueueRuns = useMemo(
-    () => allRuns.filter(r => r.status === "running"),
+    () => allRuns.filter(r => isGenerationRun(r) && r.status === "running"),
     [allRuns],
   );
   const recentQueueRuns = useMemo(
-    () => allRuns.filter(r => r.status !== "running").slice(0, 8),
+    () => allRuns.filter(r => isGenerationRun(r) && r.status !== "running").slice(0, 8),
     [allRuns],
   );
 

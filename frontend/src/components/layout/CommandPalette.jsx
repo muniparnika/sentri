@@ -52,7 +52,7 @@ function useCommands() {
     { id: "nav-system",      group: "Navigation", label: "Go to System",     icon: Layers,          keywords: "system info",              action: () => navigate("/system") },
     { id: "nav-settings",    group: "Navigation", label: "Go to Settings",   icon: Settings,        keywords: "config api keys provider", action: () => navigate("/settings") },
     { id: "act-new-project", group: "Actions",    label: "Create New Project", icon: Plus, keywords: "add application",    action: () => navigate("/projects/new") },
-    { id: "act-new-test",    group: "Actions",    label: "Generate Test",      icon: Play, keywords: "create ai generate", action: () => navigate("/tests") },
+    { id: "act-new-test",    group: "Actions",    label: "Generate Test",      icon: Play, keywords: "create ai generate", action: () => navigate("/test-lab?tab=requirement") },
   ], [navigate]);
 }
 
