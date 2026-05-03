@@ -25,6 +25,8 @@ import usePageTitle from "../hooks/usePageTitle.js";
 import { fmtRelativeDate } from "../utils/formatters.js";
 import SiteGraph from "../components/crawl/SiteGraph.jsx";
 import RecorderModal from "../components/run/RecorderModal.jsx";
+import TestConfig from "../components/test/TestConfig.jsx";
+import { loadSavedConfig } from "../utils/testDialsStorage.js";
 
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -40,26 +42,10 @@ const PIPELINE_STAGES = [
   { label: "Done",                 step: 8, key: null,                   unit: null },
 ];
 
-const COVERAGE_OPTIONS = [
-  { id: "full",      label: "Full coverage" },
-  { id: "positive",  label: "Positive only" },
-  { id: "errors",    label: "Errors & edges" },
-  { id: "exploratory", label: "Exploratory" },
-];
-
-const PERSPECTIVE_OPTIONS = [
-  { id: "full_journey",  label: "Full user journey" },
-  { id: "first_time",    label: "First-time user" },
-  { id: "multi_role",    label: "Multi-role" },
-  { id: "interrupted",   label: "Interrupted flows" },
-];
-
-const QUALITY_OPTIONS = [
-  { id: "accessibility", label: "Accessibility" },
-  { id: "performance",   label: "Performance" },
-  { id: "api_responses", label: "API responses" },
-  { id: "security",      label: "Security" },
-];
+// Coverage / perspective / quality / test-count / profile option lists used to
+// live here; they have moved to the shared <TestConfig /> component which
+// composes them from `frontend/src/config/testDialsConfig.js` (the same
+// canonical source the legacy CrawlProjectModal / GenerateTestModal used).
 
 const REQ_EXAMPLES = [
   "User login with valid credentials",
@@ -149,34 +135,9 @@ function avatarStyle(initial) {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-/**
- * Multi-select chip group.
- *
- * @param {{ options: Array<{id:string,label:string}>, selected: string[], onChange: Function }} props
- */
-function ChipGroup({ options, selected, onChange }) {
-  function toggle(id) {
-    onChange(
-      selected.includes(id)
-        ? selected.filter(x => x !== id)
-        : [...selected, id]
-    );
-  }
-  return (
-    <div className="tl-chip-row">
-      {options.map(opt => (
-        <button
-          key={opt.id}
-          className={`tl-chip${selected.includes(opt.id) ? " tl-chip--on" : ""}`}
-          onClick={() => toggle(opt.id)}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+// `ChipGroup` was inlined here for the Crawl/Requirement chip rows; chip
+// rendering now lives in `frontend/src/components/test/TestConfig.jsx` and is
+// shared with the rest of the app.
 
 /**
  * Compact project avatar with deterministic colour from the project name initial.
@@ -348,13 +309,12 @@ export default function TestLab() {
   const [selectedId, setSelectedId]       = useState(routeProjectId ?? null);
 
   // ── Config state ──
+  // Single source of truth for the full Test Dials surface. Seeded from
+  // localStorage via `loadSavedConfig()` so user preferences survive page
+  // reloads — matches the legacy CrawlProjectModal / GenerateTestModal
+  // behaviour and feeds the unified <TestConfig /> component below.
   const [tab, setTab]                     = useState(searchParams.get("tab") || "crawl");
-  const [discoveryMode, setDiscoveryMode] = useState("link");
-  const [coverage, setCoverage]           = useState(["full"]);
-  const [perspectives, setPerspectives]   = useState(["full_journey", "first_time"]);
-  const [quality, setQuality]             = useState(["accessibility", "api_responses"]);
-  const [testCount, setTestCount]         = useState("ai");
-  const [profile, setProfile]             = useState("balanced");
+  const [dialsConfig, setDialsConfig]     = useState(() => loadSavedConfig());
   const [requirement, setRequirement]     = useState("");
 
   // ── Run state ──
@@ -483,35 +443,12 @@ export default function TestLab() {
   );
 
   // ── Actions ──
-  /**
-   * Build the backend-compatible `dialsConfig` payload from the Test Lab UI
-   * state. The backend (`POST /projects/:id/crawl` and `/tests/generate`) only
-   * reads `dialsConfig` from the request body — flat top-level fields like
-   * `mode`, `coverage`, `profile`, etc. are ignored silently, so we roll them
-   * all up here to preserve parity with the old `CrawlProjectModal` /
-   * `GenerateTestModal` contract.
-   */
-  function buildDialsConfig() {
-    // Backend's `resolveDialsConfig` accepts: "one" | "small" | "medium" |
-    // "large" | "ai_decides". The UI select stores numeric-ish strings; map
-    // them to the nearest bucket so the prompt selects the right size.
-    const countMap = {
-      ai: "ai_decides",
-      "5":  "small",
-      "10": "small",
-      "20": "medium",
-      "50": "large",
-    };
-    return {
-      // "link" in the UI ↔ "crawl" in the backend validator
-      exploreMode: discoveryMode === "state" ? "state" : "crawl",
-      testCount: countMap[testCount] ?? "ai_decides",
-      coverage,
-      perspectives,
-      quality,
-      profile,
-    };
-  }
+  // The unified <TestConfig /> component owns the full dialsConfig shape that
+  // the backend's `resolveDialsConfig()` already validates (approach,
+  // perspectives[], quality[], format, testCount, exploreMode + tuning,
+  // options, language, customInstructions, parallelWorkers). We pass the
+  // object straight through — no per-field re-packing — so adding a new dial
+  // upstream automatically reaches the backend.
 
   async function handleStartCrawl() {
     if (!selectedId) return;
@@ -527,7 +464,7 @@ export default function TestLab() {
     setRunData(null);
     clearPersistedRun();
     try {
-      const { runId } = await api.crawl(selectedId, { dialsConfig: buildDialsConfig() });
+      const { runId } = await api.crawl(selectedId, { dialsConfig });
       setActiveRun({ runId, projectId: selectedId, type: "crawl" });
       setInnerTab("pipeline");
     } catch (err) {
@@ -559,11 +496,7 @@ export default function TestLab() {
       const { runId } = await api.generateTest(selectedId, {
         name: derivedName,
         description: reqText,
-        dialsConfig: {
-          coverage,
-          quality,
-          profile,
-        },
+        dialsConfig,
       });
       setActiveRun({ runId, projectId: selectedId, type: "requirement" });
       setInnerTab("pipeline");
@@ -1016,107 +949,34 @@ export default function TestLab() {
                   </div>
                 )}
 
-                {/* ── Crawl tab config ── */}
-                {tab === "crawl" && (
-                  <>
-                    <div className="tl-section">
-                      <div className="tl-section-label">Discovery Mode</div>
-                      <div className="tl-mode-grid">
-                        <div
-                          className={`tl-mode-card${discoveryMode === "link" ? " tl-mode-card--selected" : ""}`}
-                          onClick={() => setDiscoveryMode("link")}
-                        >
-                          <div className="tl-mode-icon">🔗</div>
-                          <div className="tl-mode-title">Link crawl</div>
-                          <div className="tl-mode-desc">Follow links from homepage, discover all pages</div>
-                        </div>
-                        <div
-                          className={`tl-mode-card${discoveryMode === "state" ? " tl-mode-card--selected" : ""}`}
-                          onClick={() => setDiscoveryMode("state")}
-                        >
-                          <div className="tl-mode-icon">⚡</div>
-                          <div className="tl-mode-title">State exploration</div>
-                          <div className="tl-mode-desc">Click UI elements, discover app states dynamically</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="tl-section">
-                      <div className="tl-section-label">Coverage Approach</div>
-                      <ChipGroup options={COVERAGE_OPTIONS} selected={coverage} onChange={setCoverage} />
-                    </div>
-
-                    <div className="tl-section">
-                      <div className="tl-section-label">Test Perspectives</div>
-                      <ChipGroup options={PERSPECTIVE_OPTIONS} selected={perspectives} onChange={setPerspectives} />
-                    </div>
-
-                    <div className="tl-section">
-                      <div className="tl-section-label">Quality Checks</div>
-                      <ChipGroup options={QUALITY_OPTIONS} selected={quality} onChange={setQuality} />
-                    </div>
-
-                    <div className="tl-controls-row">
-                      <div className="tl-select-wrap">
-                        <label className="tl-section-label" htmlFor="tl-count">Test Count</label>
-                        <select
-                          id="tl-count"
-                          className="tl-select"
-                          value={testCount}
-                          onChange={e => setTestCount(e.target.value)}
-                        >
-                          <option value="ai">AI decides</option>
-                          <option value="5">5 tests</option>
-                          <option value="10">10 tests</option>
-                          <option value="20">20 tests</option>
-                          <option value="50">50 tests</option>
-                        </select>
-                      </div>
-                      <div className="tl-select-wrap">
-                        <label className="tl-section-label" htmlFor="tl-profile">Profile</label>
-                        <select
-                          id="tl-profile"
-                          className="tl-select"
-                          value={profile}
-                          onChange={e => setProfile(e.target.value)}
-                        >
-                          <option value="balanced">Balanced</option>
-                          <option value="aggressive">Aggressive</option>
-                          <option value="conservative">Conservative</option>
-                        </select>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* ── Requirement tab config ── */}
+                {/* ── Requirement textarea (Requirement tab only) ── */}
                 {tab === "requirement" && (
-                  <>
-                    <div className="tl-section">
-                      <div className="tl-section-label">Requirement / User Story</div>
-                      <textarea
-                        className="tl-req-area"
-                        placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
-                        value={requirement}
-                        onChange={e => setRequirement(e.target.value)}
-                        rows={5}
-                      />
-                      <div className="tl-req-hint">
-                        Plain English, user stories, Gherkin, or paste a Jira ticket.
-                      </div>
+                  <div className="tl-section">
+                    <div className="tl-section-label">Requirement / User Story</div>
+                    <textarea
+                      className="tl-req-area"
+                      placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
+                      value={requirement}
+                      onChange={e => setRequirement(e.target.value)}
+                      rows={5}
+                    />
+                    <div className="tl-req-hint">
+                      Plain English, user stories, Gherkin, or paste a Jira ticket.
                     </div>
-
-                    <div className="tl-section">
-                      <div className="tl-section-label">Coverage Approach</div>
-                      <ChipGroup options={COVERAGE_OPTIONS.slice(0, 3)} selected={coverage} onChange={setCoverage} />
-                    </div>
-
-                    <div className="tl-section">
-                      <div className="tl-section-label">Quality Checks</div>
-                      <ChipGroup options={QUALITY_OPTIONS.slice(0, 3)} selected={quality} onChange={setQuality} />
-                    </div>
-                  </>
+                  </div>
                 )}
+
+                {/* ── Unified Test Dials surface ──
+                    Crawl tab gets the Explorer sub-tab (discovery mode + state-
+                    explorer tuning); Requirement tab hides it because the
+                    requirement flow doesn't crawl. The component is fully
+                    controlled — `dialsConfig` is the single source of truth and
+                    feeds the API call sites directly. */}
+                <TestConfig
+                  value={dialsConfig}
+                  onChange={setDialsConfig}
+                  showExplorer={tab === "crawl"}
+                />
               </div>
             </div>
           )}

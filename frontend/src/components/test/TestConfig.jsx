@@ -243,5 +243,136 @@ export default function TestConfig({
                 </div>
               </div>
               <div className="tl-section">
-                <div className="tl-section-label">Custom tu
+                <div className="tl-section-label">Custom tuning</div>
+                <div className="tc-sliders">
+                  {EXPLORER_TUNING.map(t => (
+                    <div key={t.id} className="tc-slider">
+                      <div className="tc-slider-head">
+                        <span className="tc-slider-label">{t.label}</span>
+                        <span className="tc-slider-value">{cfg[t.id] ?? t.defaultVal}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={t.min}
+                        max={t.max}
+                        step={t.step}
+                        value={cfg[t.id] ?? t.defaultVal}
+                        onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
+                        style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+                      />
+                      <div className="tc-slider-desc">{t.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {/* ── Options tab — extra output-tweak toggles ── */}
+      {tab === "options" && (
+        <div className="tc-panel">
+          <div className="tl-section">
+            <div className="tl-section-label">Extra options</div>
+            <div className="tc-toggle-list">
+              {OPTION_TOGGLES.map(opt => {
+                const on = !!cfg.options?.[opt.id];
+                return (
+                  <label key={opt.id} className="tc-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggleOption(opt.id)}
+                      style={{ accentColor: "var(--accent)", cursor: "pointer", width: 14, height: 14, marginTop: 3 }}
+                    />
+                    <div>
+                      <div className="tc-toggle-title" style={{ fontWeight: on ? 600 : 500 }}>{opt.label}</div>
+                      <div className="tc-toggle-desc">{opt.desc}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Advanced tab — language, custom instructions, parallelWorkers ── */}
+      {tab === "advanced" && (
+        <div className="tc-panel">
+          <div className="tl-section">
+            <div className="tl-section-label">Output language</div>
+            <select
+              className="tl-select"
+              value={cfg.language}
+              onChange={e => update({ language: e.target.value })}
+              style={{ width: "100%" }}
+            >
+              {LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="tl-section">
+            <div className="tl-section-label">Custom instructions</div>
+            <textarea
+              className="tl-req-area"
+              value={cfg.customInstructions || ""}
+              onChange={e => {
+                if (e.target.value.length <= 500) update({ customInstructions: e.target.value });
+              }}
+              placeholder="Tell the AI anything else — flows to include, things to avoid, domain context… (max 500 chars)"
+              rows={3}
+            />
+            <div className="tc-char-count">
+              {(cfg.customInstructions || "").length} / 500 characters
+            </div>
+          </div>
+          <div className="tl-section">
+            <div className="tl-section-label">{PARALLEL_WORKERS_TUNING.label}</div>
+            <div className="tc-slider">
+              <div className="tc-slider-head">
+                <span className="tc-slider-label">Workers</span>
+                <span className="tc-slider-value">{cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}</span>
+              </div>
+              <input
+                type="range"
+                min={PARALLEL_WORKERS_TUNING.min}
+                max={PARALLEL_WORKERS_TUNING.max}
+                step={PARALLEL_WORKERS_TUNING.step}
+                value={cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}
+                onChange={e => update({ parallelWorkers: parseInt(e.target.value, 10) })}
+                style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+              />
+              <div className="tc-slider-desc">{PARALLEL_WORKERS_TUNING.desc}</div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Footer: Save as default / Reset ── */}
+      {showFooter && (
+        <div className="tc-footer">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={handleSave}
+            title="Persist this configuration to localStorage as your default"
+            style={savedFlash ? { background: "var(--green-bg)", color: "var(--green)", borderColor: "var(--green)" } : undefined}
+          >
+            <Save size={13} />
+            {savedFlash ? "Saved!" : "Save as default"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => onChange?.({ ...DEFAULT_CONFIG })}
+            title="Reset all dials to the built-in defaults"
+          >
+            <RotateCcw size={13} />
+            Reset
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
