@@ -991,7 +991,14 @@ export function actionsToPlaywrightCode(testName, startUrl, actions) {
     // (rare in practice — usually `%22`-encoded — but possible from custom
     // `src` values that bypass URL normalisation) produces a malformed
     // selector like `iframe[src*="frame"hijack"]` that throws at runtime.
-    const escapedFrameUrl = escapeJsSingleQuote(frameUrl).replace(/"/g, '\\"');
+    // Escape any literal `"` inside frameUrl so the inner CSS attribute
+    // selector doesn't terminate early. The generated JS source wraps the
+    // selector in a single-quoted string (`'iframe[src*="…"]'`), so we
+    // need `\"` to appear in that source — which means emitting a
+    // backslash + quote pair (`\\"`) here. Using `'\\"'` would only emit
+    // a bare `"` at runtime (the JS parser consumes the backslash),
+    // leaving the inner attribute selector unescaped.
+    const escapedFrameUrl = escapeJsSingleQuote(frameUrl).replace(/"/g, '\\\\"');
     return `${base}.frameLocator('iframe[src*="${escapedFrameUrl}"]').first()`;
   };
   lines.push(`const __popupPages = new Map();`);

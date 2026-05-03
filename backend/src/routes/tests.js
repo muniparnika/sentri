@@ -1131,10 +1131,18 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
 
   // Close out the stub `runs` row created by POST /record so the SSE channel
   // releases its listener and orphan recovery doesn't pick this up later.
+  // Also update `pages` to the actual landed URL — the stub row created by
+  // POST /record persisted the caller-supplied `startUrl` (pre-redirect),
+  // but `startRecording` resolved it to `stopResult.url` after any
+  // server-side redirects. Without this update, the Recorder Start-URL
+  // dropdown (`GET /api/v1/projects/:id/pages`) would surface the
+  // pre-redirect URL on every subsequent recording launch, causing an
+  // unnecessary redirect each time (http→https, apex→www, OAuth callbacks).
   try {
     runRepo.update(req.params.sessionId, {
       status: "completed",
       finishedAt: new Date().toISOString(),
+      pages: [{ url: stopResult.url, title: stopResult.url, status: "recorded" }],
     });
   } catch { /* row may have been cleaned up already */ }
 
