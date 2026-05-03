@@ -15,14 +15,22 @@
  * the form is rendered read-only when `canEdit === false` (Viewer role).
  */
 
-import React, { useEffect, useState } from "react";
-import { Save, Trash2, RefreshCw, ShieldCheck } from "lucide-react";
+import React, { useMemo } from "react";
+import { ShieldCheck } from "lucide-react";
 import { api } from "../../api.js";
+import ConfigurablePanel from "./ConfigurablePanel.jsx";
 
-/** Convert `null|undefined|""` → "" and any other value → its string form for input binding. */
-function toInput(v) {
-  return v === null || v === undefined || v === "" ? "" : String(v);
-}
+const FIELDS = [
+  { key: "minPassRate", label: "Min pass rate (%)",
+    help: "Run fails when pass rate falls below this. 0–100.",
+    min: 0, max: 100, step: "0.1" },
+  { key: "maxFlakyPct", label: "Max flaky %",
+    help: "Run fails when flaky % exceeds this. 0–100.",
+    min: 0, max: 100, step: "0.1" },
+  { key: "maxFailures", label: "Max failures",
+    help: "Run fails when total failures exceed this. Integer ≥ 0.",
+    min: 0, step: "1" },
+];
 
 /**
  * @param {Object}   props
@@ -31,6 +39,37 @@ function toInput(v) {
  * @param {Function} [props.onToast] - `(message, type) => void` for feedback.
  */
 export default function QualityGatesPanel({ projectId, canEdit, onToast }) {
+  const panelApi = useMemo(() => ({
+    load:  () => api.getQualityGates(projectId),
+    save:  (payload) => api.updateQualityGates(projectId, payload),
+    clear: () => api.deleteQualityGates(projectId),
+  }), [projectId]);
+
+  return (
+    <ConfigurablePanel
+      title="Quality Gates"
+      icon={<ShieldCheck size={16} color="var(--accent)" />}
+      description={
+        <>
+          Configure thresholds that future runs must meet. The trigger response includes <code>gateResult</code> so
+          CI pipelines can fail the build on violation. Leave a field blank to skip it.
+        </>
+      }
+      fields={FIELDS}
+      api={panelApi}
+      resultKey="qualityGates"
+      activeBadgeTitle="Gates configured — runs include gateResult"
+      clearConfirm="Clear all quality gates? Future runs will report gateResult: null."
+      toastMessages={{ saved: "Quality gates saved", cleared: "Quality gates cleared" }}
+      readOnlyHint="Read-only — QA Lead or Admin role required to edit gates."
+      canEdit={canEdit}
+      onToast={onToast}
+    />
+  );
+}
+
+// eslint-disable-next-line no-unused-vars
+const __LEGACY_REMOVED__ = `
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -241,3 +280,4 @@ function Field({ label, help, value, onChange, min, max, step, disabled }) {
     </label>
   );
 }
+*/

@@ -22,14 +22,25 @@
  * test is silently ignored rather than falsely passing or failing.
  */
 
-import React, { useEffect, useState } from "react";
-import { Save, Trash2, RefreshCw, Gauge } from "lucide-react";
+import React, { useMemo } from "react";
+import { Gauge } from "lucide-react";
 import { api } from "../../api.js";
+import ConfigurablePanel from "./ConfigurablePanel.jsx";
 
-/** Convert `null|undefined|""` → "" and any other value → its string form for input binding. */
-function toInput(v) {
-  return v === null || v === undefined || v === "" ? "" : String(v);
-}
+const FIELDS = [
+  { key: "lcp",  label: "LCP (ms)",
+    help: "Largest Contentful Paint. Good ≤ 2500 · Needs-Improvement ≤ 4000.",
+    min: 0, step: "1", placeholder: "2500" },
+  { key: "cls",  label: "CLS",
+    help: "Cumulative Layout Shift (unitless). Good ≤ 0.1 · Needs-Improvement ≤ 0.25.",
+    min: 0, step: "0.01", placeholder: "0.1" },
+  { key: "inp",  label: "INP (ms)",
+    help: "Interaction to Next Paint. Good ≤ 200 · Needs-Improvement ≤ 500. Null on tests with no interaction.",
+    min: 0, step: "1", placeholder: "200" },
+  { key: "ttfb", label: "TTFB (ms)",
+    help: "Time To First Byte. Good ≤ 800 · Needs-Improvement ≤ 1800.",
+    min: 0, step: "1", placeholder: "800" },
+];
 
 /**
  * @param {Object}   props
@@ -38,6 +49,39 @@ function toInput(v) {
  * @param {Function} [props.onToast] - `(message, type) => void` for feedback.
  */
 export default function WebVitalsBudgetsPanel({ projectId, canEdit, onToast }) {
+  const panelApi = useMemo(() => ({
+    load:  () => api.getWebVitalsBudgets(projectId),
+    save:  (payload) => api.updateWebVitalsBudgets(projectId, payload),
+    clear: () => api.deleteWebVitalsBudgets(projectId),
+  }), [projectId]);
+
+  return (
+    <ConfigurablePanel
+      title="Web Vitals Budgets"
+      icon={<Gauge size={16} color="var(--accent)" />}
+      description={
+        <>
+          Set per-page performance thresholds. The trigger response includes <code>webVitalsResult</code> so
+          CI pipelines can fail the build on regressions. Leave a field blank to skip it. Reference values follow
+          Google&rsquo;s &ldquo;Good&rdquo; Web Vitals thresholds.
+        </>
+      }
+      fields={FIELDS}
+      api={panelApi}
+      resultKey="webVitalsBudgets"
+      activeBadgeTitle="Budgets configured — runs include webVitalsResult"
+      clearConfirm="Clear all Web Vitals budgets? Future runs will report webVitalsResult: null."
+      toastMessages={{ saved: "Web Vitals budgets saved", cleared: "Web Vitals budgets cleared" }}
+      readOnlyHint="Read-only — QA Lead or Admin role required to edit budgets."
+      canEdit={canEdit}
+      onToast={onToast}
+      cardStyle={{ marginTop: 12 }}
+    />
+  );
+}
+
+// eslint-disable-next-line no-unused-vars
+const __LEGACY_REMOVED__ = `
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -265,3 +309,4 @@ function Field({ label, help, value, onChange, min, max, step, placeholder, disa
     </label>
   );
 }
+`;
