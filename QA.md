@@ -617,7 +617,14 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 
 **Preconditions:** Project exists with at least one approved test. Open `/automation` (or use `?project=PRJ-X` deep-link).
 
-**CI/CD trigger tokens** (`docs/changelog.md` ENH-011):
+**Tabbed layout (PR #6):** `/automation` renders four top-level tabs — **Triggers & Schedules**, **Quality Gates**, **Integrations**, **Snippets** — with WAI-ARIA tab semantics (`role="tablist"` / `role="tab"` / `role="tabpanel"`, arrow-key + Home/End navigation, `aria-selected`, `aria-controls`). Only the active tab's content mounts. Per-project accordion cards live inside the relevant tab; collapsed headers render live status chips (`N tokens` / `Scheduled` vs `No schedule` on Triggers & Schedules; `Gates configured` / `Budgets set` vs `No gates` / `No budgets` on Quality Gates) so config state is visible without expanding. Verify before each section below:
+1. All four tabs render and switch on click; arrow-keys / Home / End move focus between tabs and activate the focused tab.
+2. `?project=PRJ-X` auto-expands the matching project card on whichever tab is active.
+3. The empty state ("No projects yet") renders in both **Triggers & Schedules** and **Quality Gates** when no projects exist.
+4. Below 640px: chips wrap under the project name, tab padding tightens, layout stays usable (no horizontal scroll).
+5. Status-chip API response shapes are pinned in `frontend/src/utils/automationStatus.js` with regression coverage in `frontend/tests/automation-status.test.js` — if a backend response renames `data.schedule.enabled` / `data.qualityGates` / `data.webVitalsBudgets`, the chips silently fall back to the unconfigured state.
+
+**CI/CD trigger tokens** (`docs/changelog.md` ENH-011) — under the **Triggers & Schedules** tab, expand a project card → inner tab bar switches between **CI/CD Tokens** and **Schedule**. The "View project" link is pushed to the right of the inner tab bar.
 1. Create a token via `POST /api/projects/:id/trigger-tokens` (UI button) → plaintext token shown **exactly once**; refresh and confirm only the SHA-256 hash is stored (never plaintext again).
 2. List tokens → no hashes leaked to UI.
 3. Trigger a run via `POST /api/projects/:id/trigger` with `Authorization: Bearer <token>` → returns **202 Accepted** with `{ runId, statusUrl }`. Poll `statusUrl`; final state matches RunDetail page.
@@ -673,8 +680,13 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 18. As `qa_lead` and `admin`, all three (GET / PATCH / DELETE) succeed.
 19. Cross-workspace isolation — outsider hitting another workspace's project → 404 (workspace scope enforced upstream by `workspaceScope` middleware).
 
-**UI surfaces (AUTO-012b):**
-20. ProjectDetail → **Settings** tab → "Quality Gates" panel renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows.
+**UI surfaces (AUTO-012b, updated by PR #6):**
+
+The Quality Gates and Web Vitals Budgets panels live exclusively on the `/automation` page now. The legacy ProjectDetail → Settings tab was removed in this PR (see the comment at `frontend/src/pages/ProjectDetail.jsx:601-603`); do not look for it.
+
+- **`/automation` → Quality Gates tab** (sole surface, PR #6) — per-project accordion (`ProjectQualityCard`) with inner tab bar switching between **Quality Gates** and **Web Vitals**. Collapsed header shows status chips (`Gates configured` / `No gates`, `Budgets set` / `No budgets`).
+
+20. On `/automation` → **Quality Gates** tab, expand a project → inner tab **Quality Gates** active by default → form renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows.
 21. Configure thresholds and click **Save** → toast "Quality gates saved"; reload tab → values persist.
 22. Click **Clear all** → confirmation prompt → on confirm, gates removed; toast "Quality gates cleared"; subsequent runs report `gateResult: null`.
 23. Enter all-blank fields and click Save → server-side `DELETE` is sent (config cleared) instead of saving an empty object — toast reads "Quality gates cleared".
