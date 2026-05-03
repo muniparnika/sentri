@@ -17,7 +17,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
   ArrowRight, ChevronRight, RotateCcw, FlaskConical, Video,
-  Upload, Paperclip, Trash2,
+  Upload, Paperclip, Trash2, Copy, Check,
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE } from "../hooks/useRunSSE.js";
@@ -218,12 +218,40 @@ function PipelinePanel({ run }) {
  */
 function LiveLog({ lines }) {
   const endRef = useRef(null);
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines.length]);
 
+  // Copy the *full* buffer (not just the visible -40 slice) so the user can
+  // share the complete log when triaging an issue. `navigator.clipboard`
+  // requires HTTPS or localhost; the catch keeps the button silent on
+  // unsupported origins instead of throwing into the console.
+  function handleCopy() {
+    const text = lines.join("\n");
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => { /* clipboard unavailable — non-fatal */ });
+  }
+
   return (
     <div className="tl-live-log">
+      {/* Icon-only copy button pinned to the top-right of the log surface.
+          `tl-log-copy` is absolutely positioned in CSS so it floats above
+          the log content without altering the scroll geometry. Disabled
+          when the buffer is empty so users can't no-op-copy a blank log. */}
+      <button
+        type="button"
+        className={`tl-log-copy${copied ? " tl-log-copy--copied" : ""}`}
+        onClick={handleCopy}
+        disabled={lines.length === 0}
+        title={copied ? "Copied to clipboard" : "Copy log to clipboard"}
+        aria-label="Copy log to clipboard"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
       {lines.slice(-40).map((line, i) => {
         // Backend emits lines as `[ISO timestamp] <emoji> <message>` (see
         // `backend/src/utils/runLogger.js` and `backend/src/crawler.js`), so

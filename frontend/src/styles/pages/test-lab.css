@@ -510,6 +510,9 @@
    Either way the content never escapes the card: the log clips with its own
    vertical scrollbar, never with horizontal overflow into siblings. */
 .tl-live-log {
+  /* `position: relative` so the absolute-positioned `.tl-log-copy` button
+     (pinned top-right) anchors to this surface rather than the page. */
+  position: relative;
   /* Palette mirrors `.log-box` in components.css so Test Lab's live output
      reads identically to the Run Detail activity log — same dark surface,
      same default text colour, same ok/error/warn/info accents. */
@@ -543,6 +546,46 @@
 .tl-log-warn  { color: #fbbf24; }
 .tl-log-info  { color: #60a5fa; }
 .tl-log-dim   { color: inherit; }
+
+/* Floating icon-only copy button on the log surface. Pinned to top-right so
+   it stays in view even when the log scrolls. Default is dim so it doesn't
+   compete with the log content; brightens on hover. The "copied" state turns
+   green for a brief flash to confirm the action without an extra toast. */
+.tl-log-copy {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #8b9cf4;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s, background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tl-log-copy:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.tl-log-copy:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.tl-log-copy--copied,
+.tl-log-copy--copied:hover {
+  opacity: 1;
+  background: rgba(74, 222, 128, 0.15);
+  border-color: rgba(74, 222, 128, 0.4);
+  color: #4ade80;
+}
 
 /* ── Run stats (right panel during run) ──────────────────────────────────────── */
 .tl-run-stats {
