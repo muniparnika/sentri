@@ -257,7 +257,7 @@ export default function TestConfig({
                           max={t.max}
                           step={t.step}
                           value={cfg[t.id] ?? t.defaultVal}
-                          onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
+                          onChange={e => update({ [t.id]: parseInt(e.target.value, 10) })}
                           style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
                         />
                         <div className="tc-slider-desc">{t.desc}</div>
@@ -390,7 +390,7 @@ export default function TestConfig({
                         max={t.max}
                         step={t.step}
                         value={cfg[t.id] ?? t.defaultVal}
-                        onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
+                        onChange={e => update({ [t.id]: parseInt(e.target.value, 10) })}
                         style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
                       />
                       <div className="tc-slider-desc">{t.desc}</div>
