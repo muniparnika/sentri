@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE } from "../hooks/useRunSSE.js";
+import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { fmtRelativeDate } from "../utils/formatters.js";
 
@@ -269,10 +270,13 @@ export default function TestLab() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Data ──
-  const [projects, setProjects]           = useState([]);
-  const [loadingProjects, setLoadingProjects] = useState(true);
+  // Shared TanStack Query hook — participates in the app-wide project/run cache
+  // (30 s staleTime) so mutations elsewhere (e.g. Tests page approve/reject,
+  // Projects create/delete) refresh Test Lab automatically via
+  // `invalidateProjectDataCache()`.
+  const { projects, allRuns, loading: loadingProjectData } = useProjectData({ fetchTests: false });
+  const loadingProjects = loadingProjectData;
   const [selectedId, setSelectedId]       = useState(routeProjectId ?? null);
-  const [projectRuns, setProjectRuns]     = useState({}); // projectId → runs[]
 
   // ── Config state ──
   const [tab, setTab]                     = useState(searchParams.get("tab") || "crawl");
@@ -294,43 +298,29 @@ export default function TestLab() {
   const [error, setError]           = useState(null);
 
   // ── Queue state ──
-  const [allRecentRuns, setAllRecentRuns] = useState([]);
   const [queueFilter, setQueueFilter]   = useState("all");
 
-  // ── Load projects ──
+  // ── Seed selected project from route / project list ──
+  // `useProjectData` owns the actual fetch; this effect just syncs the
+  // currently-selected project id to whatever the route / loaded project list
+  // implies, without re-triggering any network calls.
   useEffect(() => {
-    api.getProjects()
-      .then(ps => {
-        setProjects(ps);
-        if (ps.length > 0) {
-          // Prefer the project from the nested route (/projects/:id/test-lab);
-          // fall back to an already-selected id; otherwise default to the first.
-          const routeMatch = routeProjectId && ps.some(p => p.id === routeProjectId)
-            ? routeProjectId
-            : null;
-          setSelectedId(prev => routeMatch ?? prev ?? ps[0].id);
-        }
-        setLoadingProjects(false);
-        // Kick off runs fetch for queue tab
-        Promise.all(
-          ps.map(p =>
-            api.getRuns(p.id)
-              .then(runs => runs.map(r => ({ ...r, projectId: p.id })))
-              .catch(() => [])
-          )
-        ).then(all => {
-          const flat = all.flat().sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
-          setAllRecentRuns(flat);
-          const byProj = {};
-          flat.forEach(r => {
-            if (!byProj[r.projectId]) byProj[r.projectId] = [];
-            byProj[r.projectId].push(r);
-          });
-          setProjectRuns(byProj);
-        });
-      })
-      .catch(() => setLoadingProjects(false));
-  }, [routeProjectId]);
+    if (!projects.length) return;
+    const routeMatch = routeProjectId && projects.some(p => p.id === routeProjectId)
+      ? routeProjectId
+      : null;
+    setSelectedId(prev => routeMatch ?? prev ?? projects[0].id);
+  }, [routeProjectId, projects]);
+
+  // ── Derive runs grouped by project (replaces the old `projectRuns` state) ──
+  const projectRuns = useMemo(() => {
+    const byProj = {};
+    for (const r of allRuns) {
+      if (!byProj[r.projectId]) byProj[r.projectId] = [];
+      byProj[r.projectId].push(r);
+    }
+    return byProj;
+  }, [allRuns]);
 
   // ── Sync tab to URL param ──
   useEffect(() => {
@@ -363,8 +353,15 @@ export default function TestLab() {
     return runs.find(r => r.type === "crawl") ?? null;
   }, [projectRuns, selectedId]);
 
-  const activeQueueRuns = allRecentRuns.filter(r => r.status === "running");
-  const recentQueueRuns = allRecentRuns.filter(r => r.status !== "running").slice(0, 8);
+  // `allRuns` from useProjectData is already sorted newest-first.
+  const activeQueueRuns = useMemo(
+    () => allRuns.filter(r => r.status === "running"),
+    [allRuns],
+  );
+  const recentQueueRuns = useMemo(
+    () => allRuns.filter(r => r.status !== "running").slice(0, 8),
+    [allRuns],
+  );
 
   // ── Actions ──
   /**
@@ -376,9 +373,15 @@ export default function TestLab() {
    * `GenerateTestModal` contract.
    */
   function buildDialsConfig() {
+    // Backend's `resolveDialsConfig` accepts: "one" | "small" | "medium" |
+    // "large" | "ai_decides". The UI select stores numeric-ish strings; map
+    // them to the nearest bucket so the prompt selects the right size.
     const countMap = {
       ai: "ai_decides",
-      5: 5, 10: 10, 20: 20, 50: 50,
+      "5":  "small",
+      "10": "small",
+      "20": "medium",
+      "50": "large",
     };
     return {
       // "link" in the UI ↔ "crawl" in the backend validator
@@ -455,7 +458,9 @@ export default function TestLab() {
   async function handleQueueStop(runId) {
     try {
       await api.abortRun(runId);
-      setAllRecentRuns(prev => prev.map(r => r.id === runId ? { ...r, status: "failed" } : r));
+      // Bust the shared project/run cache so the Queue reflects the abort on
+      // the next refetch — no ad-hoc local state to keep in sync.
+      invalidateProjectDataCache();
     } catch { /* non-fatal */ }
   }
 
