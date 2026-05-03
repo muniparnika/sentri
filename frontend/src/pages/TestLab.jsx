@@ -243,9 +243,11 @@ function LiveLog({ lines }) {
 /**
  * Single queue row for the Queue tab.
  *
- * @param {{ run: Object, project: Object, onStop: Function, onView: Function }} props
+ * @param {{ run: Object, project: Object, onStop: Function, onAttach: Function }} props
+ *   `onAttach` is called for active runs to reattach the live view; it falls
+ *   back to navigating to `/runs/:id` for completed runs.
  */
-function QueueRow({ run, project, onStop, onView }) {
+function QueueRow({ run, project, onStop, onAttach }) {
   const navigate = useNavigate();
   const isActive = run.status === "running";
   const isDone   = run.status === "completed" || run.status === "completed_empty" || run.status === "failed";
@@ -284,14 +286,24 @@ function QueueRow({ run, project, onStop, onView }) {
       )}
 
       {isActive ? (
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => onStop(run.id)}
-          style={{ flexShrink: 0 }}
-        >
-          <StopCircle size={14} />
-          Stop
-        </button>
+        <>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => onAttach?.(run)}
+            title="Attach the live pipeline view to this run"
+            style={{ flexShrink: 0 }}
+          >
+            View <ArrowRight size={13} />
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => onStop(run.id)}
+            style={{ flexShrink: 0 }}
+          >
+            <StopCircle size={14} />
+            Stop
+          </button>
+        </>
       ) : (
         <button
           className="btn btn-ghost btn-sm"
@@ -558,6 +570,38 @@ export default function TestLab() {
   }
 
   /**
+   * Attach the Test Lab live-view (pipeline + logs) to an existing run that
+   * was either started elsewhere or dropped when the user navigated away.
+   * Seeds `activeRun` / `runData` from the cached run row so the SSE hook
+   * reconnects and the panel lights up immediately.
+   *
+   * @param {Object} run - Run row from `allRuns` (has `id`, `projectId`, `type`, `status`, …).
+   */
+  function handleAttachRun(run) {
+    if (!run?.id) return;
+    // Switch project scope if the run belongs to a different project.
+    if (run.projectId && run.projectId !== selectedId) {
+      setSelectedId(run.projectId);
+      if (routeProjectId) {
+        const qs = searchParams.toString();
+        navigate(`/projects/${run.projectId}/test-lab${qs ? `?${qs}` : ""}`, { replace: true });
+      }
+    }
+    setActiveRun({ runId: run.id, projectId: run.projectId, type: run.type });
+    // Seed runData with whatever we already have cached — SSE's first
+    // `snapshot` event will overwrite with the authoritative server copy.
+    setRunData({ ...run, status: run.status });
+    setLogLines([]);
+    setInnerTab("pipeline");
+    setError(null);
+    // If we were on the Queue tab, switch to the matching config tab so the
+    // user sees the pipeline view (which only renders under crawl/requirement).
+    if (tab === "queue") {
+      setTab(run.type === "crawl" ? "crawl" : "requirement");
+    }
+  }
+
+  /**
    * Switch the selected project without orphaning an in-flight run.
    *
    * If a run is active in the panel, we ask the user to confirm — switching
@@ -675,6 +719,7 @@ export default function TestLab() {
                   run={run}
                   project={projects.find(p => p.id === run.projectId)}
                   onStop={handleQueueStop}
+                  onAttach={handleAttachRun}
                 />
               ))}
             </>
@@ -689,6 +734,7 @@ export default function TestLab() {
                   run={run}
                   project={projects.find(p => p.id === run.projectId)}
                   onStop={handleQueueStop}
+                  onAttach={handleAttachRun}
                 />
               ))}
             </>
@@ -1081,7 +1127,19 @@ export default function TestLab() {
                         ? Math.round(((run.currentStep - 1) / 7) * 100)
                         : 0;
                       return (
-                        <div key={run.id} className="tl-active-run-card mb-sm">
+                        <button
+                          key={run.id}
+                          type="button"
+                          className="tl-active-run-card mb-sm"
+                          onClick={() => handleAttachRun(run)}
+                          title="View live pipeline for this run"
+                          style={{
+                            display: "block", width: "100%", textAlign: "left",
+                            padding: 0, border: "1px solid var(--border)",
+                            background: "var(--surface)", cursor: "pointer",
+                            font: "inherit", color: "inherit",
+                          }}
+                        >
                           <div className="tl-arc-header">
                             <ProjIcon project={proj} />
                             <span className="tl-arc-name">{proj?.name ?? "—"}</span>
@@ -1095,7 +1153,7 @@ export default function TestLab() {
                               <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
                             </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })
                   )}
