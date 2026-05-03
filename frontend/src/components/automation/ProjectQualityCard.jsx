@@ -11,59 +11,16 @@
  * @param {{ project, defaultExpanded?, canEdit?, onToast? }} props
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ChevronDown, Globe, ShieldCheck, Gauge } from "lucide-react";
 import QualityGatesPanel from "../project/QualityGatesPanel.jsx";
 import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
-import { api } from "../../api.js";
-import {
-  cachedAutomationGet,
-  subscribeAutomationStatus,
-  parseHasGates,
-  parseHasBudgets,
-} from "../../utils/automationStatus.js";
+import { useAutomationStatusQuery } from "../../hooks/queries/useAutomationStatusQueries.js";
 
 const INNER_TABS = [
   { id: "gates",     label: "Quality Gates",   icon: ShieldCheck },
   { id: "webvitals", label: "Web Vitals",       icon: Gauge       },
 ];
-
-/**
- * Header status chips. Shares the module-level cache + invalidation bus
- * with ProjectAutomationCard via `utils/automationStatus.js`, so the chips
- * refresh when QualityGatesPanel / WebVitalsBudgetsPanel save or clear.
- */
-function useQualityStatus(projectId) {
-  const [hasGates,    setHasGates]    = useState(null);
-  const [hasBudgets,  setHasBudgets]  = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    function loadGates() {
-      cachedAutomationGet(`${projectId}:gates`, () => api.getQualityGates(projectId))
-        .then(data => { if (!cancelled) setHasGates(parseHasGates(data)); })
-        .catch(() => { if (!cancelled) setHasGates(false); });
-    }
-    function loadBudgets() {
-      cachedAutomationGet(`${projectId}:budgets`, () => api.getWebVitalsBudgets(projectId))
-        .then(data => { if (!cancelled) setHasBudgets(parseHasBudgets(data)); })
-        .catch(() => { if (!cancelled) setHasBudgets(false); });
-    }
-    loadGates();
-    loadBudgets();
-
-    const unsubscribe = subscribeAutomationStatus((pid, kind) => {
-      if (pid !== projectId) return;
-      if (!kind || kind === "gates")   loadGates();
-      if (!kind || kind === "budgets") loadBudgets();
-    });
-
-    return () => { cancelled = true; unsubscribe(); };
-  }, [projectId]);
-
-  return { hasGates, hasBudgets };
-}
 
 export default function ProjectQualityCard({
   project,
@@ -74,7 +31,9 @@ export default function ProjectQualityCard({
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [innerTab, setInnerTab] = useState("gates");
 
-  const { hasGates, hasBudgets } = useQualityStatus(project.id);
+  // Each chip is its own query so a gates save doesn't refetch budgets.
+  const { data: hasGates }   = useAutomationStatusQuery(project.id, "gates");
+  const { data: hasBudgets } = useAutomationStatusQuery(project.id, "budgets");
 
   return (
     <div className="card auto-card">

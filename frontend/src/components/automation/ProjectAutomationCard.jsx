@@ -14,7 +14,7 @@
  * @param {{ project, defaultExpanded?, canEdit?, onToast? }} props
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronDown, Globe, ExternalLink,
@@ -22,56 +22,12 @@ import {
 } from "lucide-react";
 import TokenManager from "./TokenManager.jsx";
 import ScheduleManager from "./ScheduleManager.jsx";
-import { api } from "../../api.js";
-import {
-  cachedAutomationGet,
-  subscribeAutomationStatus,
-  parseTokenCount,
-  parseHasSchedule,
-} from "../../utils/automationStatus.js";
+import { useAutomationStatusQuery } from "../../hooks/queries/useAutomationStatusQueries.js";
 
 const INNER_TABS = [
   { id: "tokens",   label: "CI/CD Tokens", icon: Zap   },
   { id: "schedule", label: "Schedule",     icon: Clock },
 ];
-
-/**
- * Lightweight header status chips. Cached at module level (see automationStatus.js)
- * so multiple cards share one fetch, and re-fetched when child managers
- * mutate state via `invalidateAutomationStatus`.
- */
-function useProjectStatus(projectId) {
-  const [tokenCount, setTokenCount]   = useState(null);
-  const [hasSchedule, setHasSchedule] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    function loadTokens() {
-      cachedAutomationGet(`${projectId}:tokens`, () => api.getTriggerTokens(projectId))
-        .then(data => { if (!cancelled) setTokenCount(parseTokenCount(data)); })
-        .catch(() => { if (!cancelled) setTokenCount(0); });
-    }
-    function loadSchedule() {
-      cachedAutomationGet(`${projectId}:schedule`, () => api.getSchedule(projectId))
-        .then(data => { if (!cancelled) setHasSchedule(parseHasSchedule(data)); })
-        .catch(() => { if (!cancelled) setHasSchedule(false); });
-    }
-    loadTokens();
-    loadSchedule();
-
-    // Refetch when a sibling component invalidates this project's status.
-    const unsubscribe = subscribeAutomationStatus((pid, kind) => {
-      if (pid !== projectId) return;
-      if (!kind || kind === "tokens")   loadTokens();
-      if (!kind || kind === "schedule") loadSchedule();
-    });
-
-    return () => { cancelled = true; unsubscribe(); };
-  }, [projectId]);
-
-  return { tokenCount, hasSchedule };
-}
 
 export default function ProjectAutomationCard({
   project,
@@ -83,8 +39,10 @@ export default function ProjectAutomationCard({
   const [innerTab, setInnerTab] = useState("tokens");
   const navigate = useNavigate();
 
-  // Load status chips eagerly (on mount) so collapsed headers show info
-  const { tokenCount, hasSchedule } = useProjectStatus(project.id);
+  // Load status chips eagerly (on mount) so collapsed headers show info.
+  // Each chip is its own query so a token mutation doesn't refetch the schedule.
+  const { data: tokenCount }  = useAutomationStatusQuery(project.id, "tokens");
+  const { data: hasSchedule } = useAutomationStatusQuery(project.id, "schedule");
 
   return (
     <div className="card auto-card">

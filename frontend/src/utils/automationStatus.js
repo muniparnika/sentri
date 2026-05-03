@@ -58,53 +58,26 @@ export function isValidPageTab(id) {
   return PAGE_TAB_IDS.includes(id);
 }
 
-/* ─── Shared promise cache + invalidation ──────────────────────────────────── */
+/* ─── Cache invalidation (delegates to TanStack Query) ─────────────────────── */
+
+import { queryClient, automationStatusQueryKeys } from "../queryClient.js";
 
 /**
- * Module-level promise cache for automation status fetches. Shared across
- * ProjectAutomationCard and ProjectQualityCard so each `${projectId}:${kind}`
- * GET is issued at most once per session — until invalidated.
- */
-const _statusCache = new Map();
-const _listeners = new Set();
-
-/**
- * Cache-aware GET. Stores the in-flight promise so concurrent callers share
- * one request. On rejection the entry is dropped so the next mount retries.
- */
-export function cachedAutomationGet(key, fetcher) {
-  if (!_statusCache.has(key)) {
-    _statusCache.set(key, fetcher().catch(err => {
-      _statusCache.delete(key);
-      throw err;
-    }));
-  }
-  return _statusCache.get(key);
-}
-
-/**
- * Drop one or more cache entries and notify subscribers so any mounted
- * status hook refetches. Pass `kind` to invalidate a single kind, or omit
- * to invalidate all kinds for the project.
+ * Drop cached automation-status queries for a project so subscribed
+ * `useAutomationStatusQuery` consumers refetch. Pass `kind` to invalidate
+ * a single kind; omit to invalidate every kind for the project.
+ *
+ * Per STANDARDS.md, all cached GETs flow through the shared `queryClient`
+ * — this is a thin wrapper so mutation sites (TokenManager, ScheduleManager,
+ * ConfigurablePanel) keep using the same name they did before the migration.
  *
  * @param {string} projectId
  * @param {"tokens"|"schedule"|"gates"|"budgets"} [kind]
+ * @returns {Promise<void>}
  */
 export function invalidateAutomationStatus(projectId, kind) {
-  if (kind) {
-    _statusCache.delete(`${projectId}:${kind}`);
-  } else {
-    for (const k of [..._statusCache.keys()]) {
-      if (k.startsWith(`${projectId}:`)) _statusCache.delete(k);
-    }
-  }
-  for (const fn of _listeners) {
-    try { fn(projectId, kind); } catch { /* swallow listener errors */ }
-  }
-}
-
-/** Subscribe to invalidation events. Returns an unsubscribe function. */
-export function subscribeAutomationStatus(listener) {
-  _listeners.add(listener);
-  return () => _listeners.delete(listener);
+  const queryKey = kind
+    ? automationStatusQueryKeys.kind(projectId, kind)
+    : automationStatusQueryKeys.project(projectId);
+  return queryClient.invalidateQueries({ queryKey });
 }
