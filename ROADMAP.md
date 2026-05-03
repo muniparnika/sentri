@@ -570,7 +570,7 @@ The following items have been verified complete against the codebase and are **n
 - `backend/src/pipeline/crawlBrowser.js`, `stateExplorer.js` — accept `browser` param, swap CDP calls for cross-engine equivalents
 - `backend/src/runner/recorder.js` — accept `browser`, swap screencast impl
 - `backend/src/runner/screencast.js` — dual-path (CDP for chromium, screenshot poll fallback)
-- `frontend/src/components/run/RecorderModal.jsx`, `frontend/src/components/run/CrawlProjectModal.jsx` — browser selector
+- `frontend/src/components/run/RecorderModal.jsx`, `frontend/src/pages/TestLab.jsx` — browser selector (the legacy `CrawlProjectModal` was migrated into the Test Lab page)
 
 **Dependencies:** DIF-002 ✅, DIF-002b (baselines must be browser-aware before crawler variability amplifies diff noise)
 
@@ -909,7 +909,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 - `backend/src/routes/projects.js` — profile CRUD endpoints
 - `backend/src/pipeline/stateExplorer.js` — accept `profileId` param
 - `frontend/src/pages/ProjectDetail.jsx` — credential profiles panel
-- `frontend/src/components/shared/TestDials.jsx` — connect `multi_role` dial to profile selector
+- `frontend/src/components/test/TestConfig.jsx` — connect `multi_role` dial to profile selector (the legacy `TestDials.jsx` was migrated into the unified `TestConfig` surface used by the Test Lab page)
 
 **Dependencies:** None
 
