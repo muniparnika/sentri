@@ -682,12 +682,11 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 
 **UI surfaces (AUTO-012b, updated by PR #6):**
 
-The Quality Gates and Web Vitals Budgets panels now render in **two** places — both surfaces hit the same backend endpoints, so a save in one is reflected after reload in the other:
+The Quality Gates and Web Vitals Budgets panels live exclusively on the `/automation` page now. The legacy ProjectDetail → Settings tab was removed in this PR (see the comment at `frontend/src/pages/ProjectDetail.jsx:601-603`); do not look for it.
 
-- **`/automation` → Quality Gates tab** (primary, PR #6) — per-project accordion (`ProjectQualityCard`) with inner tab bar switching between **Quality Gates** and **Web Vitals**. Collapsed header shows status chips (`Gates configured` / `No gates`, `Budgets set` / `No budgets`).
-- **ProjectDetail → Settings tab** (legacy) — the original AUTO-012 panel location. Continues to render `QualityGatesPanel` and `WebVitalsBudgetsPanel` unchanged.
+- **`/automation` → Quality Gates tab** (sole surface, PR #6) — per-project accordion (`ProjectQualityCard`) with inner tab bar switching between **Quality Gates** and **Web Vitals**. Collapsed header shows status chips (`Gates configured` / `No gates`, `Budgets set` / `No budgets`).
 
-20. On `/automation` → **Quality Gates** tab, expand a project → inner tab **Quality Gates** active by default → form renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows. Repeat under ProjectDetail → Settings tab → "Quality Gates" panel and verify identical behaviour.
+20. On `/automation` → **Quality Gates** tab, expand a project → inner tab **Quality Gates** active by default → form renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows.
 21. Configure thresholds and click **Save** → toast "Quality gates saved"; reload tab → values persist.
 22. Click **Clear all** → confirmation prompt → on confirm, gates removed; toast "Quality gates cleared"; subsequent runs report `gateResult: null`.
 23. Enter all-blank fields and click Save → server-side `DELETE` is sent (config cleared) instead of saving an empty object — toast reads "Quality gates cleared".
