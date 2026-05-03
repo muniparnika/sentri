@@ -13,7 +13,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
   ArrowRight, ChevronRight, RotateCcw, FlaskConical,
@@ -265,12 +265,13 @@ function QueueRow({ run, project, onStop, onView }) {
 export default function TestLab() {
   usePageTitle("Test Lab");
   const navigate = useNavigate();
+  const { id: routeProjectId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Data ──
   const [projects, setProjects]           = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
-  const [selectedId, setSelectedId]       = useState(null);
+  const [selectedId, setSelectedId]       = useState(routeProjectId ?? null);
   const [projectRuns, setProjectRuns]     = useState({}); // projectId → runs[]
 
   // ── Config state ──
@@ -301,7 +302,14 @@ export default function TestLab() {
     api.getProjects()
       .then(ps => {
         setProjects(ps);
-        if (ps.length > 0) setSelectedId(prev => prev ?? ps[0].id);
+        if (ps.length > 0) {
+          // Prefer the project from the nested route (/projects/:id/test-lab);
+          // fall back to an already-selected id; otherwise default to the first.
+          const routeMatch = routeProjectId && ps.some(p => p.id === routeProjectId)
+            ? routeProjectId
+            : null;
+          setSelectedId(prev => routeMatch ?? prev ?? ps[0].id);
+        }
         setLoadingProjects(false);
         // Kick off runs fetch for queue tab
         Promise.all(
@@ -322,7 +330,7 @@ export default function TestLab() {
         });
       })
       .catch(() => setLoadingProjects(false));
-  }, []);
+  }, [routeProjectId]);
 
   // ── Sync tab to URL param ──
   useEffect(() => {
@@ -551,7 +559,17 @@ export default function TestLab() {
                     <div
                       key={p.id}
                       className={`tl-proj-item${p.id === selectedId ? " tl-proj-item--active" : ""}`}
-                      onClick={() => { setSelectedId(p.id); handleReset(); }}
+                      onClick={() => {
+                        setSelectedId(p.id);
+                        handleReset();
+                        // Keep the URL in sync when we're on the nested route so
+                        // the current project is deep-linkable. Leave the top-level
+                        // /test-lab URL alone.
+                        if (routeProjectId) {
+                          const qs = searchParams.toString();
+                          navigate(`/projects/${p.id}/test-lab${qs ? `?${qs}` : ""}`, { replace: true });
+                        }
+                      }}
                     >
                       <ProjIcon project={p} />
                       <div className="tl-proj-info">

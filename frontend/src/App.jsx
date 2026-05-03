@@ -71,6 +71,7 @@ export default function App() {
                 <Route path="/automation" element={<Automation />} />
                 <Route path="/chat" element={<ChatHistory />} />
                 <Route path="/test-lab" element={<TestLab />} />
+                <Route path="/projects/:id/test-lab" element={<TestLab />} />
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>
