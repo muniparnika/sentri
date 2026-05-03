@@ -25,7 +25,6 @@ import ScheduleManager from "./ScheduleManager.jsx";
 import { api } from "../../api.js";
 import {
   cachedAutomationGet,
-  invalidateAutomationStatus,
   subscribeAutomationStatus,
   parseTokenCount,
   parseHasSchedule,
