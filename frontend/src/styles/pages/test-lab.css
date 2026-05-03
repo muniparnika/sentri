@@ -709,6 +709,39 @@
 }
 .tc-panel .tl-section:last-child { margin-bottom: 12px; }
 
+/* Disclosure toggle — collapsible "Custom tuning" header in the discovery
+   block. Styled to match `.tl-section-label` so it reads as a section header
+   rather than a button, but stays keyboard-accessible. */
+.tc-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--font-sans);
+  transition: color 0.12s;
+}
+.tc-disclosure:hover { color: var(--text); }
+
+.tc-disclosure-flag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
 /* Custom-tuning sliders — used on the Explorer + Advanced sub-tabs. */
 .tc-sliders {
   display: flex;

@@ -12,7 +12,7 @@
  */
 import React, { useMemo, useState } from "react";
 import {
-  SlidersHorizontal, Cpu, Settings2, Globe, Save, RotateCcw,
+  SlidersHorizontal, Cpu, Settings2, Globe, Save, RotateCcw, ChevronDown,
 } from "lucide-react";
 import {
   APPROACH_OPTIONS, PERSPECTIVE_OPTIONS, QUALITY_OPTIONS, FORMAT_OPTIONS,
@@ -102,6 +102,11 @@ export default function TestConfig({
   const tab    = activeTab ?? internalTab;
   const setTab = onTabChange ?? setInternalTab;
   const [savedFlash, setSavedFlash] = useState(false);
+  // Custom tuning is power-user territory — keep it collapsed by default so the
+  // Discovery header doesn't dominate the panel. Users who picked a non-default
+  // intensity preset implicitly opt into seeing the sliders, but the explicit
+  // "Custom tuning" disclosure still owns the toggle for clarity.
+  const [showCustomTuning, setShowCustomTuning] = useState(false);
   // Direct option clicks invalidate the active profile preset.
   function update(patch) {
     onChange?.({ ...cfg, profile: "", ...patch });
@@ -206,27 +211,46 @@ export default function TestConfig({
               </div>
 
               <div className="tl-section" style={{ marginBottom: 0 }}>
-                <div className="tl-section-label">Custom tuning</div>
-                <div className="tc-sliders">
-                  {EXPLORER_TUNING.map(t => (
-                    <div key={t.id} className="tc-slider">
-                      <div className="tc-slider-head">
-                        <span className="tc-slider-label">{t.label}</span>
-                        <span className="tc-slider-value">{cfg[t.id] ?? t.defaultVal}</span>
+                <button
+                  type="button"
+                  className="tc-disclosure"
+                  onClick={() => setShowCustomTuning(v => !v)}
+                  aria-expanded={showCustomTuning}
+                >
+                  <ChevronDown
+                    size={12}
+                    style={{
+                      transform: showCustomTuning ? "rotate(0deg)" : "rotate(-90deg)",
+                      transition: "transform 0.15s",
+                    }}
+                  />
+                  <span>Custom tuning</span>
+                  {activePreset === "custom" && (
+                    <span className="tc-disclosure-flag">modified</span>
+                  )}
+                </button>
+                {showCustomTuning && (
+                  <div className="tc-sliders" style={{ marginTop: 8 }}>
+                    {EXPLORER_TUNING.map(t => (
+                      <div key={t.id} className="tc-slider">
+                        <div className="tc-slider-head">
+                          <span className="tc-slider-label">{t.label}</span>
+                          <span className="tc-slider-value">{cfg[t.id] ?? t.defaultVal}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={t.min}
+                          max={t.max}
+                          step={t.step}
+                          value={cfg[t.id] ?? t.defaultVal}
+                          onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
+                          style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+                        />
+                        <div className="tc-slider-desc">{t.desc}</div>
                       </div>
-                      <input
-                        type="range"
-                        min={t.min}
-                        max={t.max}
-                        step={t.step}
-                        value={cfg[t.id] ?? t.defaultVal}
-                        onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
-                        style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
-                      />
-                      <div className="tc-slider-desc">{t.desc}</div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
