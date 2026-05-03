@@ -274,7 +274,10 @@ export default function TestLab() {
   // (30 s staleTime) so mutations elsewhere (e.g. Tests page approve/reject,
   // Projects create/delete) refresh Test Lab automatically via
   // `invalidateProjectDataCache()`.
-  const { projects, allRuns, loading: loadingProjectData } = useProjectData({ fetchTests: false });
+  // We need `allTests` so the launch panel's "Existing tests" stat reflects the
+  // real test inventory for the selected project, not a cumulative
+  // testsGenerated sum across historical runs.
+  const { projects, allRuns, allTests, loading: loadingProjectData } = useProjectData();
   const loadingProjects = loadingProjectData;
   const [selectedId, setSelectedId]       = useState(routeProjectId ?? null);
 
@@ -329,22 +332,39 @@ export default function TestLab() {
 
   // ── SSE handler for active run ──
   const handleSSEEvent = useCallback((event) => {
+    if (event.type === "snapshot" && event.run) {
+      setRunData(prev => ({ ...prev, ...event.run }));
+    }
     if (event.type === "run_update" || event.type === "update") {
       setRunData(prev => ({ ...prev, ...event.run }));
     }
     if (event.type === "log" && event.message) {
       setLogLines(prev => [...prev, event.message]);
     }
-    if (event.type === "done" || event.run?.status === "completed" || event.run?.status === "failed") {
-      setRunData(prev => ({ ...prev, ...(event.run || {}), status: event.run?.status ?? "completed" }));
+    // The hook fires its own `type: "done"` event when SSE closes, with
+    // `status` at the top level (not under `event.run`). Handle both shapes.
+    const terminalStatus =
+      event.type === "done" ? (event.status ?? event.run?.status ?? "completed")
+      : (event.run?.status === "completed" || event.run?.status === "completed_empty"
+         || event.run?.status === "failed"  || event.run?.status === "aborted")
+        ? event.run.status
+        : null;
+    if (terminalStatus) {
+      setRunData(prev => ({ ...prev, ...(event.run || {}), status: terminalStatus }));
+      // Bust the shared cache so the Queue tab and Active-Runs panel pick up
+      // the final test count / failure state without waiting for staleTime.
+      invalidateProjectDataCache();
     }
   }, []);
 
-  useRunSSE(
-    activeRun?.runId ?? null,
-    handleSSEEvent,
-    activeRun ? "running" : null,
-  );
+  // Drive the SSE connection with the live run status so the hook auto-closes
+  // when the run finishes (`done` event) and *stays* closed on subsequent
+  // re-renders. Passing a static "running" string would cause the hook to keep
+  // reconnecting after completion — see useRunSSE's `alreadyDone` guard.
+  const sseInitialStatus = activeRun
+    ? (runData?.status === "running" || runData?.status == null ? "running" : runData.status)
+    : undefined;
+  useRunSSE(activeRun?.runId ?? null, handleSSEEvent, sseInitialStatus);
 
   // ── Derived ──
   const selectedProject = projects.find(p => p.id === selectedId) ?? null;
@@ -449,7 +469,12 @@ export default function TestLab() {
     setStopLoading(true);
     try {
       await api.abortRun(activeRun.runId);
-      setRunData(prev => ({ ...prev, status: "failed" }));
+      // Mark the local copy as aborted so the SSE hook closes (it skips
+      // connecting for any non-"running" initialStatus) and the config-panel
+      // shows the aborted banner. The eventual SSE `done` event will reconcile
+      // with the server's authoritative status.
+      setRunData(prev => ({ ...prev, status: "aborted" }));
+      invalidateProjectDataCache();
     } catch { /* non-fatal */ } finally {
       setStopLoading(false);
     }
@@ -471,15 +496,49 @@ export default function TestLab() {
     setError(null);
   }
 
+  /**
+   * Switch the selected project without orphaning an in-flight run.
+   *
+   * If a run is active in the panel, we ask the user to confirm — switching
+   * detaches the SSE panel from that run but leaves it executing on the
+   * server (it remains visible in the Queue tab and can be aborted from
+   * there). Without this guard the previous behaviour silently abandoned the
+   * run and gave the user no way to return to the live view.
+   *
+   * @param {string} nextProjectId
+   */
+  function handleSelectProject(nextProjectId) {
+    if (nextProjectId === selectedId) return;
+    if (isRunActive) {
+      const ok = window.confirm(
+        "A generation run is in progress for the current project. " +
+        "Switching projects will close this live view — the run keeps executing " +
+        "and stays visible in the Queue tab. Continue?",
+      );
+      if (!ok) return;
+    }
+    setSelectedId(nextProjectId);
+    handleReset();
+    if (routeProjectId) {
+      const qs = searchParams.toString();
+      navigate(`/projects/${nextProjectId}/test-lab${qs ? `?${qs}` : ""}`, { replace: true });
+    }
+  }
+
   // ── Compute launch panel data ──
   const pagesFound    = lastCrawlRun?.pagesFound ?? selectedProject?.pagesFound ?? null;
-  const existingTests = (projectRuns[selectedId] || []).length > 0
-    ? (projectRuns[selectedId] || []).filter(r => r.type === "crawl" && r.testsGenerated)
-        .reduce((s, r) => s + (r.testsGenerated || 0), 0)
-    : null;
+  // Count the project's actual current tests (not cumulative testsGenerated
+  // across all historical runs — that double-counts dedup'd / rejected /
+  // deleted tests and grows monotonically).
+  const existingTests = useMemo(() => {
+    if (!selectedId) return null;
+    return allTests.filter(t => t.projectId === selectedId).length;
+  }, [allTests, selectedId]);
 
-  const isRunActive = !!activeRun && (runData?.status === "running" || runData?.status == null);
-  const isRunDone   = runData?.status === "completed" || runData?.status === "completed_empty";
+  const runStatus   = runData?.status;
+  const isRunActive = !!activeRun && (runStatus === "running" || runStatus == null);
+  const isRunDone   = runStatus === "completed" || runStatus === "completed_empty";
+  const isRunFailed = runStatus === "failed" || runStatus === "aborted";
   const ps          = runData?.pipelineStats || {};
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -592,17 +651,7 @@ export default function TestLab() {
                     <div
                       key={p.id}
                       className={`tl-proj-item${p.id === selectedId ? " tl-proj-item--active" : ""}`}
-                      onClick={() => {
-                        setSelectedId(p.id);
-                        handleReset();
-                        // Keep the URL in sync when we're on the nested route so
-                        // the current project is deep-linkable. Leave the top-level
-                        // /test-lab URL alone.
-                        if (routeProjectId) {
-                          const qs = searchParams.toString();
-                          navigate(`/projects/${p.id}/test-lab${qs ? `?${qs}` : ""}`, { replace: true });
-                        }
-                      }}
+                      onClick={() => handleSelectProject(p.id)}
                     >
                       <ProjIcon project={p} />
                       <div className="tl-proj-info">
@@ -687,6 +736,34 @@ export default function TestLab() {
                         onClick={() => navigate(`/runs/${activeRun.runId}`)}
                       >
                         View run <ChevronRight size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Failure / aborted banner — without this, a server-side
+                    failure reported via SSE would silently drop the user back
+                    to the config panel with no feedback. */}
+                {isRunFailed && activeRun && (
+                  <div className="banner banner-error mb-md">
+                    <div>
+                      <strong>
+                        {runStatus === "aborted" ? "Run aborted" : "Run failed"}
+                      </strong>
+                      {runData?.error ? ` — ${runData.error}` : "."}
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        style={{ marginLeft: 10 }}
+                        onClick={() => navigate(`/runs/${activeRun.runId}`)}
+                      >
+                        View run <ChevronRight size={12} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        style={{ marginLeft: 6 }}
+                        onClick={handleReset}
+                      >
+                        Dismiss
                       </button>
                     </div>
                   </div>
