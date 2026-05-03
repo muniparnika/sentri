@@ -997,8 +997,16 @@
   display: grid;
   grid-template-columns: 220px 1fr 200px;
   flex: 1;
+  /* `min-height: 0` is mandatory: without it the grid container claims the
+     height of its tallest content (the log can be hundreds of lines), which
+     overflows `.tl-run-center` and breaks the bounded-height assumption that
+     `overflow: hidden` relies on. Same reasoning for `min-width: 0` — long
+     monospace log lines would otherwise widen the middle column. */
+  min-height: 0;
+  min-width: 0;
   overflow: hidden;
-  border-top: 1px solid var(--border);
+  /* Top border removed — `.tl-inner-tabs` already supplies a bottom border at
+     this seam; double-bordering produced a 2px line. */
 }
 
 /* Sub-col 1: stage list */
@@ -1006,6 +1014,11 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  /* Grid items need explicit min sizing so their flex children (`.tl-pipeline`
+     scroll list) can shrink below content height instead of pushing the
+     column wider than its track. */
+  min-height: 0;
+  min-width: 0;
   overflow: hidden;
   padding: 12px 14px;
 }
@@ -1041,20 +1054,35 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  /* Same reasoning as `.tl-pipeline-col` — without min-height the LiveLog
+     overflows the column instead of scrolling inside it, and without
+     min-width the longest monospace line widens the column past its grid
+     track and pushes the stats column out of the visible area. */
+  min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
-/* Make LiveLog fill the remaining height */
+/* Make LiveLog fill the remaining height — overrides the 130px fixed height
+   from the standalone `.tl-live-log` rule (which exists for the rare cases
+   the log renders outside the 3-column pipeline view). */
 .tl-pipeline-log-col .tl-live-log {
   flex: 1;
+  min-height: 0;
   height: auto;
   border-top: none;
+  /* Allow long monospace tokens (URLs, stack frames) to wrap instead of
+     forcing a horizontal scroll on every line. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Sub-col 3: so far stats */
 .tl-pipeline-stats-col {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding-bottom: 14px;
 }
