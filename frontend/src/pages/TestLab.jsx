@@ -279,28 +279,41 @@ function LiveLog({ lines }) {
  */
 function QueueRow({ run, project, onStop, onAttach }) {
   const navigate = useNavigate();
-  const isActive = run.status === "running";
-  const isDone   = run.status === "completed" || run.status === "completed_empty" || run.status === "failed";
+  const isActive    = run.status === "running";
+  const isCompleted = run.status === "completed" || run.status === "completed_empty";
+  const isFailed    = run.status === "failed";
+  const isAborted   = run.status === "aborted";
+  // Any terminal status dims the row + suppresses the progress bar.
+  const isTerminal  = isCompleted || isFailed || isAborted;
 
   const pct = run.currentStep != null
     ? Math.round(((run.currentStep - 1) / 7) * 100)
     : 0;
 
+  // Subtitle reflects the actual outcome — a failed run must not read as
+  // "Completed · N tests generated", and an aborted run must not fall through
+  // to the "Queued" branch.
+  let subtitle;
+  if (isActive && run.currentStep != null) {
+    subtitle = `Step ${run.currentStep}/8 · ${PIPELINE_STAGES[run.currentStep - 1]?.label ?? ""} · started ${fmtRelativeDate(run.startedAt)}`;
+  } else if (isCompleted) {
+    subtitle = `Completed · ${run.testsGenerated ?? 0} tests generated · ${fmtRelativeDate(run.startedAt)}`;
+  } else if (isFailed) {
+    subtitle = `Failed${run.error ? ` — ${run.error}` : ""} · ${fmtRelativeDate(run.startedAt)}`;
+  } else if (isAborted) {
+    subtitle = `Aborted · ${fmtRelativeDate(run.startedAt)}`;
+  } else {
+    subtitle = `Queued · ${fmtRelativeDate(run.startedAt)}`;
+  }
+
   return (
-    <div className={`tl-queue-row${isDone ? " tl-queue-row--done" : ""}`}>
+    <div className={`tl-queue-row${isTerminal ? " tl-queue-row--done" : ""}`}>
       <ProjIcon project={project} />
       <div className="tl-queue-info">
         <div className="tl-queue-name">
           {project?.name ?? "Unknown"} · {run.type === "crawl" ? "Crawl & Generate" : "Requirement"}
         </div>
-        <div className="tl-queue-sub">
-          {isActive && run.currentStep != null
-            ? `Step ${run.currentStep}/8 · ${PIPELINE_STAGES[run.currentStep - 1]?.label ?? ""} · started ${fmtRelativeDate(run.startedAt)}`
-            : isDone
-              ? `Completed · ${run.testsGenerated ?? 0} tests generated · ${fmtRelativeDate(run.startedAt)}`
-              : `Queued · ${fmtRelativeDate(run.startedAt)}`
-          }
-        </div>
+        <div className="tl-queue-sub">{subtitle}</div>
       </div>
 
       {isActive && (
@@ -311,8 +324,14 @@ function QueueRow({ run, project, onStop, onAttach }) {
         </div>
       )}
 
-      {isDone && (
+      {isCompleted && (
         <span className="badge badge-green" style={{ flexShrink: 0 }}>done</span>
+      )}
+      {isFailed && (
+        <span className="badge badge-red" style={{ flexShrink: 0 }}>failed</span>
+      )}
+      {isAborted && (
+        <span className="badge badge-amber" style={{ flexShrink: 0 }}>aborted</span>
       )}
 
       {isActive ? (
