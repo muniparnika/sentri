@@ -47,12 +47,14 @@ Web Vitals (AUTO-017), flaky-rate (DIF-004), accessibility violations (AUTO-016)
 
 **Files:** new migration `016_metric_samples.sql` · new `backend/src/database/repositories/metricSamplesRepo.js` · new `backend/src/utils/recordMetric.js` (call-site helper) · new `frontend/src/components/shared/TrendChart.jsx` · sample wiring on Dashboard for one existing metric (e.g. pass-rate) to validate end-to-end · `backend/tests/metric-samples.test.js`
 
-### 4 · AUTO-017.3 — Web Vitals trend chart on Project Detail
-**Effort:** S | **Priority:** 🔵 Medium | **Dependencies:** MET-001 (slot 3) | **Source:** `ROADMAP.md` § AUTO-017 (follow-on)
+### 4 · PROC-002 — Sprint-tracker hand-off automation
+**Effort:** S | **Priority:** 🔵 Medium | **Dependencies:** none | **Source:** `docs/roadmap-gaps-pr8.md` § PROC-002
 
-With AUTO-017 ✅ shipped (Web Vitals captured + budgeted per run), the natural next surface is a per-project trend chart that consumes the MET-001 `metric_samples` table to render LCP/CLS/INP/TTFB over time with budget-threshold overlays. Lands as a new tab on Project Detail (or a dedicated `/projects/:id/web-vitals` route) reusing `<TrendChart>`. Soft prerequisite: MET-001 in slot 3 ships first so the schema exists.
+The NEXT.md / ROADMAP.md / `docs/changelog.md` update dance after every shipped PR is currently manual and reviewer-flagged (REVIEW.md § Sprint Tracker Hand-off). Add a `scripts/promote-sprint-item.mjs` Node script that, given a shipped PR number and the new slot-2 item id, performs the full hand-off: rewrites the Current PR block in `NEXT.md`, shifts the queue, prepends the shipped row to the Recently completed table (capped at 3 entries), updates the fast-path `Current sprint` line in `ROADMAP.md`, decrements the remaining-items count, and appends a Completed Work Summary row. Eliminates the reviewer churn we hit on PR #6.
 
-> **Stretch / parallel opportunities** (no queue conflict): `AUTO-017.3` (Web Vitals trend chart — depends on MET-001 in slot 4); `PROC-001` (docs-only — require backend PRs to ship UI in the same PR; XS effort); `PROC-002` (sprint-tracker hand-off automation script in `scripts/promote-sprint-item.mjs`; S effort). Pick from `docs/roadmap-gaps-pr8.md` if a second engineer has cycles.
+**Files:** new `scripts/promote-sprint-item.mjs` · new `scripts/__fixtures__/promote-sprint-item/` (golden NEXT.md / ROADMAP.md before/after) · new `scripts/promote-sprint-item.test.mjs` · register in `backend/tests/run-tests.js`
+
+> **Stretch / parallel opportunities** (no queue conflict): `AUTO-017.3` (Web Vitals trend chart — depends on MET-001 in slot 3, so it'll unblock as soon as that ships); `PROC-001` (docs-only — require backend PRs to ship UI in the same PR; XS effort). Pick from `docs/roadmap-gaps-pr8.md` if a second engineer has cycles.
 
 ---
 
