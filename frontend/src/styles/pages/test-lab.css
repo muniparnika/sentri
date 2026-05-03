@@ -566,6 +566,142 @@
   line-height: 1.5;
 }
 
+/* ── Composer (Requirement tab) ──────────────────────────────────────────────
+   Chat-style composer modelled after ChatGPT / Claude / Cursor: attachment
+   chips render inline above the textarea, and the toolbar (📎 attach, Import
+   issue) lives in a footer row attached to the same surface. The visual
+   border lives on `.tl-composer` itself so the textarea + toolbar read as one
+   element instead of two stacked rectangles. */
+.tl-composer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  overflow: hidden;
+}
+.tl-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 110, 245, 0.1);
+}
+
+/* Strip the textarea's own border / focus ring — `.tl-composer` owns those
+   now so the chips, textarea, and toolbar all read as one surface. */
+.tl-composer-area {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  margin-bottom: 0;
+  border-radius: 0;
+  resize: vertical;
+  min-height: 110px;
+}
+.tl-composer-area:focus { box-shadow: none !important; }
+
+/* Inline attachment chips above the textarea — same row as the cursor when
+   only one chip is present, wraps to multiple lines beyond that. */
+.tl-composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
+.tl-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 99px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  font-size: 0.74rem;
+  color: var(--text2);
+  max-width: 220px;
+}
+.tl-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+.tl-attachment-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tl-attachment-chip-remove:hover {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+/* Toolbar — attach + import-issue actions, plus the keyboard-shortcut hint. */
+.tl-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.tl-composer-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tl-composer-action:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.tl-composer-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text3);
+}
+.tl-composer-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text2);
+}
+
+/* Import-issue inline panel — shown above the composer when toggled. */
+.tl-import-issue {
+  margin-bottom: 10px;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* ── Examples panel ──────────────────────────────────────────────────────────── */
 .tl-example {
   display: flex;

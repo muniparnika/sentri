@@ -1116,27 +1116,18 @@ export default function TestLab() {
                       />
                     </div>
 
-                    {/* Import Issue panel — paste Jira issue text and split it
-                        into a name + appended description block. */}
+                    {/* Requirement composer — single inline surface that
+                        bundles attachment chips, the textarea, and an action
+                        toolbar (📎 attach, Import Issue) below the input.
+                        Mirrors the chat-style composer pattern from
+                        ChatGPT / Claude / Cursor: file uploads aren't a
+                        separate section, they're an inline affordance on the
+                        message you're writing. */}
                     <div className="tl-section">
-                      <div className="tl-section-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span>Requirement / User Story</span>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-xs"
-                          style={{ marginLeft: "auto", gap: 5 }}
-                          onClick={() => setShowImportIssue(v => !v)}
-                        >
-                          <Upload size={11} /> Import Issue
-                        </button>
-                      </div>
+                      <div className="tl-section-label">Requirement / User Story</div>
 
                       {showImportIssue && (
-                        <div style={{
-                          marginBottom: 10, padding: 12, background: "var(--bg2)",
-                          border: "1px solid var(--border)", borderRadius: "var(--radius)",
-                          display: "flex", flexDirection: "column", gap: 8,
-                        }}>
+                        <div className="tl-import-issue">
                           <div style={{ fontSize: "0.78rem", color: "var(--text2)", fontWeight: 500 }}>
                             Paste a Jira issue (title on first line, description below)
                           </div>
@@ -1146,7 +1137,7 @@ export default function TestLab() {
                             onChange={e => setImportIssueText(e.target.value)}
                             placeholder={"PROJ-123 Login fails for SSO users\nAs a user with SSO enabled I expect to be redirected to the IdP…"}
                             rows={4}
-                            style={{ minHeight: 88 }}
+                            style={{ minHeight: 88, marginBottom: 0 }}
                             autoFocus
                           />
                           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -1167,87 +1158,86 @@ export default function TestLab() {
                         </div>
                       )}
 
-                      <textarea
-                        ref={requirementRef}
-                        className="tl-req-area"
-                        placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
-                        value={requirement}
-                        onChange={e => setRequirement(e.target.value)}
-                        // Cmd/Ctrl+Enter submits — matches GenerateTestModal's
-                        // single-key submit, but scoped to a modifier so plain
-                        // Enter still inserts a newline in this multi-line area.
-                        onKeyDown={e => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                            e.preventDefault();
-                            if (requirement.trim() && selectedProject && !launching) {
-                              handleGenerateFromRequirement();
-                            }
-                          }
-                        }}
-                        rows={5}
-                      />
-                      <div className="tl-req-hint">
-                        Plain English, user stories, Gherkin, or paste a Jira ticket. Press <kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> to generate.
-                      </div>
-                    </div>
+                      <div className="tl-composer">
+                        {/* Attachment chips — render inline above the
+                            textarea (like Claude / ChatGPT) so users see what's
+                            attached as part of the message they're sending. */}
+                        {attachments.length > 0 && (
+                          <div className="tl-composer-chips">
+                            {attachments.map(a => (
+                              <span key={a.name} className="tl-attachment-chip" title={`${Math.round(a.content.length / 1000)}k chars`}>
+                                <Paperclip size={11} />
+                                <span className="tl-attachment-chip-name">{a.name}</span>
+                                <button
+                                  type="button"
+                                  className="tl-attachment-chip-remove"
+                                  onClick={() => removeAttachment(a.name)}
+                                  title="Remove attachment"
+                                  aria-label={`Remove ${a.name}`}
+                                >
+                                  <Trash2 size={10} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
 
-                    {/* Attachments — text-only files (.md, .json, .yaml,
-                        .feature, …). Folded into description at submit time
-                        so the backend prompt receives a single combined
-                        payload, matching legacy GenerateTestModal output. */}
-                    <div className="tl-section">
-                      <div className="tl-section-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span>Attachments {attachments.length > 0 && `(${attachments.length})`}</span>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-xs"
-                          style={{ marginLeft: "auto", gap: 5 }}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <Paperclip size={11} /> Add attachment
-                        </button>
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept={ACCEPTED_EXTENSIONS}
-                          multiple
-                          onChange={handleFileSelect}
-                          style={{ display: "none" }}
+                        <textarea
+                          ref={requirementRef}
+                          className="tl-req-area tl-composer-area"
+                          placeholder={"As a user I want to search for items so that I can find what I'm looking for…"}
+                          value={requirement}
+                          onChange={e => setRequirement(e.target.value)}
+                          // Cmd/Ctrl+Enter submits — matches GenerateTestModal's
+                          // single-key submit, but scoped to a modifier so plain
+                          // Enter still inserts a newline in this multi-line area.
+                          onKeyDown={e => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                              e.preventDefault();
+                              if (requirement.trim() && selectedProject && !launching) {
+                                handleGenerateFromRequirement();
+                              }
+                            }
+                          }}
+                          rows={5}
                         />
-                      </div>
-                      {attachments.length > 0 && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          {attachments.map(a => (
-                            <div key={a.name} style={{
-                              display: "flex", alignItems: "center", gap: 8,
-                              padding: "5px 10px", background: "var(--bg2)",
-                              border: "1px solid var(--border)", borderRadius: "var(--radius)",
-                              fontSize: "0.78rem",
-                            }}>
-                              <Paperclip size={11} color="var(--text3)" style={{ flexShrink: 0 }} />
-                              <span style={{
-                                flex: 1, color: "var(--text)", overflow: "hidden",
-                                textOverflow: "ellipsis", whiteSpace: "nowrap",
-                              }}>
-                                {a.name}
-                              </span>
-                              <span style={{ fontSize: "0.7rem", color: "var(--text3)", flexShrink: 0 }}>
-                                {Math.round(a.content.length / 1000)}k chars
-                              </span>
-                              <button
-                                onClick={() => removeAttachment(a.name)}
-                                style={{
-                                  background: "none", border: "none", cursor: "pointer",
-                                  color: "var(--text3)", padding: 0, display: "flex",
-                                }}
-                                title="Remove attachment"
-                              >
-                                <Trash2 size={11} />
-                              </button>
-                            </div>
-                          ))}
+
+                        {/* Action toolbar — paperclip + Import Issue render
+                            inside the composer footer, ChatGPT-style, so
+                            attachments aren't a parallel section the user has
+                            to scroll past. */}
+                        <div className="tl-composer-toolbar">
+                          <button
+                            type="button"
+                            className="tl-composer-action"
+                            onClick={() => fileInputRef.current?.click()}
+                            title="Attach a text file (.md, .json, .yaml, .feature, …)"
+                          >
+                            <Paperclip size={13} />
+                            <span>Attach</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="tl-composer-action"
+                            onClick={() => setShowImportIssue(v => !v)}
+                            title="Paste a Jira / GitHub issue and auto-split into name + description"
+                          >
+                            <Upload size={13} />
+                            <span>Import issue</span>
+                          </button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept={ACCEPTED_EXTENSIONS}
+                            multiple
+                            onChange={handleFileSelect}
+                            style={{ display: "none" }}
+                          />
+                          <span className="tl-composer-hint">
+                            <kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> to generate
+                          </span>
                         </div>
-                      )}
+                      </div>
                     </div>
                   </>
                 )}
