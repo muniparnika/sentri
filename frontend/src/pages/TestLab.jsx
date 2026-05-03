@@ -66,6 +66,50 @@ const REQ_EXAMPLES = [
   "Password reset flow end-to-end",
 ];
 
+// ── Persistence ──────────────────────────────────────────────────────────────
+//
+// The pipeline + log views are driven by component-local state (`activeRun`,
+// `runData`, `logLines`). Without persistence, navigating away from Test Lab
+// unmounts the component and wipes the state, so returning mid-run shows an
+// empty idle panel instead of the in-flight pipeline. We mirror the live run
+// to sessionStorage so soft navigation within the app is seamless; on mount
+// we rehydrate and the SSE hook auto-reconnects (its `snapshot` event refills
+// pipeline counters, and new log lines resume streaming from the reconnect
+// point). sessionStorage is scoped per-tab, which matches the UX we want.
+
+const STORAGE_KEY = "sentri.testLab.activeRun";
+const LOG_CAP     = 200; // bound storage size — the LiveLog UI slices at -40
+
+function loadPersistedRun() {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.activeRun?.runId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistRun(activeRun, runData, logLines) {
+  try {
+    if (!activeRun?.runId) {
+      sessionStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activeRun,
+      runData,
+      logLines: logLines.slice(-LOG_CAP),
+    }));
+  } catch { /* quota / private mode — non-fatal */ }
+}
+
+function clearPersistedRun() {
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* non-fatal */ }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Derive stage state for a pipeline step given the run's currentStep. */
@@ -292,9 +336,14 @@ export default function TestLab() {
   const [requirement, setRequirement]     = useState("");
 
   // ── Run state ──
-  const [activeRun, setActiveRun]   = useState(null); // { runId, projectId, type }
-  const [runData, setRunData]       = useState(null);  // live run object from SSE
-  const [logLines, setLogLines]     = useState([]);
+  // Rehydrate from sessionStorage so navigating away and back resumes the live
+  // pipeline view without a gap. The SSE hook will auto-reconnect using the
+  // persisted `runId` and its first `snapshot` event will refresh pipeline
+  // counters from the server's authoritative copy.
+  const persisted = useMemo(() => loadPersistedRun(), []);
+  const [activeRun, setActiveRun]   = useState(persisted?.activeRun ?? null);
+  const [runData, setRunData]       = useState(persisted?.runData ?? null);
+  const [logLines, setLogLines]     = useState(persisted?.logLines ?? []);
   const [launching, setLaunching]   = useState(false);
   const [innerTab, setInnerTab]     = useState("pipeline");
   const [stopLoading, setStopLoading] = useState(false);
@@ -365,6 +414,15 @@ export default function TestLab() {
     ? (runData?.status === "running" || runData?.status == null ? "running" : runData.status)
     : undefined;
   useRunSSE(activeRun?.runId ?? null, handleSSEEvent, sseInitialStatus);
+
+  // ── Persist the active run to sessionStorage on every change ──
+  // Clearing activeRun (via handleReset / Dismiss) also clears storage so the
+  // next mount starts fresh. A terminal status is kept in storage briefly so a
+  // navigation round-trip still lands on the done/failed banner rather than
+  // the idle config panel.
+  useEffect(() => {
+    persistRun(activeRun, runData, logLines);
+  }, [activeRun, runData, logLines]);
 
   // ── Derived ──
   const selectedProject = projects.find(p => p.id === selectedId) ?? null;
@@ -494,6 +552,9 @@ export default function TestLab() {
     setRunData(null);
     setLogLines([]);
     setError(null);
+    // Explicit clear in addition to the write-through effect — avoids a stale
+    // read if the user immediately navigates away before the effect flushes.
+    clearPersistedRun();
   }
 
   /**
