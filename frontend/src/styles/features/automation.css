@@ -322,7 +322,13 @@
 }
 
 /* ── Tab body — consistent vertical spacing ───────────────────────────────── */
-.auto-tab-body {
+/* `display: flex` would override the browser's user-agent `[hidden] { display: none }`
+ * rule because author stylesheets win at equal specificity. The `[hidden]`
+ * attribute is how WAI-ARIA tabs hide inactive tabpanels (see Automation.jsx
+ * tabpanel comment), so all four panels would otherwise remain visible as
+ * empty flex boxes, adding ~48px of spurious whitespace. The `:not([hidden])`
+ * guard keeps the flex layout on the active panel only. */
+.auto-tab-body:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 12px;
