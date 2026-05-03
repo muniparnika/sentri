@@ -837,53 +837,84 @@ export default function TestLab() {
               <h2 className="page-title" style={{ marginBottom: 2 }}>Queue</h2>
               <p className="page-subtitle">All active and recent generation runs across projects</p>
             </div>
-            <div className="flex-between gap-sm">
+            <div className="flex-between gap-sm" style={{ alignItems: "center" }}>
               <span className="badge badge-blue">{activeQueueRuns.length} active</span>
               {activeQueueRuns.length > 0 && (
                 <span className="badge badge-green" style={{ animation: "pulse 1.5s infinite" }}>running</span>
               )}
+              {/* Project filter — shown when there are multiple projects */}
+              {projects.length > 1 && (
+                <select
+                  className="tl-select"
+                  value={queueFilter}
+                  onChange={e => setQueueFilter(e.target.value)}
+                  style={{ height: 30, fontSize: "0.78rem", padding: "0 26px 0 9px", minWidth: 140 }}
+                >
+                  <option value="all">All projects</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 
-          {activeQueueRuns.length === 0 && recentQueueRuns.length === 0 && (
-            <div className="empty-state card">
-              <div className="empty-state-icon">⏳</div>
-              <div className="empty-state-title">No runs yet</div>
-              <div className="empty-state-desc">
-                Start a crawl or generate tests from a requirement to see them here.
-              </div>
-            </div>
-          )}
+          {/* Apply project filter */}
+          {(() => {
+            const filteredActive = queueFilter === "all"
+              ? activeQueueRuns
+              : activeQueueRuns.filter(r => r.projectId === queueFilter);
+            const filteredRecent = queueFilter === "all"
+              ? recentQueueRuns
+              : recentQueueRuns.filter(r => r.projectId === queueFilter);
+            return (
+              <>
+                {filteredActive.length === 0 && filteredRecent.length === 0 && (
+                  <div className="empty-state card">
+                    <div className="empty-state-icon">⏳</div>
+                    <div className="empty-state-title">
+                      {queueFilter === "all" ? "No runs yet" : "No runs for this project"}
+                    </div>
+                    <div className="empty-state-desc">
+                      {queueFilter === "all"
+                        ? "Start a crawl or generate tests from a requirement to see them here."
+                        : "Switch to a different project or start a new run."}
+                    </div>
+                  </div>
+                )}
 
-          {activeQueueRuns.length > 0 && (
-            <>
-              <div className="section-label mb-sm">Active</div>
-              {activeQueueRuns.map(run => (
-                <QueueRow
-                  key={run.id}
-                  run={run}
-                  project={projects.find(p => p.id === run.projectId)}
-                  onStop={handleQueueStop}
-                  onAttach={handleAttachRun}
-                />
-              ))}
-            </>
-          )}
+                {filteredActive.length > 0 && (
+                  <>
+                    <div className="section-label mb-sm">Active</div>
+                    {filteredActive.map(run => (
+                      <QueueRow
+                        key={run.id}
+                        run={run}
+                        project={projects.find(p => p.id === run.projectId)}
+                        onStop={handleQueueStop}
+                        onAttach={handleAttachRun}
+                      />
+                    ))}
+                  </>
+                )}
 
-          {recentQueueRuns.length > 0 && (
-            <>
-              <div className="section-label mb-sm" style={{ marginTop: 20 }}>Recent</div>
-              {recentQueueRuns.map(run => (
-                <QueueRow
-                  key={run.id}
-                  run={run}
-                  project={projects.find(p => p.id === run.projectId)}
-                  onStop={handleQueueStop}
-                  onAttach={handleAttachRun}
-                />
-              ))}
-            </>
-          )}
+                {filteredRecent.length > 0 && (
+                  <>
+                    <div className="section-label mb-sm" style={{ marginTop: 20 }}>Recent</div>
+                    {filteredRecent.map(run => (
+                      <QueueRow
+                        key={run.id}
+                        run={run}
+                        project={projects.find(p => p.id === run.projectId)}
+                        onStop={handleQueueStop}
+                        onAttach={handleAttachRun}
+                      />
+                    ))}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -974,22 +1005,30 @@ export default function TestLab() {
               {isRunDone && (
                 <div className="banner banner-success" style={{ margin: "10px 14px 0" }}>
                   <CheckCircle2 size={16} />
-                  <div>
-                    <strong>Generation complete</strong> — {runData?.testsGenerated ?? 0} tests generated.
-                    <button
-                      className="btn btn-ghost btn-xs"
-                      style={{ marginLeft: 10 }}
-                      onClick={() => navigate(`/runs/${activeRun.runId}`)}
-                    >
-                      View run <ChevronRight size={12} />
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-xs"
-                      style={{ marginLeft: 6 }}
-                      onClick={handleReset}
-                    >
-                      Dismiss
-                    </button>
+                  <div style={{ flex: 1 }}>
+                    <strong>Generation complete</strong> — {runData?.testsGenerated ?? 0} test{(runData?.testsGenerated ?? 0) !== 1 ? "s" : ""} generated.
+                    <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(runData?.testsGenerated ?? 0) > 0 && (
+                        <button
+                          className="btn btn-primary btn-xs"
+                          onClick={() => navigate(`/tests?filter=draft&projectId=${activeRun.projectId}`)}
+                        >
+                          Review {runData.testsGenerated} draft{runData.testsGenerated !== 1 ? "s" : ""} <ChevronRight size={12} />
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        onClick={() => navigate(`/runs/${activeRun.runId}`)}
+                      >
+                        View run <ChevronRight size={12} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        onClick={handleReset}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1053,8 +1092,89 @@ export default function TestLab() {
                       ))}
                     </div>
 
+                    {/* ── Pipeline tab: 3-sub-column — Pipeline | Live Output | So Far ── */}
                     {innerTab === "pipeline" && (
-                      <PipelinePanel run={runData} />
+                      <div className="tl-pipeline-view">
+                        {/* Sub-col 1: stage list */}
+                        <div className="tl-pipeline-col">
+                          {/* Progress label */}
+                          <div className="tl-pipeline-progress-label">
+                            {runData?.currentStep != null && runData.status === "running"
+                              ? `Step ${runData.currentStep} of 8 · ${PIPELINE_STAGES[runData.currentStep - 1]?.label ?? ""}`
+                              : runData?.status === "completed" || runData?.status === "completed_empty"
+                                ? "Completed"
+                                : runData?.status === "failed" ? "Failed"
+                                : runData?.status === "aborted" ? "Aborted"
+                                : "Starting…"}
+                          </div>
+                          {/* Progress bar */}
+                          <div className="progress-bar" style={{ margin: "6px 0 10px" }}>
+                            <div
+                              className="progress-bar-fill"
+                              style={{
+                                width: isRunDone ? "100%"
+                                  : runData?.currentStep != null
+                                    ? `${Math.round(((runData.currentStep - 1) / 7) * 100)}%`
+                                    : "0%",
+                              }}
+                            />
+                          </div>
+                          <PipelinePanel run={runData} />
+                        </div>
+
+                        {/* Sub-col 2: live log */}
+                        <div className="tl-pipeline-log-col">
+                          <div className="tl-pipeline-col-label">Live Output</div>
+                          <LiveLog lines={logLines} />
+                        </div>
+
+                        {/* Sub-col 3: so far stats + stop button */}
+                        <div className="tl-pipeline-stats-col">
+                          <div className="tl-pipeline-col-label">So Far</div>
+                          <div className="tl-run-stats">
+                            <div className="tl-run-stat tl-run-stat--accent">
+                              <div className="tl-run-stat-val">{ps.rawTestsGenerated ?? runData?.testsGenerated ?? 0}</div>
+                              <div className="tl-run-stat-lbl">Generated</div>
+                            </div>
+                            <div className="tl-run-stat tl-run-stat--amber">
+                              <div className="tl-run-stat-val">{ps.duplicatesRemoved ?? 0}</div>
+                              <div className="tl-run-stat-lbl">Dupes removed</div>
+                            </div>
+                            <div className="tl-run-stat tl-run-stat--green">
+                              <div className="tl-run-stat-val">
+                                {ps.averageQuality != null ? ps.averageQuality : "—"}
+                              </div>
+                              <div className="tl-run-stat-lbl">Avg quality</div>
+                            </div>
+                            <div className="tl-run-stat">
+                              <div className="tl-run-stat-val" style={{ color: "var(--text)" }}>
+                                {ps.pagesFound ?? runData?.pagesFound ?? 0}
+                              </div>
+                              <div className="tl-run-stat-lbl">Pages crawled</div>
+                            </div>
+                          </div>
+
+                          {isRunActive ? (
+                            <button
+                              className="btn btn-ghost"
+                              style={{ width: "100%", justifyContent: "center", gap: 6, marginTop: 12 }}
+                              onClick={handleStop}
+                              disabled={stopLoading}
+                            >
+                              <StopCircle size={15} />
+                              {stopLoading ? "Stopping…" : "Stop run"}
+                            </button>
+                          ) : !isRunDone && !isRunFailed ? null : (
+                            <button
+                              className="btn btn-ghost"
+                              style={{ width: "100%", justifyContent: "center", gap: 6, marginTop: 12 }}
+                              onClick={handleReset}
+                            >
+                              New run
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
 
                     {innerTab === "sitegraph" && isCrawl && (
@@ -1071,11 +1191,6 @@ export default function TestLab() {
                       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
                         <LiveLog lines={logLines} />
                       </div>
-                    )}
-
-                    {/* Always show log preview at bottom in pipeline view */}
-                    {innerTab === "pipeline" && logLines.length > 0 && (
-                      <LiveLog lines={logLines} />
                     )}
                   </>
                 );
@@ -1274,46 +1389,38 @@ export default function TestLab() {
             <div className="tl-panel-scroll">
 
               {activeRun ? (
-                // ── Attached run: stats persist for running / completed / failed ──
+                // ── Attached run: stats now live inline in the pipeline view.
+                // Right panel shows a minimal context card + quick navigation.
                 <>
                   <div className="tl-panel-section-label">
-                    {isRunActive ? "So Far" : isRunDone ? "Final" : "At Stop"}
+                    {isRunActive ? "Running" : isRunDone ? "Completed" : "Stopped"}
                   </div>
-                  <div className="tl-run-stats">
-                    <div className="tl-run-stat tl-run-stat--accent">
-                      <div className="tl-run-stat-val">{ps.rawTestsGenerated ?? runData?.testsGenerated ?? 0}</div>
-                      <div className="tl-run-stat-lbl">Generated</div>
+                  <div className="tl-stat-cell" style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text)", marginBottom: 2 }}>
+                      {selectedProject?.name ?? "—"}
                     </div>
-                    <div className="tl-run-stat tl-run-stat--amber">
-                      <div className="tl-run-stat-val">{ps.duplicatesRemoved ?? 0}</div>
-                      <div className="tl-run-stat-lbl">Dupes removed</div>
-                    </div>
-                    <div className="tl-run-stat tl-run-stat--green">
-                      <div className="tl-run-stat-val">
-                        {ps.averageQuality != null ? ps.averageQuality : "—"}
-                      </div>
-                      <div className="tl-run-stat-lbl">Avg quality</div>
-                    </div>
-                    <div className="tl-run-stat">
-                      <div className="tl-run-stat-val" style={{ color: "var(--text)" }}>
-                        {ps.pagesFound ?? runData?.pagesFound ?? 0}
-                      </div>
-                      <div className="tl-run-stat-lbl">Pages crawled</div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>
+                      {activeRun?.type === "crawl" ? "Crawl & Generate" : "From Requirement"}
                     </div>
                   </div>
 
-                  <div className="progress-bar mb-md">
-                    <div
-                      className="progress-bar-fill"
-                      style={{
-                        width: isRunDone
-                          ? "100%"
-                          : runData?.currentStep != null
-                            ? `${Math.round(((runData.currentStep - 1) / 7) * 100)}%`
-                            : "0%",
-                      }}
-                    />
-                  </div>
+                  {/* Final test count — shown when done */}
+                  {(isRunDone || isRunFailed) && (
+                    <div className="tl-run-stats" style={{ marginBottom: 12 }}>
+                      <div className="tl-run-stat tl-run-stat--accent">
+                        <div className="tl-run-stat-val">{runData?.testsGenerated ?? 0}</div>
+                        <div className="tl-run-stat-lbl">Tests generated</div>
+                      </div>
+                      <div className="tl-run-stat tl-run-stat--green">
+                        <div className="tl-run-stat-val">
+                          {ps.averageQuality != null ? ps.averageQuality : "—"}
+                        </div>
+                        <div className="tl-run-stat-lbl">Avg quality</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <hr className="tl-panel-divider" />
 
                   {isRunActive ? (
                     <button
@@ -1326,13 +1433,31 @@ export default function TestLab() {
                       {stopLoading ? "Stopping…" : "Stop run"}
                     </button>
                   ) : (
-                    <button
-                      className="btn btn-ghost"
-                      style={{ width: "100%", justifyContent: "center", gap: 6 }}
-                      onClick={handleReset}
-                    >
-                      Dismiss &amp; configure new run
-                    </button>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {isRunDone && (runData?.testsGenerated ?? 0) > 0 && (
+                        <button
+                          className="btn btn-primary"
+                          style={{ width: "100%", justifyContent: "center", gap: 6 }}
+                          onClick={() => navigate(`/tests?filter=draft&projectId=${activeRun.projectId}`)}
+                        >
+                          Review {runData.testsGenerated} draft{runData.testsGenerated !== 1 ? "s" : ""} <ChevronRight size={13} />
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-ghost"
+                        style={{ width: "100%", justifyContent: "center", gap: 6 }}
+                        onClick={() => navigate(`/runs/${activeRun.runId}`)}
+                      >
+                        View run detail <ChevronRight size={13} />
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ width: "100%", justifyContent: "center", gap: 6 }}
+                        onClick={handleReset}
+                      >
+                        New run
+                      </button>
+                    </div>
                   )}
                 </>
               ) : (
@@ -1366,6 +1491,27 @@ export default function TestLab() {
 
                   {tab === "requirement" && (
                     <>
+                      <div className="tl-panel-section-label">Ready to Launch</div>
+                      <div className="tl-launch-stats">
+                        <div className="tl-stat-cell">
+                          <div className="tl-stat-val">
+                            {existingTests != null ? existingTests : <span style={{ color: "var(--text3)" }}>—</span>}
+                          </div>
+                          <div className="tl-stat-lbl">Existing tests</div>
+                        </div>
+                        <div className="tl-stat-cell">
+                          <div className="tl-stat-val" style={{ fontSize: "1rem", paddingTop: 4 }}>
+                            {requirement.trim() ? "Ready" : <span style={{ color: "var(--text3)" }}>—</span>}
+                          </div>
+                          <div className="tl-stat-lbl">Requirement</div>
+                        </div>
+                      </div>
+                      {requirement.trim() && (
+                        <div className="tl-estimate">
+                          Focused generation: <strong>1–5 new tests</strong> · ~1–2 min
+                        </div>
+                      )}
+                      <hr className="tl-panel-divider" />
                       <div className="tl-panel-section-label">Examples</div>
                       {REQ_EXAMPLES.map(ex => (
                         <button
