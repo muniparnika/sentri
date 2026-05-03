@@ -76,6 +76,7 @@ export default function WebVitalsBudgetsPanel({ projectId, canEdit, onToast }) {
       canEdit={canEdit}
       onToast={onToast}
       cardStyle={{ marginTop: 12 }}
+      projectId={projectId}
     />
   );
 }

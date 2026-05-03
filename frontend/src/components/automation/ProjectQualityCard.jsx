@@ -16,6 +16,12 @@ import { ChevronDown, Globe, ShieldCheck, Gauge } from "lucide-react";
 import QualityGatesPanel from "../project/QualityGatesPanel.jsx";
 import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
 import { api } from "../../api.js";
+import {
+  cachedAutomationGet,
+  subscribeAutomationStatus,
+  parseHasGates,
+  parseHasBudgets,
+} from "../../utils/automationStatus.js";
 
 const INNER_TABS = [
   { id: "gates",     label: "Quality Gates",   icon: ShieldCheck },
@@ -23,44 +29,37 @@ const INNER_TABS = [
 ];
 
 /**
- * Fetch whether this project has any gates or budgets configured,
- * for the header status chips.
+ * Header status chips. Shares the module-level cache + invalidation bus
+ * with ProjectAutomationCard via `utils/automationStatus.js`, so the chips
+ * refresh when QualityGatesPanel / WebVitalsBudgetsPanel save or clear.
  */
-// Module-level dedup cache — see ProjectAutomationCard for rationale.
-const _qualityCache = new Map();
-function _cachedGet(key, fetcher) {
-  if (!_qualityCache.has(key)) _qualityCache.set(key, fetcher().catch(err => {
-    _qualityCache.delete(key);
-    throw err;
-  }));
-  return _qualityCache.get(key);
-}
-
 function useQualityStatus(projectId) {
   const [hasGates,    setHasGates]    = useState(null);
   const [hasBudgets,  setHasBudgets]  = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    // Backend returns `{ qualityGates: {...} | null }` — unconfigured projects
-    // get `null`, not an empty object, so guard before calling Object.values().
-    _cachedGet(`${projectId}:gates`, () => api.getQualityGates(projectId))
-      .then(data => {
-        if (cancelled) return;
-        const g = data?.qualityGates ?? {};
-        setHasGates(Object.values(g).some(v => v !== null && v !== undefined && v !== ""));
-      })
-      .catch(() => { if (!cancelled) setHasGates(false); });
 
-    // Backend returns `{ webVitalsBudgets: {...} | null }` — same shape as above.
-    _cachedGet(`${projectId}:budgets`, () => api.getWebVitalsBudgets(projectId))
-      .then(data => {
-        if (cancelled) return;
-        const b = data?.webVitalsBudgets ?? {};
-        setHasBudgets(Object.values(b).some(v => v !== null && v !== undefined && v !== ""));
-      })
-      .catch(() => { if (!cancelled) setHasBudgets(false); });
-    return () => { cancelled = true; };
+    function loadGates() {
+      cachedAutomationGet(`${projectId}:gates`, () => api.getQualityGates(projectId))
+        .then(data => { if (!cancelled) setHasGates(parseHasGates(data)); })
+        .catch(() => { if (!cancelled) setHasGates(false); });
+    }
+    function loadBudgets() {
+      cachedAutomationGet(`${projectId}:budgets`, () => api.getWebVitalsBudgets(projectId))
+        .then(data => { if (!cancelled) setHasBudgets(parseHasBudgets(data)); })
+        .catch(() => { if (!cancelled) setHasBudgets(false); });
+    }
+    loadGates();
+    loadBudgets();
+
+    const unsubscribe = subscribeAutomationStatus((pid, kind) => {
+      if (pid !== projectId) return;
+      if (!kind || kind === "gates")   loadGates();
+      if (!kind || kind === "budgets") loadBudgets();
+    });
+
+    return () => { cancelled = true; unsubscribe(); };
   }, [projectId]);
 
   return { hasGates, hasBudgets };

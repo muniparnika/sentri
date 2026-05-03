@@ -18,6 +18,13 @@
 
 import React, { useEffect, useState } from "react";
 import { Save, Trash2, RefreshCw } from "lucide-react";
+import { invalidateAutomationStatus } from "../../utils/automationStatus.js";
+
+/** Map ConfigurablePanel resultKey → automation status cache kind. */
+const RESULT_KEY_TO_STATUS_KIND = {
+  qualityGates: "gates",
+  webVitalsBudgets: "budgets",
+};
 
 /** Convert `null|undefined|""` → "" and any other value → its string form for input binding. */
 function toInput(v) {
@@ -72,7 +79,13 @@ export default function ConfigurablePanel({
   canEdit,
   onToast,
   cardStyle,
+  projectId,
 }) {
+  // Notify the Automation status-chip cache after any successful save/clear.
+  const notifyStatus = () => {
+    const kind = RESULT_KEY_TO_STATUS_KIND[resultKey];
+    if (projectId && kind) invalidateAutomationStatus(projectId, kind);
+  };
   const blankForm = Object.fromEntries(fields.map((f) => [f.key, ""]));
 
   const [loading, setLoading] = useState(true);
@@ -131,6 +144,7 @@ export default function ConfigurablePanel({
         setServer(res?.[resultKey] || payload);
         showToast(toastMessages.saved, "success");
       }
+      notifyStatus();
     } catch (err) {
       setError(err.message || "Save failed");
       showToast(err.message || "Save failed", "error");
@@ -149,6 +163,7 @@ export default function ConfigurablePanel({
       setServer(null);
       setForm(blankForm);
       showToast(toastMessages.cleared, "info");
+      notifyStatus();
     } catch (err) {
       setError(err.message || "Clear failed");
       showToast(err.message || "Clear failed", "error");

@@ -57,3 +57,54 @@ export const PAGE_TAB_IDS = ["triggers", "quality", "integrations", "snippets"];
 export function isValidPageTab(id) {
   return PAGE_TAB_IDS.includes(id);
 }
+
+/* ─── Shared promise cache + invalidation ──────────────────────────────────── */
+
+/**
+ * Module-level promise cache for automation status fetches. Shared across
+ * ProjectAutomationCard and ProjectQualityCard so each `${projectId}:${kind}`
+ * GET is issued at most once per session — until invalidated.
+ */
+const _statusCache = new Map();
+const _listeners = new Set();
+
+/**
+ * Cache-aware GET. Stores the in-flight promise so concurrent callers share
+ * one request. On rejection the entry is dropped so the next mount retries.
+ */
+export function cachedAutomationGet(key, fetcher) {
+  if (!_statusCache.has(key)) {
+    _statusCache.set(key, fetcher().catch(err => {
+      _statusCache.delete(key);
+      throw err;
+    }));
+  }
+  return _statusCache.get(key);
+}
+
+/**
+ * Drop one or more cache entries and notify subscribers so any mounted
+ * status hook refetches. Pass `kind` to invalidate a single kind, or omit
+ * to invalidate all kinds for the project.
+ *
+ * @param {string} projectId
+ * @param {"tokens"|"schedule"|"gates"|"budgets"} [kind]
+ */
+export function invalidateAutomationStatus(projectId, kind) {
+  if (kind) {
+    _statusCache.delete(`${projectId}:${kind}`);
+  } else {
+    for (const k of [..._statusCache.keys()]) {
+      if (k.startsWith(`${projectId}:`)) _statusCache.delete(k);
+    }
+  }
+  for (const fn of _listeners) {
+    try { fn(projectId, kind); } catch { /* swallow listener errors */ }
+  }
+}
+
+/** Subscribe to invalidation events. Returns an unsubscribe function. */
+export function subscribeAutomationStatus(listener) {
+  _listeners.add(listener);
+  return () => _listeners.delete(listener);
+}

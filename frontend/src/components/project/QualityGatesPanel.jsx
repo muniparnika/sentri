@@ -64,6 +64,7 @@ export default function QualityGatesPanel({ projectId, canEdit, onToast }) {
       readOnlyHint="Read-only — QA Lead or Admin role required to edit gates."
       canEdit={canEdit}
       onToast={onToast}
+      projectId={projectId}
     />
   );
 }

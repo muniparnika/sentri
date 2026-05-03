@@ -23,6 +23,13 @@ import {
 import TokenManager from "./TokenManager.jsx";
 import ScheduleManager from "./ScheduleManager.jsx";
 import { api } from "../../api.js";
+import {
+  cachedAutomationGet,
+  invalidateAutomationStatus,
+  subscribeAutomationStatus,
+  parseTokenCount,
+  parseHasSchedule,
+} from "../../utils/automationStatus.js";
 
 const INNER_TABS = [
   { id: "tokens",   label: "CI/CD Tokens", icon: Zap   },
@@ -30,22 +37,9 @@ const INNER_TABS = [
 ];
 
 /**
- * Module-level promise cache so multiple cards mounted in a list don't each
- * re-issue the same GETs on every tab-switch. Keyed by `${projectId}:${kind}`;
- * entries live for the lifetime of the page (cleared on full reload).
- */
-const _statusCache = new Map();
-function _cachedGet(key, fetcher) {
-  if (!_statusCache.has(key)) _statusCache.set(key, fetcher().catch(err => {
-    _statusCache.delete(key); // allow retry on next mount
-    throw err;
-  }));
-  return _statusCache.get(key);
-}
-
-/**
- * Lightweight header status chips — fetched once per project per session.
- * Shows "N tokens" and "Scheduled" / "No schedule".
+ * Lightweight header status chips. Cached at module level (see automationStatus.js)
+ * so multiple cards share one fetch, and re-fetched when child managers
+ * mutate state via `invalidateAutomationStatus`.
  */
 function useProjectStatus(projectId) {
   const [tokenCount, setTokenCount]   = useState(null);
@@ -53,14 +47,28 @@ function useProjectStatus(projectId) {
 
   useEffect(() => {
     let cancelled = false;
-    _cachedGet(`${projectId}:tokens`, () => api.getTriggerTokens(projectId))
-      .then(data => { if (!cancelled) setTokenCount((data?.tokens ?? data ?? []).length); })
-      .catch(() => { if (!cancelled) setTokenCount(0); });
-    // Backend returns `{ schedule: { enabled, ... } | null }`
-    _cachedGet(`${projectId}:schedule`, () => api.getSchedule(projectId))
-      .then(data => { if (!cancelled) setHasSchedule(Boolean(data?.schedule?.enabled)); })
-      .catch(() => { if (!cancelled) setHasSchedule(false); });
-    return () => { cancelled = true; };
+
+    function loadTokens() {
+      cachedAutomationGet(`${projectId}:tokens`, () => api.getTriggerTokens(projectId))
+        .then(data => { if (!cancelled) setTokenCount(parseTokenCount(data)); })
+        .catch(() => { if (!cancelled) setTokenCount(0); });
+    }
+    function loadSchedule() {
+      cachedAutomationGet(`${projectId}:schedule`, () => api.getSchedule(projectId))
+        .then(data => { if (!cancelled) setHasSchedule(parseHasSchedule(data)); })
+        .catch(() => { if (!cancelled) setHasSchedule(false); });
+    }
+    loadTokens();
+    loadSchedule();
+
+    // Refetch when a sibling component invalidates this project's status.
+    const unsubscribe = subscribeAutomationStatus((pid, kind) => {
+      if (pid !== projectId) return;
+      if (!kind || kind === "tokens")   loadTokens();
+      if (!kind || kind === "schedule") loadSchedule();
+    });
+
+    return () => { cancelled = true; unsubscribe(); };
   }, [projectId]);
 
   return { tokenCount, hasSchedule };
