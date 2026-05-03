@@ -909,7 +909,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 - `backend/src/routes/projects.js` — profile CRUD endpoints
 - `backend/src/pipeline/stateExplorer.js` — accept `profileId` param
 - `frontend/src/pages/ProjectDetail.jsx` — credential profiles panel
-- `frontend/src/components/shared/TestDials.jsx` — connect `multi_role` dial to profile selector
+- `frontend/src/components/test/TestConfig.jsx` — connect `multi_role` dial to profile selector (the legacy `TestDials.jsx` was migrated into the unified `TestConfig` surface used by the Test Lab page)
 
 **Dependencies:** None
 
