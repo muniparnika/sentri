@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Play, RefreshCw, Ban,
-  Globe, FlaskConical, Search, ArrowRight, Zap, X,
+  Globe, SquareCheckBig, Search, ArrowRight, Zap, X,
   CheckCircle2, XCircle, Video,
 } from "lucide-react";
 import useProjectData from "../hooks/useProjectData";
@@ -24,7 +24,7 @@ const STATUS_FILTERS = [
 ];
 
 const TYPE_FILTERS = [
-  { key: "test_run",  tooltip: "Test Runs", activeColor: "var(--accent)", activeBg: "var(--accent-bg)",      icon: <FlaskConical size={14} /> },
+  { key: "test_run",  tooltip: "Test Runs", activeColor: "var(--accent)", activeBg: "var(--accent-bg)",      icon: <SquareCheckBig size={14} /> },
   { key: "crawl",     tooltip: "Crawls",    activeColor: "#7c3aed",       activeBg: "rgba(124,58,237,0.1)",   icon: <Globe        size={14} /> },
   { key: "generate",  tooltip: "Generate",  activeColor: "#d97706",       activeBg: "rgba(217,119,6,0.1)",    icon: <Zap          size={14} /> },
   // Recorder sessions — backend persists these with `type: "record"` (see
@@ -38,7 +38,7 @@ const TYPE_FILTERS = [
 function TypeBadge({ type }) {
   if (type === "test_run") return (
     <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.78rem", color: "var(--accent)", fontWeight: 500 }}>
-      <FlaskConical size={12} /> Test Run
+      <SquareCheckBig size={12} /> Test Run
     </div>
   );
   if (type === "crawl") return (
