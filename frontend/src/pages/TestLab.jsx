@@ -723,13 +723,23 @@ export default function TestLab() {
           )}
         </button>
 
-        {/* Record action — right-aligned. Recording remains a modal because
-            the live screencast preview needs a focused overlay surface; the
-            Test Lab page only provides the launch point. Disabled until the
-            project list resolves so we have a valid `projectId` to seed. */}
+        {/* Record action — right-aligned, styled as a primary CTA so it
+            reads as a peer to the tabs rather than disappearing as a ghost
+            button. Recording remains a modal because the live screencast
+            preview needs a focused overlay surface; the Test Lab page only
+            provides the launch point. Disabled until a project is selected
+            so we have a valid `projectId` to seed. */}
         <button
-          className="btn btn-ghost btn-sm"
-          style={{ marginLeft: "auto", marginRight: 12, gap: 6 }}
+          className="btn btn-primary btn-sm"
+          style={{
+            marginLeft: "auto",
+            marginRight: 16,
+            gap: 6,
+            fontWeight: 600,
+            background: "var(--red)",
+            borderColor: "var(--red)",
+            color: "#fff",
+          }}
           onClick={() => setShowRecorder(true)}
           disabled={!selectedProject}
           title={selectedProject
@@ -737,7 +747,7 @@ export default function TestLab() {
             : "Select a project first"}
         >
           <Video size={14} />
-          Record
+          Record a test
         </button>
       </div>
 
