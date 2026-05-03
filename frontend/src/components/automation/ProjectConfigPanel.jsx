@@ -31,16 +31,19 @@ function useQualityStatus(projectId) {
   const [hasBudgets,  setHasBudgets]  = useState(null);
 
   useEffect(() => {
+    // Backend returns `{ qualityGates: {...} | null }` — unconfigured projects
+    // get `null`, not an empty object, so guard before calling Object.values().
     api.getQualityGates(projectId)
       .then(data => {
-        const g = data?.gates ?? data ?? {};
+        const g = data?.qualityGates ?? {};
         setHasGates(Object.values(g).some(v => v !== null && v !== undefined && v !== ""));
       })
       .catch(() => setHasGates(false));
 
+    // Backend returns `{ webVitalsBudgets: {...} | null }` — same shape as above.
     api.getWebVitalsBudgets(projectId)
       .then(data => {
-        const b = data?.budgets ?? data ?? {};
+        const b = data?.webVitalsBudgets ?? {};
         setHasBudgets(Object.values(b).some(v => v !== null && v !== undefined && v !== ""));
       })
       .catch(() => setHasBudgets(false));

@@ -44,9 +44,9 @@ function useProjectStatus(projectId, enabled) {
     api.getTriggerTokens(projectId)
       .then(data => setTokenCount((data?.tokens ?? data ?? []).length))
       .catch(() => setTokenCount(0));
-    // Fetch schedule status
+    // Fetch schedule status — backend returns `{ schedule: { enabled, ... } | null }`
     api.getSchedule(projectId)
-      .then(data => setHasSchedule(Boolean(data?.enabled)))
+      .then(data => setHasSchedule(Boolean(data?.schedule?.enabled)))
       .catch(() => setHasSchedule(false));
   }, [projectId, enabled]);
 
