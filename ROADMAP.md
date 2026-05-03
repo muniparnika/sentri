@@ -570,7 +570,7 @@ The following items have been verified complete against the codebase and are **n
 - `backend/src/pipeline/crawlBrowser.js`, `stateExplorer.js` — accept `browser` param, swap CDP calls for cross-engine equivalents
 - `backend/src/runner/recorder.js` — accept `browser`, swap screencast impl
 - `backend/src/runner/screencast.js` — dual-path (CDP for chromium, screenshot poll fallback)
-- `frontend/src/components/run/RecorderModal.jsx`, `frontend/src/components/run/CrawlProjectModal.jsx` — browser selector
+- `frontend/src/components/run/RecorderModal.jsx`, `frontend/src/pages/TestLab.jsx` — browser selector (the legacy `CrawlProjectModal` was migrated into the Test Lab page)
 
 **Dependencies:** DIF-002 ✅, DIF-002b (baselines must be browser-aware before crawler variability amplifies diff noise)
 

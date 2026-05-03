@@ -367,6 +367,30 @@ export default function TestLab() {
   const recentQueueRuns = allRecentRuns.filter(r => r.status !== "running").slice(0, 8);
 
   // ── Actions ──
+  /**
+   * Build the backend-compatible `dialsConfig` payload from the Test Lab UI
+   * state. The backend (`POST /projects/:id/crawl` and `/tests/generate`) only
+   * reads `dialsConfig` from the request body — flat top-level fields like
+   * `mode`, `coverage`, `profile`, etc. are ignored silently, so we roll them
+   * all up here to preserve parity with the old `CrawlProjectModal` /
+   * `GenerateTestModal` contract.
+   */
+  function buildDialsConfig() {
+    const countMap = {
+      ai: "ai_decides",
+      5: 5, 10: 10, 20: 20, 50: 50,
+    };
+    return {
+      // "link" in the UI ↔ "crawl" in the backend validator
+      exploreMode: discoveryMode === "state" ? "state" : "crawl",
+      testCount: countMap[testCount] ?? "ai_decides",
+      coverage,
+      perspectives,
+      quality,
+      profile,
+    };
+  }
+
   async function handleStartCrawl() {
     if (!selectedId) return;
     setError(null);
@@ -374,15 +398,7 @@ export default function TestLab() {
     setLogLines([]);
     setRunData(null);
     try {
-      const body = {
-        mode: discoveryMode,
-        coverage,
-        perspectives,
-        quality,
-        testCount: testCount === "ai" ? null : parseInt(testCount, 10),
-        profile,
-      };
-      const { runId } = await api.crawl(selectedId, body);
+      const { runId } = await api.crawl(selectedId, { dialsConfig: buildDialsConfig() });
       setActiveRun({ runId, projectId: selectedId, type: "crawl" });
       setInnerTab("pipeline");
     } catch (err) {
@@ -399,10 +415,22 @@ export default function TestLab() {
     setLogLines([]);
     setRunData(null);
     try {
+      // Backend requires `name` — derive it from the first line of the
+      // requirement (trimmed to a reasonable length). The full requirement
+      // becomes the `description`, which is what the prompt pipeline consumes.
+      const reqText = requirement.trim();
+      const firstLine = reqText.split("\n")[0].trim();
+      const derivedName = firstLine.length > 80
+        ? firstLine.slice(0, 77) + "…"
+        : firstLine;
       const { runId } = await api.generateTest(selectedId, {
-        requirement: requirement.trim(),
-        coverage,
-        quality,
+        name: derivedName,
+        description: reqText,
+        dialsConfig: {
+          coverage,
+          quality,
+          profile,
+        },
       });
       setActiveRun({ runId, projectId: selectedId, type: "requirement" });
       setInnerTab("pipeline");

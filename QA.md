@@ -1017,8 +1017,8 @@ For each modal: open → fill → submit → close behavior.
 
 | Modal | Trigger | Verify |
 |---|---|---|
-| **CrawlProjectModal** | "Crawl" quick action | Default project pre-selected; mode picker (Link Crawl / State Exploration); Test Dials presets; submit kicks off crawl + closes modal. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests |
-| **GenerateTestModal** | "Generate Test" | **Default output: UI / browser tests** from the crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests |
+| **Test Lab — Crawl & Generate tab** | Tests page "Crawl" quick action (now navigates to `/projects/:id/test-lab?tab=crawl`) | Project pre-selected via the route; mode picker (Link Crawl / State Exploration); Coverage / Perspectives / Quality chip groups; Test Count + Profile selects; Start button kicks off the 8-stage SSE pipeline. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests. Migrated from the legacy `CrawlProjectModal` (now removed). |
+| **Test Lab — Generate from Requirement tab** | Tests page "Generate" quick action (now navigates to `/projects/:id/test-lab?tab=requirement`) | Project pre-selected via the route; large requirement / user-story textarea; example prompts; Coverage + Quality chips. **Default output: UI / browser tests** from the supplied requirement plus crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests. Migrated from the legacy `GenerateTestModal` (now removed). |
 | **RunRegressionModal** | "Run Regression" | Project picker, browser selector (Chromium/Firefox/WebKit), device dropdown, locale/timezone/geolocation (AUTO-007), network condition (`fast` / `slow3g` / `offline`, AUTO-006), parallelism 1–10; submit opens RunDetail |
 | **ReviewModal** | "Review" / opening a Draft | Step-by-step approval queue; Approve/Reject/Skip; advances to next test |
 | **RecorderModal** | "Record a test" | Live CDP screencast; record/stop controls; on stop saves Draft |
@@ -1035,7 +1035,7 @@ For each modal: open → fill → submit → close behavior.
 
 > Scope: this section covers **API test** generation paths only. UI / browser tests are generated from crawls and the Recorder — see [Tests Page §3](#-tests-page) and [Recorder](#-recorder).
 
-**Preconditions:** GenerateTestModal open.
+**Preconditions:** Test Lab page open at `/projects/:id/test-lab?tab=requirement` (formerly the `GenerateTestModal`).
 
 **Steps & expected:**
 1. **OpenAPI import** — upload a valid OpenAPI 3.x spec → tests generated cover documented endpoints with status + JSON-shape assertions.
@@ -1236,7 +1236,8 @@ Mark status per browser: ✅ pass · ❌ fail · ⚠️ partial · ⬜ not teste
 | **Runs list (`/runs`)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Project Detail (`/projects/:id`)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Bulk actions + keyboard shortcuts + ⌘K palette** | ⬜ | ⬜ | ⬜ | ⬜ | |
-| **Modals (Crawl / Generate / Run / Review / Recorder / AiFix)** | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Test Lab page (Crawl / Generate tabs)** | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Modals (Run / Review / Recorder / AiFix)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Imports (OpenAPI / HAR / API description)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Onboarding tour** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Demo mode + per-user quotas** | ⬜ | ⬜ | ⬜ | ⬜ | |
