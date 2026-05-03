@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
-    FlaskConical,
+    Atom,
 } from "lucide-react";
 import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -16,7 +16,7 @@ const NAV_GROUPS = [
       { to: "/dashboard", icon: Home, label: "Dashboard", tour: "tour-dashboard" },
       { to: "/projects",  icon: FolderKanban, label: "Projects",  tour: "tour-projects" },
       { to: "/tests",     icon: SquareCheckBig, label: "Tests", tour: "tour-tests" },
-      { to: "/test-lab",  icon: FlaskConical, label: "Test Lab" },
+      { to: "/test-lab",  icon: Atom, label: "Test Lab" },
     ],
   },
   {

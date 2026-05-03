@@ -16,7 +16,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
-  ArrowRight, ChevronRight, RotateCcw, FlaskConical, Video,
+  ArrowRight, ChevronRight, RotateCcw, Atom, Video,
   Upload, Paperclip, Trash2, Copy, Check,
 } from "lucide-react";
 import { api } from "../api.js";
@@ -826,7 +826,7 @@ export default function TestLab() {
       {/* ── Tab bar ── */}
       <div className="tl-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 24, paddingRight: 24, borderRight: "1px solid var(--border)" }}>
-          <FlaskConical size={16} style={{ color: "var(--accent)" }} />
+          <Atom size={16} style={{ color: "var(--accent)" }} />
           <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--text)" }}>Test Lab</span>
           <span style={{ fontSize: "0.78rem", color: "var(--text3)", fontWeight: 400 }}>AI test generation workspace</span>
         </div>
