@@ -26,27 +26,41 @@ const INNER_TABS = [
  * Fetch whether this project has any gates or budgets configured,
  * for the header status chips.
  */
+// Module-level dedup cache — see ProjectAutomationCard for rationale.
+const _qualityCache = new Map();
+function _cachedGet(key, fetcher) {
+  if (!_qualityCache.has(key)) _qualityCache.set(key, fetcher().catch(err => {
+    _qualityCache.delete(key);
+    throw err;
+  }));
+  return _qualityCache.get(key);
+}
+
 function useQualityStatus(projectId) {
   const [hasGates,    setHasGates]    = useState(null);
   const [hasBudgets,  setHasBudgets]  = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     // Backend returns `{ qualityGates: {...} | null }` — unconfigured projects
     // get `null`, not an empty object, so guard before calling Object.values().
-    api.getQualityGates(projectId)
+    _cachedGet(`${projectId}:gates`, () => api.getQualityGates(projectId))
       .then(data => {
+        if (cancelled) return;
         const g = data?.qualityGates ?? {};
         setHasGates(Object.values(g).some(v => v !== null && v !== undefined && v !== ""));
       })
-      .catch(() => setHasGates(false));
+      .catch(() => { if (!cancelled) setHasGates(false); });
 
     // Backend returns `{ webVitalsBudgets: {...} | null }` — same shape as above.
-    api.getWebVitalsBudgets(projectId)
+    _cachedGet(`${projectId}:budgets`, () => api.getWebVitalsBudgets(projectId))
       .then(data => {
+        if (cancelled) return;
         const b = data?.webVitalsBudgets ?? {};
         setHasBudgets(Object.values(b).some(v => v !== null && v !== undefined && v !== ""));
       })
-      .catch(() => setHasBudgets(false));
+      .catch(() => { if (!cancelled) setHasBudgets(false); });
+    return () => { cancelled = true; };
   }, [projectId]);
 
   return { hasGates, hasBudgets };

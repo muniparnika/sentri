@@ -14,7 +14,7 @@
  * Each project renders inside its own accordion within the relevant tab.
  */
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Zap, FolderOpen, ShieldCheck, Plug, Code2,
@@ -94,15 +94,32 @@ export default function Automation() {
           CI/CD triggers, scheduled runs, and integrations for your projects
         </p>
 
-        {/* Top-level tab bar */}
-        <div className="auto-page-tabs">
-          {PAGE_TABS.map(tab => {
+        {/* Top-level tab bar — WAI-ARIA tabs pattern with arrow-key navigation */}
+        <div className="auto-page-tabs" role="tablist" aria-label="Automation sections">
+          {PAGE_TABS.map((tab, idx) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
-                className={`auto-page-tab ${activeTab === tab.id ? "active" : ""}`}
+                id={`auto-tab-${tab.id}`}
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`auto-tabpanel-${tab.id}`}
+                tabIndex={isActive ? 0 : -1}
+                className={`auto-page-tab ${isActive ? "active" : ""}`}
                 onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+                  e.preventDefault();
+                  let nextIdx = idx;
+                  if (e.key === "ArrowRight") nextIdx = (idx + 1) % PAGE_TABS.length;
+                  else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + PAGE_TABS.length) % PAGE_TABS.length;
+                  else if (e.key === "Home") nextIdx = 0;
+                  else if (e.key === "End") nextIdx = PAGE_TABS.length - 1;
+                  setActiveTab(PAGE_TABS[nextIdx].id);
+                  document.getElementById(`auto-tab-${PAGE_TABS[nextIdx].id}`)?.focus();
+                }}
               >
                 <Icon size={13} />
                 {tab.label}
@@ -115,7 +132,7 @@ export default function Automation() {
       {/* ── Tab: Triggers & Schedules ── */}
       {activeTab === "triggers" && (
         projects.length === 0 ? <EmptyProjects navigate={navigate} /> : (
-          <div className="auto-tab-body">
+          <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-triggers" aria-labelledby="auto-tab-triggers">
             {projects.map((p, i) => (
               <ProjectAutomationCard
                 key={p.id}
@@ -132,7 +149,7 @@ export default function Automation() {
       {/* ── Tab: Quality Gates ── */}
       {activeTab === "quality" && (
         projects.length === 0 ? <EmptyProjects navigate={navigate} /> : (
-          <div className="auto-tab-body">
+          <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-quality" aria-labelledby="auto-tab-quality">
             {projects.map((p, i) => (
               <ProjectQualityCard
                 key={p.id}
@@ -148,14 +165,14 @@ export default function Automation() {
 
       {/* ── Tab: Integrations ── */}
       {activeTab === "integrations" && (
-        <div className="auto-tab-body">
+        <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-integrations" aria-labelledby="auto-tab-integrations">
           <IntegrationCards onScrollToSnippets={() => setActiveTab("snippets")} />
         </div>
       )}
 
       {/* ── Tab: Snippets ── */}
       {activeTab === "snippets" && (
-        <div className="auto-tab-body">
+        <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-snippets" aria-labelledby="auto-tab-snippets">
           <IntegrationSnippets
             projects={projects}
             defaultProjectId={focusProjectId || projects[0]?.id}
