@@ -653,6 +653,14 @@
   overflow: hidden;
 }
 
+/* Discovery header — sits above the sub-tab strip on the Crawl tab so the
+   pick-a-URL vs. explore-state decision is the first thing the operator sees. */
+.tc-discovery {
+  padding: 14px 16px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
 .tc-tabs {
   display: flex;
   align-items: center;

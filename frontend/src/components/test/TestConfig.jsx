@@ -56,6 +56,11 @@ function RadioChips({ options, value, onChange }) {
     </div>
   );
 }
+// Sub-tab order. The Explorer tab is only shown as a sub-tab on flows that
+// don't surface Discovery Mode at the top of the panel — when
+// `showDiscoveryHeader` is true (the new Crawl-tab behaviour), Discovery +
+// explorer tuning live in a prominent header section instead of being buried
+// under a tab, so the sub-tab is hidden.
 const CONFIG_TABS = [
   { id: "dials",    label: "Dials",    icon: SlidersHorizontal },
   { id: "explorer", label: "Explorer", icon: Cpu },
@@ -68,9 +73,16 @@ const CONFIG_TABS = [
  * @param {Function} props.onChange       - Called with the next dialsConfig.
  * @param {string}   [props.activeTab]    - Controlled active sub-tab id.
  * @param {Function} [props.onTabChange]  - Called when the user clicks a sub-tab.
- * @param {boolean}  [props.showExplorer] - Hide the Explorer tab when the host
- *   flow doesn't crawl (e.g. Generate from Requirement). Default true.
- * @param {boolean}  [props.showFooter]   - Show the Save / Reset footer. Default true.
+ * @param {boolean}  [props.showExplorer]        - Hide the Explorer sub-tab when
+ *   the host flow doesn't crawl (e.g. Generate from Requirement). Default true.
+ *   Ignored when `showDiscoveryHeader` is true — discovery mode then lives in a
+ *   header section above the sub-tab strip instead of being buried in a tab.
+ * @param {boolean}  [props.showDiscoveryHeader] - Render Discovery Mode (and
+ *   explorer tuning, when "State exploration" is picked) as a prominent top-of-
+ *   panel section above the sub-tab strip. Used by the Crawl tab so the most
+ *   important decision — pick a URL or explore state — isn't hidden behind a
+ *   sub-tab click. Default false (sub-tab behaviour).
+ * @param {boolean}  [props.showFooter]          - Show the Save / Reset footer. Default true.
  */
 export default function TestConfig({
   value,
@@ -78,6 +90,7 @@ export default function TestConfig({
   activeTab,
   onTabChange,
   showExplorer = true,
+  showDiscoveryHeader = false,
   showFooter   = true,
 }) {
   const cfg = useMemo(() => ({
@@ -134,10 +147,92 @@ export default function TestConfig({
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1800);
   }
-  const visibleTabs = CONFIG_TABS.filter(t => t.id !== "explorer" || showExplorer);
+  // Hide the Explorer sub-tab when discovery mode is being rendered as a
+  // header section (Crawl tab) — the same controls would otherwise appear
+  // twice. Also honours the `showExplorer` flag for flows that don't crawl.
+  const visibleTabs = CONFIG_TABS.filter(t =>
+    t.id !== "explorer" || (showExplorer && !showDiscoveryHeader),
+  );
   const activeCount = countActiveDials(cfg);
   return (
     <div className="tc-wrap">
+
+      {/* ── Discovery header (Crawl tab only) ──
+          Pick-a-URL vs. explore-state is the single most consequential choice
+          on the Crawl flow, so it gets its own prominent section above the
+          sub-tab strip rather than hiding under an "Explorer" tab. State-
+          explorer intensity + custom tuning render right below when "State
+          exploration" is selected, so the operator never has to context-
+          switch to find the knobs. */}
+      {showDiscoveryHeader && (
+        <div className="tc-discovery">
+          <div className="tl-section" style={{ marginBottom: cfg.exploreMode === "state" ? 14 : 0 }}>
+            <div className="tl-section-label">Discovery mode</div>
+            <div className="tl-mode-grid">
+              {EXPLORE_MODE_OPTIONS.map(opt => (
+                <div
+                  key={opt.id}
+                  className={`tl-mode-card${cfg.exploreMode === opt.id ? " tl-mode-card--selected" : ""}`}
+                  onClick={() => update({ exploreMode: opt.id })}
+                >
+                  <div className="tl-mode-icon">{opt.id === "crawl" ? "🔗" : "⚡"}</div>
+                  <div className="tl-mode-title">{opt.label}</div>
+                  <div className="tl-mode-desc">{opt.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {cfg.exploreMode === "state" && (
+            <>
+              <div className="tl-section">
+                <div className="tl-section-label">Explorer intensity</div>
+                <div className="tl-chip-row">
+                  {EXPLORER_INTENSITY_PRESETS.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`tl-chip${activePreset === p.id ? " tl-chip--on" : ""}`}
+                      onClick={() => onChange?.({ ...cfg, ...p.values })}
+                      title={p.desc}
+                    >
+                      {p.icon} {p.label} <span style={{ color: "var(--text3)", marginLeft: 4 }}>{p.desc}</span>
+                    </button>
+                  ))}
+                  {activePreset === "custom" && (
+                    <span className="tl-chip tl-chip--on" style={{ pointerEvents: "none" }}>Custom</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="tl-section" style={{ marginBottom: 0 }}>
+                <div className="tl-section-label">Custom tuning</div>
+                <div className="tc-sliders">
+                  {EXPLORER_TUNING.map(t => (
+                    <div key={t.id} className="tc-slider">
+                      <div className="tc-slider-head">
+                        <span className="tc-slider-label">{t.label}</span>
+                        <span className="tc-slider-value">{cfg[t.id] ?? t.defaultVal}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={t.min}
+                        max={t.max}
+                        step={t.step}
+                        value={cfg[t.id] ?? t.defaultVal}
+                        onChange={e => onChange?.({ ...cfg, [t.id]: parseInt(e.target.value, 10) })}
+                        style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+                      />
+                      <div className="tc-slider-desc">{t.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ── Sub-tab strip ── */}
       <div className="tc-tabs">
         {visibleTabs.map(t => {

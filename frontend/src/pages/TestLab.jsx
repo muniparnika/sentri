@@ -1262,6 +1262,12 @@ export default function TestLab() {
                   value={dialsConfig}
                   onChange={setDialsConfig}
                   showExplorer={tab === "crawl"}
+                  // Crawl tab: pick-a-URL vs. explore-state is the most
+                  // consequential choice on this flow, so we lift it out of
+                  // the sub-tab strip and render it as a prominent header.
+                  // Requirement tab keeps the sub-tab layout (no crawl ⇒ no
+                  // discovery decision to make).
+                  showDiscoveryHeader={tab === "crawl"}
                 />
               </div>
             </div>
