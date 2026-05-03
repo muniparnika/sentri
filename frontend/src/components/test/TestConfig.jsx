@@ -62,10 +62,10 @@ function RadioChips({ options, value, onChange }) {
 // explorer tuning live in a prominent header section instead of being buried
 // under a tab, so the sub-tab is hidden.
 const CONFIG_TABS = [
-  { id: "dials",    label: "Dials",    icon: SlidersHorizontal },
-  { id: "explorer", label: "Explorer", icon: Cpu },
-  { id: "options",  label: "Options",  icon: Settings2 },
-  { id: "advanced", label: "Advanced", icon: Globe },
+  { id: "dials",    label: "Coverage",  icon: SlidersHorizontal },
+  { id: "explorer", label: "Discovery", icon: Cpu },
+  { id: "options",  label: "Quality",   icon: Settings2 },
+  { id: "advanced", label: "Advanced",  icon: Globe },
 ];
 /**
  * @param {Object}   props
@@ -508,4 +508,3 @@ export default function TestConfig({
     </div>
   );
 }
-
