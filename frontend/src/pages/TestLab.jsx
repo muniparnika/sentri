@@ -16,7 +16,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Link2, Zap, Play, StopCircle, CheckCircle2, Clock,
-  ArrowRight, ChevronRight, RotateCcw, FlaskConical,
+  ArrowRight, ChevronRight, RotateCcw, FlaskConical, Video,
 } from "lucide-react";
 import { api } from "../api.js";
 import { useRunSSE } from "../hooks/useRunSSE.js";
@@ -24,6 +24,7 @@ import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectD
 import usePageTitle from "../hooks/usePageTitle.js";
 import { fmtRelativeDate } from "../utils/formatters.js";
 import SiteGraph from "../components/crawl/SiteGraph.jsx";
+import RecorderModal from "../components/run/RecorderModal.jsx";
 
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -373,6 +374,13 @@ export default function TestLab() {
   // ── Queue state ──
   const [queueFilter, setQueueFilter]   = useState("all");
 
+  // ── Recorder state ──
+  // Recording stays as a modal (not a tab) because it's inherently
+  // overlay-oriented — the live screencast preview needs a focused surface.
+  // The Test Lab page just provides a launch point so users don't have to
+  // bounce back to the Tests page to start a recording session.
+  const [showRecorder, setShowRecorder] = useState(false);
+
   // ── Seed selected project from route / project list ──
   // `useProjectData` owns the actual fetch; this effect just syncs the
   // currently-selected project id to whatever the route / loaded project list
@@ -714,6 +722,23 @@ export default function TestLab() {
             <span className="tl-tab-badge">{activeQueueRuns.length}</span>
           )}
         </button>
+
+        {/* Record action — right-aligned. Recording remains a modal because
+            the live screencast preview needs a focused overlay surface; the
+            Test Lab page only provides the launch point. Disabled until the
+            project list resolves so we have a valid `projectId` to seed. */}
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ marginLeft: "auto", marginRight: 12, gap: 6 }}
+          onClick={() => setShowRecorder(true)}
+          disabled={!selectedProject}
+          title={selectedProject
+            ? `Record a test in ${selectedProject.name}`
+            : "Select a project first"}
+        >
+          <Video size={14} />
+          Record
+        </button>
       </div>
 
       {/* ── Queue tab ── */}
@@ -772,6 +797,27 @@ export default function TestLab() {
             </>
           )}
         </div>
+      )}
+
+      {/* Recorder modal — launched from the topbar Record button. On save we
+          bust the project cache (so the new draft test shows up in the Tests
+          page and the launch panel's "Existing tests" stat) and navigate the
+          user to the test detail view, mirroring Tests.jsx's onSaved flow. */}
+      {showRecorder && selectedProject && (
+        <RecorderModal
+          open={showRecorder}
+          onClose={() => setShowRecorder(false)}
+          projectId={selectedProject.id}
+          projects={projects}
+          defaultUrl={selectedProject.url || ""}
+          onSaved={(t) => {
+            // Use the saved test's projectId — the user may have switched
+            // projects inside the modal before launching the recording.
+            invalidateProjectDataCache(t?.projectId || selectedProject.id);
+            setShowRecorder(false);
+            navigate(`/tests/${t.id}`);
+          }}
+        />
       )}
 
       {/* ── Crawl & Generate / Requirement tabs — 3-pane grid ── */}
