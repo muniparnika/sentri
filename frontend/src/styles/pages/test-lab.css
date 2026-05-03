@@ -510,13 +510,16 @@
    Either way the content never escapes the card: the log clips with its own
    vertical scrollbar, never with horizontal overflow into siblings. */
 .tl-live-log {
-  background: #0d1117;
+  /* Palette mirrors `.log-box` in components.css so Test Lab's live output
+     reads identically to the Run Detail activity log — same dark surface,
+     same default text colour, same ok/error/warn/info accents. */
+  background: #0f1117;
   border-top: 1px solid var(--border);
   padding: 10px 14px;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   color: #8b9cf4;
-  line-height: 1.75;
+  line-height: 1.9;
   /* Cap height in the standalone case so the log doesn't grow indefinitely
      when wrapped in flex parents that don't supply their own bound. The
      `.tl-pipeline-log-col` override sets `height: auto` + `flex: 1` so the
@@ -530,9 +533,16 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.tl-log-ok   { color: #4ade80; }
-.tl-log-info { color: #60a5fa; }
-.tl-log-dim  { color: #4a5070; }
+/* Line-level accents match `.log-ok` / `.log-error` / `.log-warn` / `.log-info`
+   in `frontend/src/styles/components.css` so users see a consistent palette
+   across Test Lab and Run Detail's activity log. `tl-log-dim` was previously
+   `#4a5070` which is unreadable on the `#0f1117` surface; default-styled
+   lines now keep the parent's `#8b9cf4` for full legibility. */
+.tl-log-ok    { color: #4ade80; }
+.tl-log-error { color: #f87171; }
+.tl-log-warn  { color: #fbbf24; }
+.tl-log-info  { color: #60a5fa; }
+.tl-log-dim   { color: inherit; }
 
 /* ── Run stats (right panel during run) ──────────────────────────────────────── */
 .tl-run-stats {

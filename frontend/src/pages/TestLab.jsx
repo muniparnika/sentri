@@ -225,8 +225,14 @@ function LiveLog({ lines }) {
   return (
     <div className="tl-live-log">
       {lines.slice(-40).map((line, i) => {
+        // Prefix-based classifier — mirrors backend log conventions
+        // (`✓` success, `→` info, `✗`/`Error` failure, `⚠`/`Warning` warn).
+        // Anything else inherits the parent colour so default lines stay
+        // readable on the dark surface.
         const cls = line.startsWith("✓") ? "tl-log-ok"
                   : line.startsWith("→") ? "tl-log-info"
+                  : (line.startsWith("✗") || /^(error|fail)/i.test(line)) ? "tl-log-error"
+                  : (line.startsWith("⚠") || /^warn/i.test(line)) ? "tl-log-warn"
                   : "tl-log-dim";
         return <div key={i} className={cls}>{line}</div>;
       })}
