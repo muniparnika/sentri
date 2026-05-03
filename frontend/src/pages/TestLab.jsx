@@ -813,6 +813,11 @@ export default function TestLab() {
                   <LiveLog lines={logLines} />
                 </div>
               )}
+
+              {/* Always show log preview at bottom in pipeline view */}
+              {innerTab === "pipeline" && logLines.length > 0 && (
+                <LiveLog lines={logLines} />
+              )}
             </div>
           ) : (
             // ── Idle / Done: configuration ──
