@@ -12,7 +12,7 @@
 .tl-wrap {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 52px); /* full viewport minus top navbar */
+  height: calc(100vh - var(--topbar-height, 56px)); /* full viewport minus top navbar */
   overflow: hidden;
 }
 
@@ -984,5 +984,115 @@
   .tl-tab-btn {
     padding: 12px 12px;
     font-size: 0.8rem;
+  }
+}
+
+/* ── Inline pipeline 3-sub-column view ──────────────────────────────────────
+   Shown when a run is active and innerTab === "pipeline".
+   Mirrors the proposal mockup: Pipeline list | Live Output | So Far stats.
+   All three columns share the full height of tl-run-center so the log
+   terminal doesn't clip and the stats column doesn't float. */
+
+.tl-pipeline-view {
+  display: grid;
+  grid-template-columns: 220px 1fr 200px;
+  flex: 1;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+}
+
+/* Sub-col 1: stage list */
+.tl-pipeline-col {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 14px;
+}
+
+.tl-pipeline-progress-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text2);
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+/* Override .tl-pipeline padding — it's already set in tl-pipeline-col */
+.tl-pipeline-col .tl-pipeline {
+  padding: 0;
+  margin-top: 4px;
+}
+
+/* Sub-col label shared by log + stats columns */
+.tl-pipeline-col-label {
+  padding: 8px 12px 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Sub-col 2: live log */
+.tl-pipeline-log-col {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Make LiveLog fill the remaining height */
+.tl-pipeline-log-col .tl-live-log {
+  flex: 1;
+  height: auto;
+  border-top: none;
+}
+
+/* Sub-col 3: so far stats */
+.tl-pipeline-stats-col {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-bottom: 14px;
+}
+
+.tl-pipeline-stats-col .tl-run-stats {
+  padding: 12px 12px 0;
+  margin-bottom: 0;
+}
+
+.tl-pipeline-stats-col .tl-run-stat {
+  padding: 8px 10px;
+}
+
+.tl-pipeline-stats-col .tl-run-stat-val {
+  font-size: 1.35rem;
+}
+
+.tl-pipeline-stats-col .btn {
+  margin: 8px 12px 0;
+  width: calc(100% - 24px);
+}
+
+/* Responsive: collapse to 2 cols at 1100px (hide log col) */
+@media (max-width: 1100px) {
+  .tl-pipeline-view {
+    grid-template-columns: 200px 1fr;
+  }
+  .tl-pipeline-log-col {
+    display: none;
+  }
+}
+
+/* Responsive: collapse to 1 col at 700px */
+@media (max-width: 700px) {
+  .tl-pipeline-view {
+    grid-template-columns: 1fr;
+  }
+  .tl-pipeline-stats-col {
+    display: none;
   }
 }
