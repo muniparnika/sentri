@@ -785,13 +785,72 @@ export default function TestLab() {
             )}
           </div>
 
-          {/* ── Middle: Configuration / Running view ── */}
-          {isRunActive ? (
-            // ── Running: pipeline + live log ──
+          {/* ── Middle: Configuration / Running / Completed view ── */}
+          {/* Show the run view (pipeline / sitegraph / logs) whenever a run is
+              attached — running, completed, or failed. The user dismisses
+              explicitly via the banner buttons below; without this, completed
+              crawls would snap back to the config panel and the pipeline +
+              site graph would vanish. */}
+          {activeRun ? (
+            // ── Attached run: pipeline + site graph + live log ──
             <div className="tl-run-center">
               <div className="tl-run-label">
                 {selectedProject?.name?.toUpperCase()} · {activeRun?.type === "crawl" ? "LINK CRAWL" : "REQUIREMENT"}
+                {isRunDone && <span style={{ marginLeft: 8, color: "var(--green)", fontWeight: 700 }}>· COMPLETED</span>}
+                {isRunFailed && (
+                  <span style={{ marginLeft: 8, color: "var(--red)", fontWeight: 700 }}>
+                    · {runStatus === "aborted" ? "ABORTED" : "FAILED"}
+                  </span>
+                )}
               </div>
+
+              {/* Terminal banners — rendered at the top of the run view so the
+                  pipeline / logs stay visible underneath for review. */}
+              {isRunDone && (
+                <div className="banner banner-success" style={{ margin: "10px 14px 0" }}>
+                  <CheckCircle2 size={16} />
+                  <div>
+                    <strong>Generation complete</strong> — {runData?.testsGenerated ?? 0} tests generated.
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 10 }}
+                      onClick={() => navigate(`/runs/${activeRun.runId}`)}
+                    >
+                      View run <ChevronRight size={12} />
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 6 }}
+                      onClick={handleReset}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {isRunFailed && (
+                <div className="banner banner-error" style={{ margin: "10px 14px 0" }}>
+                  <div>
+                    <strong>{runStatus === "aborted" ? "Run aborted" : "Run failed"}</strong>
+                    {runData?.error ? ` — ${runData.error}` : "."}
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 10 }}
+                      onClick={() => navigate(`/runs/${activeRun.runId}`)}
+                    >
+                      View run <ChevronRight size={12} />
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 6 }}
+                      onClick={handleReset}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {(() => {
                 // Site Graph is only meaningful for crawl runs — the
@@ -862,55 +921,11 @@ export default function TestLab() {
             <div className="tl-config">
               <div className="tl-config-scroll">
 
-                {/* Error banner */}
+                {/* Error banner — launch-time errors only; run-terminal
+                    banners live inside the run-center view above. */}
                 {error && (
                   <div className="banner banner-error mb-md">
                     {error}
-                  </div>
-                )}
-
-                {/* Done banner */}
-                {isRunDone && (
-                  <div className="banner banner-success mb-md">
-                    <CheckCircle2 size={16} />
-                    <div>
-                      <strong>Generation complete</strong> — {runData?.testsGenerated ?? 0} tests generated.
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        style={{ marginLeft: 10 }}
-                        onClick={() => navigate(`/runs/${activeRun.runId}`)}
-                      >
-                        View run <ChevronRight size={12} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Failure / aborted banner — without this, a server-side
-                    failure reported via SSE would silently drop the user back
-                    to the config panel with no feedback. */}
-                {isRunFailed && activeRun && (
-                  <div className="banner banner-error mb-md">
-                    <div>
-                      <strong>
-                        {runStatus === "aborted" ? "Run aborted" : "Run failed"}
-                      </strong>
-                      {runData?.error ? ` — ${runData.error}` : "."}
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        style={{ marginLeft: 10 }}
-                        onClick={() => navigate(`/runs/${activeRun.runId}`)}
-                      >
-                        View run <ChevronRight size={12} />
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-xs"
-                        style={{ marginLeft: 6 }}
-                        onClick={handleReset}
-                      >
-                        Dismiss
-                      </button>
-                    </div>
                   </div>
                 )}
 
@@ -1023,13 +1038,15 @@ export default function TestLab() {
           <div className="tl-panel">
             <div className="tl-panel-scroll">
 
-              {isRunActive ? (
-                // ── Running: live stats ──
+              {activeRun ? (
+                // ── Attached run: stats persist for running / completed / failed ──
                 <>
-                  <div className="tl-panel-section-label">So Far</div>
+                  <div className="tl-panel-section-label">
+                    {isRunActive ? "So Far" : isRunDone ? "Final" : "At Stop"}
+                  </div>
                   <div className="tl-run-stats">
                     <div className="tl-run-stat tl-run-stat--accent">
-                      <div className="tl-run-stat-val">{ps.rawTestsGenerated ?? 0}</div>
+                      <div className="tl-run-stat-val">{ps.rawTestsGenerated ?? runData?.testsGenerated ?? 0}</div>
                       <div className="tl-run-stat-lbl">Generated</div>
                     </div>
                     <div className="tl-run-stat tl-run-stat--amber">
@@ -1054,25 +1071,37 @@ export default function TestLab() {
                     <div
                       className="progress-bar-fill"
                       style={{
-                        width: runData?.currentStep != null
-                          ? `${Math.round(((runData.currentStep - 1) / 7) * 100)}%`
-                          : "0%",
+                        width: isRunDone
+                          ? "100%"
+                          : runData?.currentStep != null
+                            ? `${Math.round(((runData.currentStep - 1) / 7) * 100)}%`
+                            : "0%",
                       }}
                     />
                   </div>
 
-                  <button
-                    className="btn btn-ghost"
-                    style={{ width: "100%", justifyContent: "center", gap: 6 }}
-                    onClick={handleStop}
-                    disabled={stopLoading}
-                  >
-                    <StopCircle size={15} />
-                    {stopLoading ? "Stopping…" : "Stop run"}
-                  </button>
+                  {isRunActive ? (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ width: "100%", justifyContent: "center", gap: 6 }}
+                      onClick={handleStop}
+                      disabled={stopLoading}
+                    >
+                      <StopCircle size={15} />
+                      {stopLoading ? "Stopping…" : "Stop run"}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ width: "100%", justifyContent: "center", gap: 6 }}
+                      onClick={handleReset}
+                    >
+                      Dismiss &amp; configure new run
+                    </button>
+                  )}
                 </>
               ) : (
-                // ── Idle / Done: launch panel ──
+                // ── Idle: launch panel + cross-project active runs ──
                 <>
                   {tab === "crawl" && (
                     <>
