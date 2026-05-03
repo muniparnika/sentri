@@ -511,14 +511,15 @@
    vertical scrollbar, never with horizontal overflow into siblings. */
 .tl-live-log {
   /* `position: relative` so the absolute-positioned `.tl-log-copy` button
-     (pinned top-right) anchors to this surface rather than the page. */
+     (pinned top-right) anchors to this non-scrolling wrapper rather than to
+     the inner `.tl-live-log-scroll` surface — keeping it visually pinned as
+     the user scrolls through the log. */
   position: relative;
   /* Palette mirrors `.log-box` in components.css so Test Lab's live output
      reads identically to the Run Detail activity log — same dark surface,
      same default text colour, same ok/error/warn/info accents. */
   background: #0f1117;
   border-top: 1px solid var(--border);
-  padding: 10px 14px;
   font-family: var(--font-mono);
   font-size: 0.78rem;
   color: #8b9cf4;
@@ -530,7 +531,24 @@
   max-height: 220px;
   min-height: 0;
   flex: 0 0 auto;
+  /* Wrapper does NOT scroll — the inner `.tl-live-log-scroll` does. If
+     `overflow-y` were on this element, the absolute-positioned copy button
+     would scroll with the log content (absolute children of a scroll
+     container participate in its scroll). */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Inner scroll surface — owns the actual log content + scroll behaviour so
+   the copy button anchored to the outer wrapper stays pinned. Padding lives
+   here (not on the wrapper) so scrolled content doesn't bleed under the
+   pinned button. */
+.tl-live-log-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: 10px 14px;
   /* Wrap long URLs / stack frames instead of triggering horizontal scroll
      across the whole card. */
   overflow-wrap: anywhere;

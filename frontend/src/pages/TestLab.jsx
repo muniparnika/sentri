@@ -239,9 +239,10 @@ function LiveLog({ lines }) {
   return (
     <div className="tl-live-log">
       {/* Icon-only copy button pinned to the top-right of the log surface.
-          `tl-log-copy` is absolutely positioned in CSS so it floats above
-          the log content without altering the scroll geometry. Disabled
-          when the buffer is empty so users can't no-op-copy a blank log. */}
+          `tl-log-copy` is absolutely positioned against the non-scrolling
+          `.tl-live-log` wrapper so it stays in view as the user scrolls
+          through `.tl-live-log-scroll` below. Disabled when the buffer is
+          empty so users can't no-op-copy a blank log. */}
       <button
         type="button"
         className={`tl-log-copy${copied ? " tl-log-copy--copied" : ""}`}
@@ -252,20 +253,27 @@ function LiveLog({ lines }) {
       >
         {copied ? <Check size={13} /> : <Copy size={13} />}
       </button>
-      {lines.slice(-40).map((line, i) => {
-        // Backend emits lines as `[ISO timestamp] <emoji> <message>` (see
-        // `backend/src/utils/runLogger.js` and `backend/src/crawler.js`), so
-        // we can't anchor the classifier at index 0 — the leading bracketed
-        // timestamp pushes the emoji past the start. Scan for the first
-        // recognisable marker anywhere in the line; first match wins.
-        let cls = "tl-log-dim";
-        if (/[✅✓]/.test(line) || /\bPASSED\b/.test(line))           cls = "tl-log-ok";
-        else if (/[❌✗]/.test(line) || /\b(FAILED|ERROR)\b/i.test(line)) cls = "tl-log-error";
-        else if (/[⚠️]/.test(line) || /\bWARN(ING)?\b/i.test(line))     cls = "tl-log-warn";
-        else if (/[🏁🚀🕷️🔍🤖→▶]/.test(line))                          cls = "tl-log-info";
-        return <div key={i} className={cls}>{line}</div>;
-      })}
-      <div ref={endRef} />
+      {/* Inner scroll surface — the absolutely-positioned copy button above
+          stayed visually pinned only when the scroll happened on a separate
+          element. Co-locating `overflow-y: auto` on the parent caused the
+          button to scroll *with* the log content (absolute children of a
+          scroll container participate in its scroll). */}
+      <div className="tl-live-log-scroll">
+        {lines.slice(-40).map((line, i) => {
+          // Backend emits lines as `[ISO timestamp] <emoji> <message>` (see
+          // `backend/src/utils/runLogger.js` and `backend/src/crawler.js`), so
+          // we can't anchor the classifier at index 0 — the leading bracketed
+          // timestamp pushes the emoji past the start. Scan for the first
+          // recognisable marker anywhere in the line; first match wins.
+          let cls = "tl-log-dim";
+          if (/[✅✓]/.test(line) || /\bPASSED\b/.test(line))           cls = "tl-log-ok";
+          else if (/[❌✗]/.test(line) || /\b(FAILED|ERROR)\b/i.test(line)) cls = "tl-log-error";
+          else if (/[⚠️]/.test(line) || /\bWARN(ING)?\b/i.test(line))     cls = "tl-log-warn";
+          else if (/[🏁🚀🕷️🔍🤖→▶]/.test(line))                          cls = "tl-log-info";
+          return <div key={i} className={cls}>{line}</div>;
+        })}
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }
