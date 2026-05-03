@@ -88,6 +88,13 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
   let rejected = 0;
   for (const t of enhancedTests) {
     const issues = validateTest(t, project.url);
+    // CAP-003: validateTest() runs the secret scanner and annotates `t.secretScan`
+    // when findings exist. Promote that to a run-level flag here so callers
+    // (CI consumers, reviewer UI) can distinguish "rejected for malformed code"
+    // from "rejected because the AI leaked credentials into the test body".
+    if (t.secretScan?.blocked) {
+      run.secretScanBlocked = true;
+    }
     if (issues.length === 0) {
       validatedTests.push(t);
     } else {
