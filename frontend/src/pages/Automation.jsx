@@ -14,7 +14,7 @@
  * Each project renders inside its own accordion within the relevant tab.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Zap, FolderOpen, ShieldCheck, Plug, Code2,
@@ -28,21 +28,22 @@ import ProjectAutomationCard from "../components/automation/ProjectAutomationCar
 import ProjectQualityCard from "../components/automation/ProjectQualityCard.jsx";
 import IntegrationCards from "../components/automation/IntegrationCards.jsx";
 import IntegrationSnippets from "../components/automation/IntegrationSnippets.jsx";
+import { isValidPageTab } from "../utils/automationStatus.js";
 
 const PAGE_TABS = [
-  { id: "triggers",     label: "Triggers & Schedules", icon: Zap        },
-  { id: "quality",      label: "Quality Gates",        icon: ShieldCheck },
-  { id: "integrations", label: "Integrations",         icon: Plug        },
-  { id: "snippets",     label: "Snippets",             icon: Code2       },
+  { id: "triggers",     label: "Triggers & Schedules", icon: Zap,         emptyHint: "Create a project first, then configure CI/CD triggers and schedules here." },
+  { id: "quality",      label: "Quality Gates",        icon: ShieldCheck, emptyHint: "Create a project first, then configure quality gates and Web Vitals budgets here." },
+  { id: "integrations", label: "Integrations",         icon: Plug                                                                                                  },
+  { id: "snippets",     label: "Snippets",             icon: Code2                                                                                                 },
 ];
 
-function EmptyProjects({ navigate }) {
+function EmptyProjects({ navigate, hint }) {
   return (
     <div className="card" style={{ padding: 48, textAlign: "center" }}>
       <FolderOpen size={32} color="var(--text3)" style={{ marginBottom: 14 }} />
       <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 6 }}>No projects yet</div>
       <div style={{ fontSize: "0.85rem", color: "var(--text3)", marginBottom: 20 }}>
-        Create a project first, then configure CI/CD triggers and schedules here.
+        {hint}
       </div>
       <button className="btn btn-primary btn-sm" onClick={() => navigate("/projects/new")}>
         Create Project
@@ -54,7 +55,7 @@ function EmptyProjects({ navigate }) {
 export default function Automation() {
   usePageTitle("Automation");
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { projects, loading } = useProjectData({ fetchTests: false, fetchRuns: false });
   const { user: authUser } = useAuth();
   const canEdit = userHasRole(authUser, "qa_lead");
@@ -69,8 +70,22 @@ export default function Automation() {
 
   const focusProjectId = searchParams.get("project");
 
-  // Active top-level tab — default to triggers
-  const [activeTab, setActiveTab] = useState("triggers");
+  // Active top-level tab — sourced from `?tab=...` so deep-links and Back/Forward
+  // both work. `isValidPageTab` rejects unknown ids (whitelist enforced in
+  // `frontend/src/utils/automationStatus.js`) so a malformed URL falls back to
+  // the default "triggers" tab instead of rendering nothing.
+  const tabParam = searchParams.get("tab");
+  const activeTab = isValidPageTab(tabParam) ? tabParam : "triggers";
+
+  const setActiveTab = useCallback((id) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      // Default tab is implicit — keep the URL clean by omitting `?tab=triggers`.
+      if (id === "triggers") next.delete("tab");
+      else next.set("tab", id);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   if (loading) return (
     <div className="page-container" style={{ maxWidth: 900 }}>
@@ -129,56 +144,87 @@ export default function Automation() {
         </div>
       </div>
 
+      {/*
+        All four tabpanels are rendered up-front with the `hidden` attribute
+        so their `aria-controls` targets always resolve (strict WAI-ARIA tabs
+        compliance). Inactive panels still don't *do* work — heavy children
+        are mounted lazily inside each branch below.
+      */}
+
       {/* ── Tab: Triggers & Schedules ── */}
-      {activeTab === "triggers" && (
-        projects.length === 0 ? <EmptyProjects navigate={navigate} /> : (
-          <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-triggers" aria-labelledby="auto-tab-triggers">
-            {projects.map((p, i) => (
-              <ProjectAutomationCard
-                key={p.id}
-                project={p}
-                defaultExpanded={focusProjectId ? p.id === focusProjectId : i === 0}
-                canEdit={canEdit}
-                onToast={onPanelToast}
-              />
-            ))}
-          </div>
-        )
-      )}
+      <div
+        className="auto-tab-body"
+        role="tabpanel"
+        id="auto-tabpanel-triggers"
+        aria-labelledby="auto-tab-triggers"
+        hidden={activeTab !== "triggers"}
+      >
+        {activeTab === "triggers" && (
+          projects.length === 0
+            ? <EmptyProjects navigate={navigate} hint={PAGE_TABS[0].emptyHint} />
+            : projects.map((p, i) => (
+                <ProjectAutomationCard
+                  key={p.id}
+                  project={p}
+                  defaultExpanded={focusProjectId ? p.id === focusProjectId : i === 0}
+                  canEdit={canEdit}
+                  onToast={onPanelToast}
+                />
+              ))
+        )}
+      </div>
 
       {/* ── Tab: Quality Gates ── */}
-      {activeTab === "quality" && (
-        projects.length === 0 ? <EmptyProjects navigate={navigate} /> : (
-          <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-quality" aria-labelledby="auto-tab-quality">
-            {projects.map((p, i) => (
-              <ProjectQualityCard
-                key={p.id}
-                project={p}
-                defaultExpanded={focusProjectId ? p.id === focusProjectId : i === 0}
-                canEdit={canEdit}
-                onToast={onPanelToast}
-              />
-            ))}
-          </div>
-        )
-      )}
+      <div
+        className="auto-tab-body"
+        role="tabpanel"
+        id="auto-tabpanel-quality"
+        aria-labelledby="auto-tab-quality"
+        hidden={activeTab !== "quality"}
+      >
+        {activeTab === "quality" && (
+          projects.length === 0
+            ? <EmptyProjects navigate={navigate} hint={PAGE_TABS[1].emptyHint} />
+            : projects.map((p, i) => (
+                <ProjectQualityCard
+                  key={p.id}
+                  project={p}
+                  defaultExpanded={focusProjectId ? p.id === focusProjectId : i === 0}
+                  canEdit={canEdit}
+                  onToast={onPanelToast}
+                />
+              ))
+        )}
+      </div>
 
       {/* ── Tab: Integrations ── */}
-      {activeTab === "integrations" && (
-        <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-integrations" aria-labelledby="auto-tab-integrations">
+      <div
+        className="auto-tab-body"
+        role="tabpanel"
+        id="auto-tabpanel-integrations"
+        aria-labelledby="auto-tab-integrations"
+        hidden={activeTab !== "integrations"}
+      >
+        {activeTab === "integrations" && (
           <IntegrationCards onScrollToSnippets={() => setActiveTab("snippets")} />
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── Tab: Snippets ── */}
-      {activeTab === "snippets" && (
-        <div className="auto-tab-body" role="tabpanel" id="auto-tabpanel-snippets" aria-labelledby="auto-tab-snippets">
+      <div
+        className="auto-tab-body"
+        role="tabpanel"
+        id="auto-tabpanel-snippets"
+        aria-labelledby="auto-tab-snippets"
+        hidden={activeTab !== "snippets"}
+      >
+        {activeTab === "snippets" && (
           <IntegrationSnippets
             projects={projects}
             defaultProjectId={focusProjectId || projects[0]?.id}
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

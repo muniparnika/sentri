@@ -16,7 +16,7 @@
  * by passing their own `fields`, `api`, and labels.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Save, Trash2, RefreshCw } from "lucide-react";
 import { invalidateAutomationStatus } from "../../utils/automationStatus.js";
 
@@ -96,10 +96,19 @@ export default function ConfigurablePanel({
 
   const showToast = (msg, type = "info") => onToast?.(msg, type);
 
+  // Keep `api` in a ref so the load effect doesn't re-fire when the parent
+  // re-renders with a fresh inline `api` object. Re-loading is keyed on
+  // `projectId` (the only thing that semantically changes which resource we
+  // fetch); `fields` / `resultKey` / `title` are static per call site, and
+  // pinning the effect to `[projectId]` removes the previous fragile
+  // `[api]` + eslint-disable contract that required callers to useMemo `api`.
+  const apiRef = useRef(api);
+  apiRef.current = api;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.load()
+    apiRef.current.load()
       .then((res) => {
         if (cancelled) return;
         const cfg = res?.[resultKey] || null;
@@ -113,9 +122,8 @@ export default function ConfigurablePanel({
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-    // Callers must memoize `api` (typically via useMemo on projectId) — same
-    // contract the original panels honoured via their `[projectId]` dep.
-  }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Build the PATCH payload, parsing numbers and dropping blanks. Returns
   // `null` if every field is blank (caller should DELETE rather than PATCH `{}`).
