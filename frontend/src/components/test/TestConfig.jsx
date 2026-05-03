@@ -82,6 +82,12 @@ const CONFIG_TABS = [
  *   panel section above the sub-tab strip. Used by the Crawl tab so the most
  *   important decision — pick a URL or explore state — isn't hidden behind a
  *   sub-tab click. Default false (sub-tab behaviour).
+ * @param {boolean}  [props.showRunnerOptions]   - Show options that only the
+ *   test runner consumes (currently `parallelWorkers`). The backend ignores
+ *   `parallelWorkers` for both crawl and requirement-generate flows — it's
+ *   only read by `POST /projects/:id/run` (`backend/src/testRunner.js:96`),
+ *   so Test Lab passes `false` to avoid offering a no-op control. Default
+ *   true so legacy callsites (run-regression modal etc.) still see the slider.
  * @param {boolean}  [props.showFooter]          - Show the Save / Reset footer. Default true.
  */
 export default function TestConfig({
@@ -91,6 +97,7 @@ export default function TestConfig({
   onTabChange,
   showExplorer = true,
   showDiscoveryHeader = false,
+  showRunnerOptions = true,
   showFooter   = true,
 }) {
   const cfg = useMemo(() => ({
@@ -446,25 +453,32 @@ export default function TestConfig({
               {(cfg.customInstructions || "").length} / 500 characters
             </div>
           </div>
-          <div className="tl-section">
-            <div className="tl-section-label">{PARALLEL_WORKERS_TUNING.label}</div>
-            <div className="tc-slider">
-              <div className="tc-slider-head">
-                <span className="tc-slider-label">Workers</span>
-                <span className="tc-slider-value">{cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}</span>
+          {/* Parallel workers — hidden on crawl / requirement-generate flows
+              because the backend pipeline (`crawlAndGenerateTests`,
+              `generateTest`) doesn't consume the field. Only the test runner
+              (POST /projects/:id/run → testRunner.js) actually parallelises
+              on this knob, so showing it here would be a no-op control. */}
+          {showRunnerOptions && (
+            <div className="tl-section">
+              <div className="tl-section-label">{PARALLEL_WORKERS_TUNING.label}</div>
+              <div className="tc-slider">
+                <div className="tc-slider-head">
+                  <span className="tc-slider-label">Workers</span>
+                  <span className="tc-slider-value">{cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}</span>
+                </div>
+                <input
+                  type="range"
+                  min={PARALLEL_WORKERS_TUNING.min}
+                  max={PARALLEL_WORKERS_TUNING.max}
+                  step={PARALLEL_WORKERS_TUNING.step}
+                  value={cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}
+                  onChange={e => update({ parallelWorkers: parseInt(e.target.value, 10) })}
+                  style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
+                />
+                <div className="tc-slider-desc">{PARALLEL_WORKERS_TUNING.desc}</div>
               </div>
-              <input
-                type="range"
-                min={PARALLEL_WORKERS_TUNING.min}
-                max={PARALLEL_WORKERS_TUNING.max}
-                step={PARALLEL_WORKERS_TUNING.step}
-                value={cfg.parallelWorkers ?? PARALLEL_WORKERS_TUNING.defaultVal}
-                onChange={e => update({ parallelWorkers: parseInt(e.target.value, 10) })}
-                style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
-              />
-              <div className="tc-slider-desc">{PARALLEL_WORKERS_TUNING.desc}</div>
             </div>
-          </div>
+          )}
         </div>
       )}
       {/* ── Footer: Save as default / Reset ── */}

@@ -1258,6 +1258,12 @@ export default function TestLab() {
                   // Requirement tab keeps the sub-tab layout (no crawl ⇒ no
                   // discovery decision to make).
                   showDiscoveryHeader={tab === "crawl"}
+                  // `parallelWorkers` is consumed only by the test runner
+                  // (POST /projects/:id/run → testRunner.js). Both Test Lab
+                  // flows are pre-runner (crawl + AI generation), so the
+                  // backend silently ignores the field — hiding it avoids
+                  // surfacing a no-op control to users.
+                  showRunnerOptions={false}
                 />
               </div>
             </div>
