@@ -22,7 +22,7 @@ import React, {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  CheckCircle2, XCircle, ArrowLeft,
+  CheckCircle2, XCircle, ArrowLeft, RotateCcw,
   Search, X, Loader2, ExternalLink, Copy,
   ThumbsUp, ThumbsDown, AlertCircle, Trash2,
 } from "lucide-react";
@@ -161,7 +161,7 @@ function CodeView({ code }) {
 // ── Detail sidebar ────────────────────────────────────────────────────────────
 function DetailSidebar({
   test, project, tab, listIdx, listLen,
-  actionLoading, onApprove, onReject, onPrev, onNext, navigate,
+  actionLoading, onApprove, onReject, onRestore, onPrev, onNext, navigate,
 }) {
   const score = test.qualityScore;
 
@@ -265,17 +265,16 @@ function DetailSidebar({
       {/* Quick decision buttons.
           The three branches are mutually exclusive by construction:
           - draft     → Approve + Reject (the standard review decision)
-          - rejected  → Restore to Approved (no second "Approve" button —
-                        the restore variant *is* the approve action with
-                        clearer copy for previously-rejected tests)
+          - rejected  → Restore to Draft only (sends the test back through
+                        the queue for re-review; deliberately *not* a
+                        direct path to approved, since that would skip
+                        the trust contract the queue exists to enforce)
           - approved  → Reject only (approving an already-approved test
                         is a no-op; rejecting it is the only state change
                         a reviewer might want here)
-          The earlier `tab !== "approved"` guard rendered both the generic
-          Approve and the "Restore to Approved" button on the rejected
-          tab, producing two identical green buttons. Each branch now
-          declares its tab explicitly so adding a fourth tab in the future
-          requires a deliberate decision rather than an accidental fall-through. */}
+          Each branch declares its tab explicitly so adding a fourth tab
+          in the future requires a deliberate decision rather than an
+          accidental fall-through. */}
       <div className="rq-info-label rq-info-label--gap">Quick decision</div>
       <div className="rq-decision-btns">
         {tab === "draft" && (
@@ -303,15 +302,23 @@ function DetailSidebar({
           </button>
         )}
         {tab === "rejected" && (
+          // Sends the test back to `draft` (not `approved`) so it goes
+          // through the review queue again. Re-approving a rejected test
+          // without re-review would skip the trust contract that the
+          // queue exists to enforce — see AUTO-003b in ROADMAP.md for
+          // the equivalent constraint on auto-approval revocation.
+          // Styled with the ghost variant rather than `btn-approve` so
+          // it doesn't read as "approve" — restore is a re-queue, not a
+          // decision.
           <button
-            className="btn-approve btn-block"
-            onClick={() => onApprove(test)}
+            className="btn btn-ghost btn-sm btn-block btn-block--gap"
+            onClick={() => onRestore(test)}
             disabled={!!actionLoading}
           >
-            {actionLoading === `approve-${test.id}`
+            {actionLoading === `restore-${test.id}`
               ? <Loader2 size={12} className="spin" />
-              : <CheckCircle2 size={12} />}
-            Restore to Approved
+              : <RotateCcw size={12} />}
+            Restore to Draft
           </button>
         )}
         <button
@@ -514,6 +521,27 @@ export default function ReviewQueue() {
     } catch (err) {
       console.error("Reject failed:", err);
       setBulkError(`Reject failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleRestore(test) {
+    // Sends the test back to `draft` so it re-enters the review queue.
+    // Mirror of `handleApprove`/`handleReject` — uses the same advance-then-
+    // invalidate dance so the active selection moves to the next visible
+    // test before the refetch lands and the current row leaves the list.
+    setActionLoading(`restore-${test.id}`);
+    try {
+      await api.restoreTest(test.projectId, test.id);
+      const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
+    } catch (err) {
+      console.error("Restore failed:", err);
+      setBulkError(`Restore failed: ${err.message}`);
       setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
@@ -1157,6 +1185,7 @@ export default function ReviewQueue() {
                     actionLoading={actionLoading}
                     onApprove={handleApprove}
                     onReject={handleReject}
+                    onRestore={handleRestore}
                     onPrev={() => activeIdx > 0 && setActiveTestId(visibleTests[activeIdx - 1].id)}
                     onNext={() => activeIdx < visibleTests.length - 1 && setActiveTestId(visibleTests[activeIdx + 1].id)}
                     navigate={navigate}
