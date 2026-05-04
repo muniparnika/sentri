@@ -22,7 +22,7 @@ import React, {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, ArrowLeft,
   Search, X, Loader2, ExternalLink, Copy,
   ThumbsUp, ThumbsDown, AlertCircle, Trash2,
 } from "lucide-react";
@@ -630,8 +630,18 @@ export default function ReviewQueue() {
   }, [activeTest, activeIdx, visibleTests, actionLoading]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // `data-mobile-view` toggles which pane is visible on narrow viewports.
+  // Desktop ignores the attribute (both panes always rendered side-by-side);
+  // mobile CSS reads it to show only the list ("list") or only the detail
+  // ("detail"). Picking a row sets it to "detail"; the back-button in the
+  // detail header sets it to "list".
+  const [mobileView, setMobileView] = useState("list");
+  useEffect(() => {
+    if (activeTestId) setMobileView("detail");
+  }, [activeTestId]);
+
   return (
-    <div className="rq-page">
+    <div className="rq-page" data-mobile-view={mobileView}>
 
       {/* ── Header ── */}
       <div className="rq-header">
@@ -958,6 +968,18 @@ export default function ReviewQueue() {
               <>
                 {/* Detail header */}
                 <div className="rq-detail-pane__header">
+                  {/* Mobile-only back-to-list button. The `.rq-back-to-list`
+                      class is `display: none` above 640px and `display: flex`
+                      below, so it never shows on desktop where the list is
+                      always visible. */}
+                  <button
+                    className="rq-back-to-list"
+                    onClick={() => setMobileView("list")}
+                    aria-label="Back to test list"
+                    title="Back to test list"
+                  >
+                    <ArrowLeft size={14} />
+                  </button>
                   <div className="rq-detail-pane__title">
                     {cleanTestName(activeTest.name)}
                   </div>

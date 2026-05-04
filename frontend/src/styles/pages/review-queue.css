@@ -955,15 +955,53 @@
   font-size: 0.65rem;
 }
 
+/* ── Mobile-only back-to-list button (desktop hides it) ─────────────────────── */
+/* Hidden on desktop where the list pane is always visible; shown below 640px
+   so the user can return from the detail view to the list without using the
+   browser back button (which would also lose the active selection). */
+.rq-back-to-list {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.rq-back-to-list:hover { background: var(--bg2); color: var(--text); }
+
 /* ── Responsive ───────────────────────────────────────────────────────────────── */
+/* 900–640px: keep both panes in view but drop the right-rail metadata sidebar
+   so the main detail (steps, code) gets the full width. */
 @media (max-width: 900px) {
   .rq-body { grid-template-columns: 260px 1fr; }
   .rq-detail-inner { grid-template-columns: 1fr; }
   .rq-detail-sidebar { display: none; }
 }
 
+/* < 640px: single-pane mobile layout. Instead of hiding the list pane and
+   leaving the user stranded on the detail view, both panes render but the
+   `.rq-page[data-mobile-view]` attribute decides which one is visible.
+   `.rq-back-to-list` flips the attribute back to "list". */
 @media (max-width: 640px) {
   .rq-body { grid-template-columns: 1fr; }
-  .rq-list-pane { display: none; }
-  .rq-list-pane--mobile-open { display: flex; position: absolute; z-index: 50; width: 280px; height: 100%; box-shadow: var(--shadow); }
+
+  /* Hide both by default; the attribute selectors below show one. */
+  .rq-page[data-mobile-view="list"] .rq-detail-pane,
+  .rq-page[data-mobile-view="detail"] .rq-list-pane {
+    display: none;
+  }
+  .rq-page[data-mobile-view="list"] .rq-list-pane,
+  .rq-page[data-mobile-view="detail"] .rq-detail-pane {
+    display: flex;
+  }
+
+  /* Reveal the back button when the detail pane is the active mobile view. */
+  .rq-page[data-mobile-view="detail"] .rq-back-to-list {
+    display: inline-flex;
+  }
 }
