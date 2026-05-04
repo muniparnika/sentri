@@ -368,7 +368,13 @@ export default function Tests() {
     return () => window.removeEventListener("keydown", handler);
   }, [selected, filtered]);
 
-  const draftCount = tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length;
+  // Scope the draft chip's count + click target to the selected project so the
+  // chip reads the same way the rest of the page does — when the user has
+  // narrowed to one project, the Review Queue link should land them there too.
+  const draftCount = tests.filter(t =>
+    (!t.reviewStatus || t.reviewStatus === "draft") &&
+    (selectedProjectId === "all" || t.projectId === selectedProjectId)
+  ).length;
 
   // ── Export: unified with ProjectDetail via ProjectExportMenu (Zephyr / TestRail / Playwright ZIP).
   // All three export targets are project-scoped server-side, so the menu
@@ -400,7 +406,11 @@ export default function Tests() {
             <button
               className="btn btn-ghost btn-sm"
               style={{ gap: 6, background: "var(--amber-bg)", border: "1px solid rgba(217,119,6,0.3)", color: "var(--amber)" }}
-              onClick={() => navigate("/review-queue")}
+              onClick={() => navigate(
+                selectedProjectId !== "all"
+                  ? `/review-queue?projectId=${selectedProjectId}`
+                  : "/review-queue",
+              )}
             >
               <Inbox size={13} />
               {draftCount} draft{draftCount !== 1 ? "s" : ""} — Review Queue
