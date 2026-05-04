@@ -315,6 +315,38 @@
 .rq-score--medium { color: var(--amber); }
 .rq-score--low    { color: var(--red); }
 
+/* ── Pager (server-side pagination footer) ──────────────────────────────────── */
+.rq-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+
+.rq-pager__btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--text2);
+  font-family: var(--font-sans);
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.rq-pager__btn:hover:not(:disabled) { color: var(--accent); background: var(--surface); }
+.rq-pager__btn:disabled { opacity: 0.35; cursor: default; }
+
+.rq-pager__pos {
+  font-size: 0.7rem;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
 /* ── Bulk action bar (bottom of list pane) ────────────────────────────────────── */
 .rq-bulk-bar {
   display: flex;

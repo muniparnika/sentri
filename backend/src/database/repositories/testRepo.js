@@ -161,20 +161,69 @@ export function countDraftByProjectIds(projectIds) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @returns {PagedResult}
  */
-export function getAllPagedByProjectIds(projectIds, page, pageSize) {
+/**
+ * Cross-project paginated list with optional filters.
+ *
+ * Mirrors `getByProjectIdPaged`'s filter shape so the cross-project Review
+ * Queue can server-paginate without forcing the client to fetch every test
+ * in the workspace and filter in memory.
+ *
+ * @param {string[]} projectIds  - Workspace-scoped project IDs (ACL gate).
+ * @param {number}   page
+ * @param {number}   pageSize
+ * @param {Object}   [filters]
+ * @param {string}   [filters.reviewStatus]  - "draft" | "approved" | "rejected"
+ * @param {string}   [filters.category]      - "api" | "ui"
+ * @param {string}   [filters.search]        - LIKE match against name + sourceUrl
+ * @param {boolean}  [filters.stale]
+ * @param {string}   [filters.projectId]     - Narrow to a single project; ignored
+ *                                             if the project isn't in `projectIds`.
+ */
+export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}) {
   if (!projectIds || projectIds.length === 0) {
     const { page: p, pageSize: ps } = parsePagination(page, pageSize);
     return { data: [], meta: { total: 0, page: p, pageSize: ps, hasMore: false } };
   }
+
+  // Honour the optional `projectId` filter — but only if it falls inside the
+  // ACL-scoped set. Never let the param widen scope beyond `projectIds`.
+  let scopedIds = projectIds;
+  if (filters.projectId && projectIds.includes(filters.projectId)) {
+    scopedIds = [filters.projectId];
+  }
+
   const db = getDatabase();
   const { page: p, pageSize: ps, offset } = parsePagination(page, pageSize);
-  const placeholders = projectIds.map(() => "?").join(", ");
+  const placeholders = scopedIds.map(() => "?").join(", ");
+
+  const conditions = [`projectId IN (${placeholders})`, "deletedAt IS NULL"];
+  const params = [...scopedIds];
+
+  if (filters.reviewStatus) {
+    conditions.push("reviewStatus = ?");
+    params.push(filters.reviewStatus);
+  }
+  if (filters.category === "api") {
+    conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
+  } else if (filters.category === "ui") {
+    conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  }
+  if (filters.stale) {
+    conditions.push("isStale = 1");
+  }
+  if (filters.search) {
+    conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
+    const like = `%${filters.search}%`;
+    params.push(like, like);
+  }
+
+  const where = conditions.join(" AND ");
   const total = db.prepare(
-    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
-  ).get(...projectIds).cnt;
+    `SELECT COUNT(*) as cnt FROM tests WHERE ${where}`
+  ).get(...params).cnt;
   const data = db.prepare(
-    `SELECT * FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`
-  ).all(...projectIds, ps, offset).map(rowToTest);
+    `SELECT * FROM tests WHERE ${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`
+  ).all(...params, ps, offset).map(rowToTest);
   return { data, meta: { total, page: p, pageSize: ps, hasMore: offset + data.length < total } };
 }
 

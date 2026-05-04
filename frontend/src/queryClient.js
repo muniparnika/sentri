@@ -54,6 +54,15 @@ export const settingsQueryKeys = {
   ollamaStatus: ["settings", "ollamaStatus"],
 };
 
+export const reviewQueueQueryKeys = {
+  root: ["reviewQueue"],
+  /**
+   * @param {Object} params - { tab, projectId, q, category, page, pageSize }
+   * @returns {Array}
+   */
+  list: (params) => ["reviewQueue", "list", params],
+};
+
 export const automationStatusQueryKeys = {
   root: ["automationStatus"],
   /**

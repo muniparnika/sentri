@@ -119,9 +119,17 @@ router.get("/tests", (req, res) => {
   const wsProjects = projectRepo.getAll(req.workspaceId);
   const projectIds = wsProjects.map(p => p.id);
 
-  const { page, pageSize } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, projectId } = req.query;
   if (page !== undefined || pageSize !== undefined) {
-    return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize));
+    const filters = {};
+    if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
+    if (category && category !== "all") filters.category = category;
+    if (search) filters.search = search;
+    if (stale === "true") filters.stale = true;
+    // `projectId` is honoured by the repo only if it falls inside the
+    // workspace-scoped set, so a malicious client cannot use it to escape ACL.
+    if (projectId && projectId !== "all") filters.projectId = projectId;
+    return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize, filters));
   }
   res.json(testRepo.getAllByProjectIds(projectIds));
 });

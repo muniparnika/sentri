@@ -18,7 +18,7 @@
  */
 
 import React, {
-  useState, useCallback, useMemo, useEffect, useRef,
+  useState, useMemo, useEffect, useRef,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
-import { queryClient, projectDataQueryKeys } from "../queryClient.js";
+import useReviewQueueQuery, { invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
@@ -295,15 +295,10 @@ export default function ReviewQueue() {
   const navigate   = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const { projects, allTests: allTests, loading } = useProjectData({ fetchRuns: false });
-
-  // Optimistically update the shared tests cache (same pattern as Tests.jsx)
-  const updateTestsCache = useCallback((updater) => {
-    queryClient.setQueriesData(
-      { queryKey: projectDataQueryKeys.tests },
-      (prev) => Array.isArray(prev) ? updater(prev) : prev,
-    );
-  }, []);
+  // Projects list only — tests now flow through the server-paginated
+  // `useReviewQueueQuery` hook, so we no longer fetch every test in the
+  // workspace just to render this page.
+  const { projects, loading: projectsLoading } = useProjectData({ fetchTests: false, fetchRuns: false });
 
   // ── URL-driven state ────────────────────────────────────────────────────────
   const tab       = searchParams.get("tab")       || "draft";
@@ -322,7 +317,31 @@ export default function ReviewQueue() {
   const [actionLoading, setActionLoading] = useState(null);
   const [bulkError,     setBulkError]     = useState(null);
   const [showSortMenu,  setShowSortMenu]  = useState(false);
+  const [page,          setPage]          = useState(1);
+  const PAGE_SIZE = 50;
   const sortMenuRef = useRef(null);
+
+  // Reset to page 1 whenever the filter set changes — otherwise a "page 4"
+  // cursor on the Draft tab would still apply when the user switches to
+  // Approved (which may have <4 pages of items).
+  useEffect(() => { setPage(1); }, [tab, projectId, listSearch, catFilter]);
+
+  // ── Server-paginated tests for the current view ─────────────────────────────
+  const reviewQuery = useReviewQueueQuery({
+    tab, projectId, search: listSearch, category: catFilter, page, pageSize: PAGE_SIZE,
+  });
+  const pageTests = reviewQuery.data;
+  const meta      = reviewQuery.meta;
+
+  // Tab counts — three lightweight queries that ask the backend for `total`
+  // only (pageSize: 1) per status. Keeps the badges accurate without
+  // re-fetching the whole list.
+  const draftCount    = useReviewQueueQuery({ tab: "draft",    projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
+  const rejectedCount = useReviewQueueQuery({ tab: "rejected", projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
+  const approvedCount = useReviewQueueQuery({ tab: "approved", projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
+  const tabCounts = { draft: draftCount, rejected: rejectedCount, approved: approvedCount };
+
+  const loading = projectsLoading || reviewQuery.isLoading;
 
   // Close sort menu on outside click
   useEffect(() => {
@@ -340,55 +359,30 @@ export default function ReviewQueue() {
     [projects],
   );
 
-  // ── Tab counts ──────────────────────────────────────────────────────────────
-  const tabCounts = useMemo(() => ({
-    draft:    allTests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length,
-    rejected: allTests.filter(t => t.reviewStatus === "rejected").length,
-    approved: allTests.filter(t => t.reviewStatus === "approved").length,
-  }), [allTests]);
-
-  // ── Filtered + sorted list ──────────────────────────────────────────────────
+  // ── Page-local filter + sort ─────────────────────────────────────────────────
+  // Server already filtered by tab, projectId, search, and api/web category.
+  // Only `journey` (no backend column) is applied here, plus all sorts —
+  // sorting is intentionally page-local so the user can re-order what they
+  // currently see without paying a round-trip. Tab/project/search filter
+  // changes reset the page to 1, so this never spans pages by accident.
   const visibleTests = useMemo(() => {
-    let list = allTests.filter(t => {
-      // Tab filter
-      const matchTab =
-        tab === "draft"    ? (!t.reviewStatus || t.reviewStatus === "draft") :
-        tab === "rejected" ? t.reviewStatus === "rejected" :
-        tab === "approved" ? t.reviewStatus === "approved" : true;
-      if (!matchTab) return false;
+    let list = pageTests;
 
-      // Project filter
-      if (projectId !== "all" && t.projectId !== projectId) return false;
+    if (catFilter === "journey") {
+      list = list.filter(t => t.isJourneyTest);
+    }
 
-      // Category filter
-      const isApi = t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
-      if (catFilter === "api" && !isApi) return false;
-      if (catFilter === "web" && isApi) return false;
-      if (catFilter === "journey" && !t.isJourneyTest) return false;
-
-      // Search
-      if (listSearch) {
-        const q = listSearch.toLowerCase();
-        const nameMatch = t.name?.toLowerCase().includes(q);
-        const descMatch = t.description?.toLowerCase().includes(q);
-        const projMatch = projMap[t.projectId]?.name?.toLowerCase().includes(q);
-        if (!nameMatch && !descMatch && !projMatch) return false;
-      }
-
-      return true;
-    });
-
-    // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === "oldest")  return new Date(a.createdAt) - new Date(b.createdAt);
       if (sortBy === "quality") return (b.qualityScore ?? -1) - (a.qualityScore ?? -1);
       if (sortBy === "project") return (projMap[a.projectId]?.name ?? "").localeCompare(projMap[b.projectId]?.name ?? "");
-      // newest (default)
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
     return list;
-  }, [allTests, tab, projectId, catFilter, listSearch, sortBy, projMap]);
+  }, [pageTests, catFilter, sortBy, projMap]);
+
+  const totalPages = Math.max(1, Math.ceil(meta.total / PAGE_SIZE));
 
   // Auto-select first item when list changes and nothing is selected
   useEffect(() => {
@@ -412,38 +406,40 @@ export default function ReviewQueue() {
   const activeIdx     = useMemo(() => visibleTests.findIndex(t => t.id === activeTestId), [visibleTests, activeTestId]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
+  // With server-side pagination, optimistic edits to the page array would be
+  // invalidated by the next refetch anyway — and they couldn't keep tab counts
+  // honest since those are separate queries. We instead invalidate the
+  // review-queue cache on settle and let the next render show the truth.
   async function handleApprove(test) {
-    const key = `approve-${test.id}`;
-    setActionLoading(key);
-    // Optimistic update
-    updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: "approved" } : t));
+    setActionLoading(`approve-${test.id}`);
     try {
       await api.approveTest(test.projectId, test.id);
-      invalidateProjectDataCache();
-      // Advance to next item
+      // Advance to next item on the current page before refetch lands.
       const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
-      setActiveTestId(next?.id ?? visibleTests.find(t => t.id !== test.id)?.id ?? null);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
     } catch (err) {
-      // Rollback
-      updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: test.reviewStatus } : t));
       console.error("Approve failed:", err);
+      setBulkError(`Approve failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
     }
   }
 
   async function handleReject(test) {
-    const key = `reject-${test.id}`;
-    setActionLoading(key);
-    updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: "rejected" } : t));
+    setActionLoading(`reject-${test.id}`);
     try {
       await api.rejectTest(test.projectId, test.id);
-      invalidateProjectDataCache();
       const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
-      setActiveTestId(next?.id ?? visibleTests.find(t => t.id !== test.id)?.id ?? null);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
     } catch (err) {
-      updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: test.reviewStatus } : t));
       console.error("Reject failed:", err);
+      setBulkError(`Reject failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
     }
@@ -455,20 +451,11 @@ export default function ReviewQueue() {
     setBulkError(null);
     setActionLoading(`bulk-${action}`);
 
-    // Capture originals for rollback
-    const originals = {};
-    for (const t of allTests) {
-      if (selected.has(t.id)) originals[t.id] = t.reviewStatus;
-    }
-
-    // Optimistic update
-    const newStatus = action === "approve" ? "approved" : "rejected";
-    updateTestsCache(prev => prev.map(t => selected.has(t.id) ? { ...t, reviewStatus: newStatus } : t));
-
-    // Fire one bulk request per project group (matching Tests.jsx pattern)
+    // Group by project from the *current page* — selection only ever spans
+    // tests that are visible, so we don't need a global test list.
     const byProject = {};
     for (const testId of ids) {
-      const t = allTests.find(x => x.id === testId);
+      const t = pageTests.find(x => x.id === testId);
       if (t) {
         if (!byProject[t.projectId]) byProject[t.projectId] = [];
         byProject[t.projectId].push(testId);
@@ -483,22 +470,11 @@ export default function ReviewQueue() {
 
     const failedCount = results.filter(r => r.status === "rejected").length;
     if (failedCount > 0) {
-      // Rollback failed groups
-      const failedProjects = new Set(
-        Object.keys(byProject).filter((_, i) => results[i].status === "rejected"),
-      );
-      const failedIds = new Set(
-        Object.entries(byProject)
-          .filter(([pid]) => failedProjects.has(pid))
-          .flatMap(([, tids]) => tids),
-      );
-      updateTestsCache(prev => prev.map(t =>
-        failedIds.has(t.id) ? { ...t, reviewStatus: originals[t.id] } : t,
-      ));
       setBulkError(`${failedCount} project group${failedCount !== 1 ? "s" : ""} failed to ${action}. Others updated.`);
       setTimeout(() => setBulkError(null), 5000);
     }
 
+    invalidateReviewQueueCache();
     invalidateProjectDataCache();
     setSelected(new Set());
     setActionLoading(null);
@@ -613,7 +589,10 @@ export default function ReviewQueue() {
             {/* List header with sort */}
             <div className="rq-list-pane__header">
               <span className="rq-list-pane__count">
-                {visibleTests.length} test{visibleTests.length !== 1 ? "s" : ""}
+                {meta.total === 0
+                  ? "0 tests"
+                  : `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + visibleTests.length} of ${meta.total}`}
+                {reviewQuery.isFetching && !reviewQuery.isLoading && " · refreshing…"}
               </span>
               <div className="rq-sort-menu-wrap" ref={sortMenuRef}>
                 <button
@@ -759,6 +738,29 @@ export default function ReviewQueue() {
                 })
               )}
             </div>
+
+            {/* Pager — only visible when more than one page exists. */}
+            {totalPages > 1 && (
+              <div className="rq-pager">
+                <button
+                  className="rq-pager__btn"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1 || reviewQuery.isFetching}
+                >
+                  ← Prev
+                </button>
+                <span className="rq-pager__pos">
+                  Page {page} / {totalPages}
+                </span>
+                <button
+                  className="rq-pager__btn"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || reviewQuery.isFetching}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
 
             {/* Bulk action bar */}
             {selected.size > 0 && (

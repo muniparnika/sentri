@@ -76,12 +76,15 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   const hasMultipleWorkspaces = user?.workspaces?.length > 1;
 
   // Live draft count for the Review Queue badge.
-  // Uses a lightweight query that re-validates every 60 s or on window focus.
+  // Uses the paginated cross-project tests endpoint with `pageSize: 1` so the
+  // backend only returns one row + the total count — avoiding the previous
+  // `getAllTests()` round-trip that shipped every test in the workspace just
+  // to compute a number. Workspace-keyed so the badge resets when a user
+  // switches workspaces (otherwise the 60 s stale window serves the old
+  // workspace's count).
   const { data: draftData } = useQuery({
-    queryKey: ["sidebar-draft-count"],
-    queryFn: () => api.getAllTests().then(tests =>
-      tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length
-    ),
+    queryKey: ["sidebar-draft-count", user?.workspaceId],
+    queryFn: () => api.getAllTestsPaged(1, 1, { reviewStatus: "draft" }).then(r => r.meta?.total ?? 0),
     staleTime: 60_000,
     refetchOnWindowFocus: true,
     enabled: !!user,

@@ -187,6 +187,27 @@ export const api = {
   getTestCounts: (id) => req("GET", `/projects/${id}/tests/counts`),
   /** @returns {Promise<Array>} All tests across all projects. */
   getAllTests:   ()                  => req("GET",    "/tests"),
+  /**
+   * Cross-project paginated tests with optional filters — used by the
+   * Review Queue so it doesn't have to fetch the entire workspace.
+   * @param {number} [page=1]
+   * @param {number} [pageSize=50]
+   * @param {Object} [filters]
+   * @param {string} [filters.reviewStatus] - "draft" | "approved" | "rejected"
+   * @param {string} [filters.category]     - "api" | "ui"
+   * @param {string} [filters.search]
+   * @param {string} [filters.projectId]    - Narrow to a single project (must be in workspace).
+   * @returns {Promise<{data: Object[], meta: {total: number, page: number, pageSize: number, hasMore: boolean}}>}
+   */
+  getAllTestsPaged: (page = 1, pageSize = 50, filters = {}) => {
+    const params = new URLSearchParams({ page, pageSize });
+    if (filters.reviewStatus && filters.reviewStatus !== "all") params.set("reviewStatus", filters.reviewStatus);
+    if (filters.category && filters.category !== "all") params.set("category", filters.category);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.projectId && filters.projectId !== "all") params.set("projectId", filters.projectId);
+    if (filters.stale) params.set("stale", "true");
+    return req("GET", `/tests?${params}`);
+  },
   /** @param {string} testId */
   getTest:      (testId)            => req("GET",    `/tests/${testId}`),
   /** @param {string} testId @param {Object} data - Fields to update. */
