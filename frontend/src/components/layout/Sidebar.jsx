@@ -2,35 +2,38 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
-    Atom,
+    Atom, Inbox,
 } from "lucide-react";
+import { useMemo } from "react";
 import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
+import { useQuery } from "@tanstack/react-query";
 
 const NAV_GROUPS = [
   {
     label: "Core",
     items: [
-      { to: "/dashboard", icon: Home, label: "Dashboard", tour: "tour-dashboard" },
-      { to: "/projects",  icon: FolderKanban, label: "Projects",  tour: "tour-projects" },
-      { to: "/tests",     icon: SquareCheckBig, label: "Tests", tour: "tour-tests" },
-      { to: "/test-lab",  icon: Atom, label: "Test Lab" },
+      { to: "/dashboard",     icon: Home,          label: "Dashboard",     tour: "tour-dashboard" },
+      { to: "/projects",      icon: FolderKanban,  label: "Projects",      tour: "tour-projects"  },
+      { to: "/tests",         icon: SquareCheckBig,label: "Tests",         tour: "tour-tests"     },
+      { to: "/test-lab",      icon: Atom,          label: "Test Lab"                              },
+      { to: "/review-queue",  icon: Inbox,         label: "Review Queue",  badgeKey: "draft"      },
     ],
   },
   {
     label: "Activity",
     items: [
-      { to: "/runs",    icon: PlayCircle, label: "Runs" },
-      { to: "/reports", icon: BarChart3, label: "Reports" },
+      { to: "/runs",    icon: PlayCircle, label: "Runs"    },
+      { to: "/reports", icon: BarChart3,  label: "Reports" },
     ],
   },
   {
     label: "Automation",
     items: [
-      { to: "/automation", icon: Bot, label: "Automation" },
-      { to: "/system",     icon: Server, label: "System" },
+      { to: "/automation", icon: Bot,    label: "Automation" },
+      { to: "/system",     icon: Server, label: "System"     },
     ],
   },
 ];
@@ -71,6 +74,22 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const hasMultipleWorkspaces = user?.workspaces?.length > 1;
+
+  // Live draft count for the Review Queue badge.
+  // Uses a lightweight query that re-validates every 60 s or on window focus.
+  const { data: draftData } = useQuery({
+    queryKey: ["sidebar-draft-count"],
+    queryFn: () => api.getAllTests().then(tests =>
+      tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length
+    ),
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+    enabled: !!user,
+  });
+  const draftCount = draftData ?? 0;
+
+  // Badge values keyed by badgeKey in NAV_GROUPS
+  const navBadges = useMemo(() => ({ draft: draftCount > 0 ? draftCount : null }), [draftCount]);
   // Force-expand the dropdown closed when the sidebar collapses to a rail —
   // the dropdown is anchored to the wide-mode workspace switcher and would
   // float into the main content area otherwise.
@@ -123,19 +142,37 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
 
         {/* Nav icons */}
         <nav className="sidebar-rail__nav">
-          {NAV_GROUPS.flatMap(group => group.items).map(item => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className="nav-link sidebar-rail__nav-item"
-              data-tour={item.tour || undefined}
-              title={item.label}
-            >
-              {({ isActive }) => (
-                <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
-              )}
-            </NavLink>
-          ))}
+          {NAV_GROUPS.flatMap(group => group.items).map(item => {
+            const badge = item.badgeKey ? navBadges[item.badgeKey] : null;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className="nav-link sidebar-rail__nav-item"
+                data-tour={item.tour || undefined}
+                title={item.label}
+                style={{ position: "relative" }}
+              >
+                {({ isActive }) => (
+                  <>
+                    <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
+                    {badge != null && (
+                      <span style={{
+                        position: "absolute", top: 4, right: 4,
+                        minWidth: 14, height: 14, borderRadius: 7,
+                        background: "var(--amber)", color: "#fff",
+                        fontSize: "0.55rem", fontWeight: 700,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        padding: "0 2px", lineHeight: 1,
+                      }}>
+                        {badge > 99 ? "99+" : badge}
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Footer: settings (admin only) — expand toggle lives at the top
@@ -232,32 +269,47 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
           <div key={group.label}>
             <div className="sidebar-nav__group-label">{group.label}</div>
             <div className="sidebar-nav__group-items">
-              {group.items.map(item => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className="nav-link sidebar-nav__item"
-                  data-tour={item.tour || undefined}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <item.icon
-                        size={16}
-                        className="sidebar-nav__item-icon"
-                        strokeWidth={isActive ? 2.4 : 1.6}
-                      />
-                      <span>{item.label}</span>
-                      {isActive && (
-                        <ChevronRight
-                          size={12}
-                          className="sidebar-nav__item-chevron"
-                          color="var(--accent)"
+              {group.items.map(item => {
+                const badge = item.badgeKey ? navBadges[item.badgeKey] : null;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className="nav-link sidebar-nav__item"
+                    data-tour={item.tour || undefined}
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          size={16}
+                          className="sidebar-nav__item-icon"
+                          strokeWidth={isActive ? 2.4 : 1.6}
                         />
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                        <span>{item.label}</span>
+                        {badge != null && (
+                          <span style={{
+                            marginLeft: "auto",
+                            minWidth: 18, height: 18, borderRadius: 9,
+                            background: "var(--amber)", color: "#fff",
+                            fontSize: "0.62rem", fontWeight: 700,
+                            display: "inline-flex", alignItems: "center",
+                            justifyContent: "center", padding: "0 4px",
+                          }}>
+                            {badge > 99 ? "99+" : badge}
+                          </span>
+                        )}
+                        {isActive && !badge && (
+                          <ChevronRight
+                            size={12}
+                            className="sidebar-nav__item-chevron"
+                            color="var(--accent)"
+                          />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
+              })}
             </div>
           </div>
         ))}

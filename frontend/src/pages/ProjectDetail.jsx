@@ -53,13 +53,10 @@ export default function ProjectDetail() {
   const [activeRunId, setActiveRunId]     = useState(null); // for toast link
   const [actionLoading, setActionLoading] = useState(null);
   const [parallelWorkers, setParallelWorkers] = useState(1);
-  const [tab, setTab]                     = useState("review");
-  const [reviewFilter, setReviewFilter]   = useState("draft");
+  const [tab, setTab]                     = useState("runs");
   const [categoryFilter, setCategoryFilter] = useState("all"); // "all" | "ui" | "api"
   const [searchInput, setSearchInput]     = useState("");
   const [search, setSearch]               = useState("");
-  const [selected, setSelected]           = useState(new Set());
-  const [reviewPage, setReviewPage]         = useState(1);
   const PAGE_SIZE = 10;
   const [runsPage, setRunsPage]           = useState(1);
   const [toast, setToast]                 = useState({ msg: "", type: "info", visible: false, showLink: false, runId: null });
@@ -69,9 +66,7 @@ export default function ProjectDetail() {
   // ── TanStack Query: composite project detail + traceability ─────────────
   const detailQuery = useProjectDetailQuery({
     projectId: id,
-    reviewPage,
     runsPage,
-    reviewFilter,
     categoryFilter,
     search,
   });
@@ -97,7 +92,6 @@ export default function ProjectDetail() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setSearch(searchInput);
-      setReviewPage(1);
     }, 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
@@ -138,15 +132,6 @@ export default function ProjectDetail() {
     [],
   );
 
-  // Clamp pages when totals shrink below the current page (e.g. after a bulk
-  // delete leaves fewer pages than the cursor). Done as an effect on totals
-  // change rather than inside the fetch — the previous implementation read
-  // refs to avoid an infinite loop, but query-key-driven refetch makes that
-  // dance unnecessary.
-  useEffect(() => {
-    const total = Math.max(1, Math.ceil(testsMeta.total / PAGE_SIZE));
-    if (reviewPage > total) setReviewPage(total);
-  }, [testsMeta.total, reviewPage]);
   useEffect(() => {
     const total = Math.max(1, Math.ceil(runsMeta.total / PAGE_SIZE));
     if (runsPage > total) setRunsPage(total);
@@ -202,78 +187,8 @@ export default function ProjectDetail() {
     }
   }
 
-  async function reviewOne(testId, action) {
-    try {
-      if (action === "approve") await api.approveTest(id, testId);
-      else if (action === "reject") await api.rejectTest(id, testId);
-      else if (action === "restore") await api.restoreTest(id, testId);
-      await refresh();
-      setSelected(s => { const n = new Set(s); n.delete(testId); return n; });
-      const msgs = { approve: "Test approved → Regression suite", reject: "Test rejected", restore: "Test restored to Draft" };
-      showToast(msgs[action], action === "approve" ? "success" : action === "reject" ? "error" : "info");
-    } catch (err) { showToast(err.message, "error"); }
-  }
 
-  const [bulkConfirm, setBulkConfirm] = React.useState(null); // {action, ids}
-
-  function requestBulkAction(action) {
-    const ids = selected.size > 0
-      ? Array.from(selected)
-      : filteredByReview.map(t => t.id);
-    if (!ids.length) return;
-    // Require confirmation when operating on all visible tests
-    if (selected.size === 0 && ids.length > 1) {
-      setBulkConfirm({ action, ids });
-      return;
-    }
-    executeBulkAction(action, ids);
-  }
-
-  async function executeBulkAction(action, ids) {
-    setBulkConfirm(null);
-    if (!ids?.length) return;
-    try {
-      const res = await api.bulkUpdateTests(id, ids, action);
-      await refresh(); setSelected(new Set());
-      const label = action === "approve" ? "approved → Regression" : action === "reject" ? "rejected" : "restored to Draft";
-      showToast(`${res.updated} tests ${label}`, action === "approve" ? "success" : "info");
-    } catch (err) { showToast(err.message, "error"); }
-  }
-
-  async function executeBulkDelete(ids) {
-    setBulkConfirm(null);
-    if (!ids?.length) return;
-    try {
-      const res = await api.bulkDeleteTests(id, ids);
-      await refresh(); setSelected(new Set());
-      showToast(`${res.deleted} test${res.deleted !== 1 ? "s" : ""} deleted`, "info");
-    } catch (err) { showToast(err.message, "error"); }
-  }
-
-  function requestBulkDelete() {
-    const ids = selected.size > 0
-      ? Array.from(selected)
-      : filteredByReview.map(t => t.id);
-    if (!ids.length) return;
-    setBulkConfirm({ action: "delete", ids });
-  }
-
-  // Keep old name as alias so existing call sites work unchanged
-  function bulkAction(action) { requestBulkAction(action); }
-
-  function toggleSelect(testId) {
-    setSelected(s => { const n = new Set(s); n.has(testId) ? n.delete(testId) : n.add(testId); return n; });
-  }
-
-  function toggleAll(checked, ids) {
-    setSelected(checked ? new Set(ids) : new Set());
-  }
-
-  // Server-side pagination and filtering — tests are already filtered and paged
-  // by the API. The `testsMeta.total` reflects the filtered count.
-  const filteredByReview = tests;
   const reviewTotalPages = Math.max(1, Math.ceil(testsMeta.total / PAGE_SIZE));
-  const pagedReview = tests;
 
   if (loading) return (
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -288,13 +203,6 @@ export default function ProjectDetail() {
       <button className="btn btn-primary" onClick={() => navigate("/projects")}>Back to Projects</button>
     </div>
   );
-
-  // Build dynamic bulk button labels based on selection scope.
-  // With server-side pagination, filteredByReview is only the current page —
-  // say "N visible" (not "all N") to avoid implying cross-page scope.
-  const bulkScope = selected.size > 0
-    ? `${selected.size} selected`
-    : `${filteredByReview.length} visible`;
 
   return (
     <div className="fade-in" style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -337,14 +245,18 @@ export default function ProjectDetail() {
       />
 
       {/* Draft-pending reminder — only show on Runs tab or when viewing non-draft filter */}
-      {testCounts.draft > 0 && (tab === "runs" || (tab === "review" && reviewFilter !== "draft")) && (
-        <div className="pd-banner pd-banner--amber">
-          <Info size={14} color="var(--amber)" className="shrink-0" />
-          <span className="pd-banner-text-amber">
-            <strong>{testCounts.draft} test{testCounts.draft !== 1 ? "s" : ""}</strong> pending review — approve to add to regression.
-          </span>
-          <button className="btn btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={() => { setTab("review"); setReviewFilter("draft"); }}>
-            Review drafts <ArrowRight size={11} />
+      {testCounts.draft > 0 && (
+        <div className="banner banner-info" style={{ margin: "0 0 16px" }}>
+          <span role="img" aria-label="info">ℹ️</span>
+          <div style={{ flex: 1 }}>
+            <strong>{testCounts.draft} draft test{testCounts.draft !== 1 ? "s" : ""}</strong> waiting for review — approve to add to regression suite.
+          </div>
+          <button
+            className="btn btn-ghost btn-xs"
+            style={{ flexShrink: 0 }}
+            onClick={() => navigate(`/review-queue?projectId=${id}`)}
+          >
+            Review Queue →
           </button>
         </div>
       )}
@@ -365,224 +277,6 @@ export default function ProjectDetail() {
         ))}
       </div>
 
-      {/* ── GENERATED TESTS / REVIEW TAB ── */}
-      {tab === "review" && (
-        <div>
-          {/* New tests banner — only show on draft or all filter (new tests are always drafts) */}
-          {newTestIds.size > 0 && (reviewFilter === "draft" || reviewFilter === "all") && (
-            <div className="pd-banner pd-banner--green">
-              <span style={{ fontSize: "1rem" }}>✨</span>
-              <span className="pd-banner-text-green">
-                <strong>{newTestIds.size} new test{newTestIds.size !== 1 ? "s" : ""}</strong> generated — review and approve to add to regression.
-              </span>
-              <button
-                className="btn btn-ghost btn-xs"
-                style={{ marginLeft: "auto", flexShrink: 0 }}
-                onClick={() => setShowNewBadges(false)}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {testCounts.total === 0 ? (
-            <div className="card pd-empty">
-              <Search size={32} style={{ opacity: 0.25, marginBottom: 12 }} />
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>No tests yet</div>
-              <div style={{ fontSize: "0.875rem", marginBottom: 14 }}>Go to the Tests page to crawl this project or generate tests from a requirement.</div>
-              <button className="btn btn-primary btn-sm" onClick={() => navigate("/tests")}>
-                Go to Tests
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Filter + search row */}
-              <div className="pd-filter-row">
-                {[
-                  ["draft",    `Draft (${testCounts.draft})`,       "var(--amber)"],
-                  ["approved", `Approved (${testCounts.approved})`, "var(--green)"],
-                  ["rejected", `Rejected (${testCounts.rejected})`, "var(--red)"  ],
-                  ["all",      `All (${testCounts.total})`,         "var(--text2)"],
-                ].map(([key, label, color]) => (
-                  <button key={key} onClick={() => { setReviewFilter(key); setSelected(new Set()); setReviewPage(1); }}
-                    className="pd-filter-pill"
-                    style={{
-                      borderColor: reviewFilter === key ? color : undefined,
-                      color: reviewFilter === key ? color : undefined,
-                    }}>{label}</button>
-                ))}
-
-                {(testCounts.api ?? 0) > 0 && (
-                  <>
-                    <div className="pd-filter-divider" />
-                    {[
-                      ["ui",  `UI (${testCounts.ui ?? 0})`,   "#7c3aed"],
-                      ["api", `🌐 API (${testCounts.api ?? 0})`, "#2563eb"],
-                    ].map(([key, label, color]) => (
-                      <button key={key} onClick={() => { setCategoryFilter(categoryFilter === key ? "all" : key); setSelected(new Set()); setReviewPage(1); }}
-                        className="pd-filter-pill"
-                        style={{
-                          borderColor: categoryFilter === key ? color : undefined,
-                          background: categoryFilter === key ? `${color}14` : undefined,
-                          color: categoryFilter === key ? color : undefined,
-                        }}>{label}</button>
-                    ))}
-                  </>
-                )}
-                <div className="flex-1" />
-                <div className="pd-search-wrap">
-                  <Search size={12} color="var(--text3)" className="pd-search-icon" />
-                  <input className="input pd-search-input" value={searchInput} onChange={e => setSearchInput(e.target.value)}
-                    placeholder="Search tests..." />
-                </div>
-              </div>
-
-              {/* Bulk action bar — dynamic labels show exact scope */}
-              {(reviewFilter === "draft" || selected.size > 0) && filteredByReview.length > 0 && (
-                <div className="pd-bulk-bar">
-                  <span className="pd-bulk-label">
-                    {selected.size > 0 ? `${selected.size} selected` : `${filteredByReview.length} draft tests visible`}
-                  </span>
-                  <button className="btn btn-sm" style={{ background: "var(--green-bg)", color: "var(--green)", border: "1px solid #86efac" }}
-                    onClick={() => bulkAction("approve")}>
-                    <ThumbsUp size={12} /> Approve {bulkScope}
-                  </button>
-                  <button className="btn btn-sm" style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
-                    onClick={() => bulkAction("reject")}>
-                    <ThumbsDown size={12} /> Reject {bulkScope}
-                  </button>
-                  {canEdit && (
-                  <button className="btn btn-sm" style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
-                    onClick={requestBulkDelete}>
-                    <Trash2 size={12} /> Delete {bulkScope}
-                  </button>
-                  )}
-                  {selected.size > 0 && (
-                    <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>Clear selection</button>
-                  )}
-                </div>
-              )}
-
-              <div className="card pd-review-table">
-                {filteredByReview.length === 0 ? (
-                  <div className="pd-empty-sm">
-                    No {reviewFilter !== "all" ? reviewFilter : ""} tests
-                  </div>
-                ) : (
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 36, paddingRight: 0 }}>
-                          <input type="checkbox"
-                            checked={pagedReview.length > 0 && pagedReview.every(t => selected.has(t.id))}
-                            onChange={e => toggleAll(e.target.checked, pagedReview.map(t => t.id))}
-                            className="pd-checkbox" />
-                        </th>
-                        <th>Test ID</th>
-                        <th>Test Name</th>
-                        <th>Status</th>
-                        <th>Review</th>
-                        <th>Type</th>
-                        <th>Confidence</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedReview.map(t => {
-                        const rs = t.reviewStatus || "draft";
-                        const isSelected = selected.has(t.id);
-                        const isNew = newTestIds.has(t.id);
-                        return (
-                          <tr key={t.id} style={{
-                            background: isSelected ? "var(--accent-bg)" : isNew ? "rgba(34,197,94,0.06)" : undefined,
-                            transition: "background 0.3s",
-                          }}>
-                            <td style={{ paddingRight: 0 }}>
-                              <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.id)}
-                                className="pd-checkbox" />
-                            </td>
-                            <td>
-                              <span className="mono-id">
-                                {t.id.length > 8 ? t.id.slice(0, 8) + "…" : t.id}
-                              </span>
-                            </td>
-                            <td style={{ cursor: "pointer" }} onClick={() => navigate(`/tests/${t.id}`)}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                <AgentTag type="TA" />
-                                <div>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ fontWeight: 500, fontSize: "0.875rem" }}>{cleanTestName(t.name)}</span>
-                                    {isNew && (
-                                      <span className="pd-new-badge">NEW</span>
-                                    )}
-                                  </div>
-                                  {t.description && <div style={{ fontSize: "0.73rem", color: "var(--text3)", marginTop: 1 }}>{t.description?.slice(0, 64)}</div>}
-                                  <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
-                                    <ScenarioBadges test={t} isBddTest={isBddTest} />
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td><StatusBadge s={t.lastResult} /></td>
-                            <td><ReviewBadge status={rs} /></td>
-                            <td>
-                              {t.type && (
-                                <span className={`badge ${testTypeBadgeClass(t.type)}`}>
-                                  {testTypeLabel(t.type, true)}
-                                </span>
-                              )}
-                            </td>
-                            <td><ConfBar score={t.qualityScore != null ? Math.min(100, Math.round(t.qualityScore)) : null} /></td>
-                            <td>
-                              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                {rs === "draft" && (
-                                  <>
-                                    <button className="btn btn-xs" style={{ background: "var(--green-bg)", color: "var(--green)", border: "1px solid #86efac" }}
-                                      onClick={() => reviewOne(t.id, "approve")}>
-                                      <ThumbsUp size={11} /> Approve
-                                    </button>
-                                    <button className="btn btn-xs" style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
-                                      onClick={() => reviewOne(t.id, "reject")}>
-                                      <ThumbsDown size={11} /> Reject
-                                    </button>
-                                  </>
-                                )}
-                                {(rs === "approved" || rs === "rejected") && (
-                                  <button className="btn btn-ghost btn-xs" onClick={() => reviewOne(t.id, "restore")} title="Move back to Draft">
-                                    <RotateCcw size={11} /> Restore
-                                  </button>
-                                )}
-                                {canEdit && (
-                                <button className="btn btn-ghost btn-xs" onClick={() => {
-                                  if (!window.confirm(`Delete test "${t.name}"? This cannot be undone.`)) return;
-                                  api.deleteTest(id, t.id).then(refresh).catch(err => showToast(err.message, "error"));
-                                }}>
-                                  <Trash2 size={11} />
-                                </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-
-              {/* Pagination — server-side, changing page triggers refresh */}
-              <TablePagination
-                total={testsMeta.total}
-                page={reviewPage}
-                totalPages={reviewTotalPages}
-                onPageChange={setReviewPage}
-                label="tests"
-              />
-            </>
-          )}
-        </div>
-      )}
-
       {/* ── RUNS TAB ── */}
       {tab === "runs" && (
         <RunsTab
@@ -598,61 +292,8 @@ export default function ProjectDetail() {
         <TraceabilityTab traceability={traceability} traceLoading={traceLoading} />
       )}
 
-      {/* Settings tab removed — Quality Gates (AUTO-012) and Web Vitals Budgets
-          (AUTO-017) moved to /automation → per-project card, colocated with
-          tokens + schedules since all four are "how CI runs behave" config. */}
-
       <RunToast msg={toast.msg} type={toast.type} visible={toast.visible} onViewRun={toast.showLink} runId={toast.runId} />
 
-      {/* Bulk action confirmation modal */}
-      {bulkConfirm && (
-        <ModalShell onClose={() => setBulkConfirm(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
-          <div className="pd-confirm-title">Confirm bulk action</div>
-          <div className="pd-confirm-body">
-            You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong> on this page{bulkConfirm.action === "delete" ? ". They will be moved to the recycle bin." : ". This cannot be undone easily."}
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
-            <button
-              className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
-              onClick={() => bulkConfirm.action === "delete"
-                ? executeBulkDelete(bulkConfirm.ids)
-                : executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
-            >
-              {bulkConfirm.action === "approve" ? "Approve all" : bulkConfirm.action === "delete" ? "Delete all" : "Reject all"}
-            </button>
-          </div>
-        </ModalShell>
-      )}
-
-      {/* Fix #20: Keyboard shortcut hint */}
-      <KeyboardShortcuts
-        tab={tab}
-        selected={selected}
-        filteredByReview={filteredByReview}
-        onApprove={() => bulkAction("approve")}
-        onReject={() => bulkAction("reject")}
-        onClearSelection={() => setSelected(new Set())}
-      />
     </div>
   );
-}
-
-// Keyboard shortcuts for review actions — only active on the review tab
-function KeyboardShortcuts({ tab, selected, filteredByReview, onApprove, onReject, onClearSelection }) {
-  React.useEffect(() => {
-    function handler(e) {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
-      // Only fire approve/reject when on the review tab AND something is selected
-      // to prevent accidental bulk actions — matches Tests.jsx behavior
-      if (tab === "review" && selected.size > 0) {
-        if (e.key === "a" && !e.metaKey && !e.ctrlKey) onApprove();
-        if (e.key === "r" && !e.metaKey && !e.ctrlKey) onReject();
-      }
-      if (e.key === "Escape") onClearSelection();
-    }
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [tab, selected, onApprove, onReject, onClearSelection]);
-  return null;
 }
