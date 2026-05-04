@@ -809,19 +809,68 @@ export default function ReviewQueue() {
             {/* Test rows */}
             <div className="rq-list">
               {visibleTests.length === 0 ? (
-                <div className="rq-empty rq-empty--list">
-                  <div className="rq-empty__icon">✓</div>
-                  <div className="rq-empty__title">
-                    {listSearch || catFilter !== "all" ? "No matches" : TABS.find(t2 => t2.id === tab)?.emptyLabel}
-                  </div>
-                  <div className="rq-empty__desc">
-                    {listSearch
-                      ? `No tests match "${listSearch}"`
-                      : tab === "draft"
-                        ? "All tests have been reviewed — great work!"
+                // Three empty-state branches:
+                //   1. search/filter active → "No matches" (don't coach; the
+                //      user is looking for something specific).
+                //   2. draft tab + nothing pending → inbox-zero coaching:
+                //      surface what to do next (generate more / audit
+                //      approvals) instead of just celebrating.
+                //   3. other tabs (rejected/approved) when empty → minimal
+                //      message, no coaching needed.
+                listSearch || catFilter !== "all" ? (
+                  <div className="rq-empty rq-empty--list">
+                    <div className="rq-empty__icon">✓</div>
+                    <div className="rq-empty__title">No matches</div>
+                    <div className="rq-empty__desc">
+                      {listSearch
+                        ? `No tests match "${listSearch}"`
                         : "No tests in this category."}
+                    </div>
                   </div>
-                </div>
+                ) : tab === "draft" ? (
+                  <div className="rq-empty rq-empty--list rq-empty--coach" role="status">
+                    <CheckCircle2 size={32} color="var(--green)" aria-hidden="true" />
+                    <div className="rq-empty__title">Inbox zero</div>
+                    <div className="rq-empty__desc">
+                      All drafts have been reviewed — nice work.
+                    </div>
+                    {/* Approved-this-week stat is not yet a backend endpoint
+                        (`GET /api/v1/review-queue/stats`); we derive the count
+                        from the approved-tab total query that's already in
+                        flight, which is "all-time" rather than 7-day. The
+                        copy avoids the "this week" framing until we ship the
+                        time-windowed endpoint. */}
+                    {approvedCount > 0 && (
+                      <div className="rq-empty__stats">
+                        {approvedCount} test{approvedCount !== 1 ? "s" : ""} approved in this workspace
+                      </div>
+                    )}
+                    <div className="rq-empty__actions">
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => navigate(projectId !== "all" ? `/projects/${projectId}/test-lab` : "/test-lab")}
+                      >
+                        Generate more tests →
+                      </button>
+                      {approvedCount > 0 && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setTab("approved")}
+                        >
+                          Audit recent approvals
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rq-empty rq-empty--list">
+                    <div className="rq-empty__icon">✓</div>
+                    <div className="rq-empty__title">
+                      {TABS.find(t2 => t2.id === tab)?.emptyLabel}
+                    </div>
+                    <div className="rq-empty__desc">No tests in this category.</div>
+                  </div>
+                )
               ) : (
                 visibleTests.map(t => {
                   const isActive   = t.id === activeTestId;

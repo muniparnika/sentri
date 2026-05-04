@@ -770,6 +770,34 @@
 .rq-empty__title { font-weight: 700; font-size: 0.95rem; color: var(--text2); margin-bottom: 6px; }
 .rq-empty__desc { font-size: 0.82rem; line-height: 1.6; max-width: 300px; }
 
+/* Inbox-zero coaching variant (Draft tab only). Renders an icon (not the
+   default `__icon` glyph), a title, a description, an optional stats line,
+   and a primary/secondary action pair. */
+.rq-empty--coach .rq-empty__title {
+  margin-top: 14px;          /* space below the lucide icon */
+  color: var(--text);        /* stronger than the default `--text2` */
+  font-size: 1rem;
+}
+
+.rq-empty__stats {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-empty__actions {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 220px;
+}
+
 /* ── Approve / Reject action buttons ─────────────────────────────────────────── */
 .btn-approve {
   display: inline-flex;
