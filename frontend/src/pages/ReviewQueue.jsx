@@ -613,7 +613,7 @@ export default function ReviewQueue() {
               <span className="rq-list-pane__count">
                 {visibleTests.length} test{visibleTests.length !== 1 ? "s" : ""}
               </span>
-              <div style={{ position: "relative" }} ref={sortMenuRef}>
+              <div className="rq-sort-menu-wrap" ref={sortMenuRef}>
                 <button
                   className="rq-list-pane__sort"
                   onClick={() => setShowSortMenu(v => !v)}
@@ -621,22 +621,11 @@ export default function ReviewQueue() {
                   {SORT_OPTIONS.find(s => s.id === sortBy)?.label} ▾
                 </button>
                 {showSortMenu && (
-                  <div style={{
-                    position: "absolute", right: 0, top: "100%", zIndex: 30,
-                    background: "var(--surface)", border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)", padding: "4px 0",
-                    boxShadow: "var(--shadow)", minWidth: 130,
-                  }}>
+                  <div className="rq-sort-menu">
                     {SORT_OPTIONS.map(opt => (
                       <button
                         key={opt.id}
-                        style={{
-                          display: "block", width: "100%", padding: "6px 12px",
-                          textAlign: "left", border: "none", background: "none",
-                          fontSize: "0.78rem", cursor: "pointer",
-                          color: sortBy === opt.id ? "var(--accent)" : "var(--text2)",
-                          fontFamily: "var(--font-sans)",
-                        }}
+                        className={`rq-sort-menu__item ${sortBy === opt.id ? "rq-sort-menu__item--active" : ""}`}
                         onClick={() => { setSortBy(opt.id); setShowSortMenu(false); }}
                       >
                         {opt.label}
@@ -658,8 +647,9 @@ export default function ReviewQueue() {
               />
               {listSearch && (
                 <button
-                  style={{ position: "absolute", right: 18, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text3)", display: "flex" }}
+                  className="rq-list-search__clear"
                   onClick={() => setListSearch("")}
+                  aria-label="Clear search"
                 >
                   <X size={11} />
                 </button>
@@ -965,10 +955,8 @@ export default function ReviewQueue() {
                     ["j / ↓", "next"],
                     ["k / ↑", "prev"],
                   ].map(([key, label]) => (
-                    <span key={key} style={{ marginRight: 10 }}>
-                      <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.65rem" }}>
-                        {key}
-                      </kbd>
+                    <span key={key} className="rq-kbd-hints__group">
+                      <kbd>{key}</kbd>
                       {" "}{label}
                     </span>
                   ))}

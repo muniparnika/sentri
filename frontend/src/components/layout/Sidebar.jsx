@@ -151,20 +151,12 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
                 className="nav-link sidebar-rail__nav-item"
                 data-tour={item.tour || undefined}
                 title={item.label}
-                style={{ position: "relative" }}
               >
                 {({ isActive }) => (
                   <>
                     <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
                     {badge != null && (
-                      <span style={{
-                        position: "absolute", top: 4, right: 4,
-                        minWidth: 14, height: 14, borderRadius: 7,
-                        background: "var(--amber)", color: "#fff",
-                        fontSize: "0.55rem", fontWeight: 700,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        padding: "0 2px", lineHeight: 1,
-                      }}>
+                      <span className="sidebar-badge sidebar-badge--rail">
                         {badge > 99 ? "99+" : badge}
                       </span>
                     )}
@@ -287,14 +279,7 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
                         />
                         <span>{item.label}</span>
                         {badge != null && (
-                          <span style={{
-                            marginLeft: "auto",
-                            minWidth: 18, height: 18, borderRadius: 9,
-                            background: "var(--amber)", color: "#fff",
-                            fontSize: "0.62rem", fontWeight: 700,
-                            display: "inline-flex", alignItems: "center",
-                            justifyContent: "center", padding: "0 4px",
-                          }}>
+                          <span className="sidebar-badge sidebar-badge--wide">
                             {badge > 99 ? "99+" : badge}
                           </span>
                         )}

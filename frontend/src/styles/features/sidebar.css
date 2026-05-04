@@ -229,6 +229,41 @@
 .sidebar-nav__item-icon { flex-shrink: 0; }
 .sidebar-nav__item-chevron { margin-left: auto; flex-shrink: 0; }
 
+/* ── Nav badges (Review Queue draft count, future auto-approval count) ── */
+/* Shared base — colour comes from a modifier class so future badge keys
+   (e.g. `.sidebar-badge--auto`) can override `background` without re-stating
+   layout rules. */
+.sidebar-badge {
+  background: var(--amber);
+  color: #fff;
+  font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+/* Wide-mode: trailing chip inside `.sidebar-nav__item`. */
+.sidebar-badge--wide {
+  margin-left: auto;
+  min-width: 18px; height: 18px;
+  border-radius: 9px;
+  padding: 0 4px;
+  font-size: 0.62rem;
+}
+
+/* Rail-mode: floating dot anchored to the icon button. */
+.sidebar-badge--rail {
+  position: absolute;
+  top: 4px; right: 4px;
+  min-width: 14px; height: 14px;
+  border-radius: 7px;
+  padding: 0 2px;
+  font-size: 0.55rem;
+}
+
+/* `.sidebar-rail__nav-item` already declares `position: relative` above,
+   which scopes `.sidebar-badge--rail`'s absolute positioning to the icon
+   button rather than the nav container. */
+
 /* ── Settings footer (expanded) ────────────────────────────────────── */
 .sidebar-footer {
   padding: 10px 10px 14px;

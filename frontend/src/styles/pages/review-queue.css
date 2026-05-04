@@ -128,6 +128,39 @@
   padding: 2px 4px;
 }
 
+/* Sort menu — anchored to `.rq-list-pane__sort` via a relative wrapper. */
+.rq-sort-menu-wrap { position: relative; }
+
+.rq-sort-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  min-width: 130px;
+  margin-top: 2px;
+  padding: 4px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.rq-sort-menu__item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+.rq-sort-menu__item:hover { background: var(--bg2); }
+.rq-sort-menu__item--active { color: var(--accent); }
+
 /* Search within list */
 .rq-list-search {
   padding: 7px 10px;
@@ -159,6 +192,22 @@
 }
 
 .rq-list-search__input:focus { border-color: var(--accent); }
+
+/* Clear-search button — appears when the search input has a value. */
+.rq-list-search__clear {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3);
+  padding: 0;
+}
+
+.rq-list-search__clear:hover { color: var(--text); }
 
 /* Category filter chips */
 .rq-filter-chips {
@@ -593,6 +642,17 @@
   text-align: center;
   padding: 4px 0 8px;
   flex-shrink: 0;
+}
+
+.rq-kbd-hints__group { margin-right: 10px; }
+
+.rq-kbd-hints kbd {
+  padding: 1px 5px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
 }
 
 /* ── Responsive ───────────────────────────────────────────────────────────────── */
