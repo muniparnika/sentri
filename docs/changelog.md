@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Sidebar draft-count badge stale after approve/reject (PR #7)**: The badge query was keyed under `["sidebar-draft-count", workspaceId]` — outside the `reviewQueueQueryKeys.root` namespace — so `invalidateReviewQueueCache()` (called by approve / reject / delete / bulk handlers in `frontend/src/pages/ReviewQueue.jsx`) didn't bust it. The badge would keep showing the pre-mutation count for up to 60 seconds. Re-keyed the query under the new `reviewQueueQueryKeys.sidebarDraftCount(workspaceId)` slot in `frontend/src/queryClient.js` so the existing root-prefix invalidation covers it automatically; future mutation sites get the right behaviour by default. Updated `invalidateReviewQueueCache`'s JSDoc to enumerate every key it covers (paginated lists, sidebar badge, per-tab count probes) so the next agent doesn't re-introduce a parallel invalidation helper. (#7)
+
 ### Changed
 - **Shared `fmtRelativeTimeFull` formatter (PR #7)**: Extracted the `Intl.RelativeTimeFormat`-based long-form relative time helper that was inlined in both `frontend/src/pages/Tests.jsx` and `frontend/src/pages/ReviewQueue.jsx` (with its 6-row `RELATIVE_UNITS` constant) into a single export at `frontend/src/utils/formatters.js`. Both call sites now import `fmtRelativeTimeFull(iso, fallback)` instead of duplicating the logic. Distinct from the existing `fmtRelativeDate` (which falls back to a date string after ~24 hours): `fmtRelativeTimeFull` keeps relative phrasing all the way up to "X years ago" so the Review Queue's "Generated" row and the Tests page's "Last Run" column produce consistent output. Output is automatically localised via `Intl.RelativeTimeFormat` so the formatter is ready for future i18n without callsite changes. Per `REVIEW.md` PR-checklist rule "no duplicated helpers — new utilities placed in shared `utils/` not inline." (#7)
 

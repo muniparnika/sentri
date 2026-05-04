@@ -67,6 +67,15 @@ export default function useReviewQueueQuery({ tab, projectId, search, category, 
 /**
  * Bust every Review Queue query — call after approve/reject/bulk mutations
  * so the next page render fetches fresh data.
+ *
+ * Because the matcher is the `reviewQueueQueryKeys.root` prefix
+ * (`["reviewQueue"]`), this also invalidates:
+ *   - every paginated list (`reviewQueueQueryKeys.list(...)`)
+ *   - the sidebar draft-count badge (`reviewQueueQueryKeys.sidebarDraftCount(...)`)
+ *   - the per-tab count probes (which are list queries with `pageSize: 1`)
+ *
+ * Adding new mutation sites? Calling this single helper is enough — do not
+ * also reach into the sidebar's query key directly.
  */
 export function invalidateReviewQueueCache() {
   return queryClient.invalidateQueries({ queryKey: reviewQueueQueryKeys.root });

@@ -10,6 +10,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
 import { useQuery } from "@tanstack/react-query";
+import { reviewQueueQueryKeys } from "../../queryClient.js";
 
 const NAV_GROUPS = [
   {
@@ -83,7 +84,7 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   // switches workspaces (otherwise the 60 s stale window serves the old
   // workspace's count).
   const { data: draftData } = useQuery({
-    queryKey: ["sidebar-draft-count", user?.workspaceId],
+    queryKey: reviewQueueQueryKeys.sidebarDraftCount(user?.workspaceId),
     queryFn: () => api.getAllTestsPaged(1, 1, { reviewStatus: "draft" }).then(r => r.meta?.total ?? 0),
     staleTime: 60_000,
     refetchOnWindowFocus: true,
