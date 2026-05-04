@@ -947,6 +947,30 @@
   font-size: 0.85rem;
 }
 
+/* Styled confirmation modal — used by `<ModalShell>`-wrapped reject/
+   delete/bulk-approve/bulk-reject prompts. Layout mirrors the inline
+   styles Tests.jsx uses on the same `<ModalShell>` so the two pages
+   look identical when prompting the user. */
+.rq-confirm__title {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.rq-confirm__body {
+  font-size: 0.875rem;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.rq-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* DetailSidebar overrides — sibling-modifier classes for `.rq-info-row`
    children when extra top padding / smaller font is required. */
 .rq-quality-row--flush { margin-bottom: 0; }

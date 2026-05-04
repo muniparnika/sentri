@@ -36,6 +36,7 @@ import { cleanTestName } from "../utils/formatTestName.js";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
+import ModalShell from "../components/shared/ModalShell.jsx";
 import highlightCode from "../utils/highlightCode.js";
 import "../styles/pages/review-queue.css";
 
@@ -391,6 +392,13 @@ export default function ReviewQueue() {
   const PAGE_SIZE = 50;
   const sortMenuRef = useRef(null);
 
+  // Styled confirmation dialog state — replaces native `window.confirm` for
+  // the three destructive paths (reject, delete, bulk approve/reject). Same
+  // shape as Tests.jsx's `bulkConfirm` so the two pages share the mental
+  // model. `kind` discriminates the copy; `payload` carries either the
+  // single test or the array of selected ids. `null` = no modal.
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
   // Reset to page 1 whenever the filter set changes — otherwise a "page 4"
   // cursor on the Draft tab would still apply when the user switches to
   // Approved (which may have <4 pages of items).
@@ -510,7 +518,17 @@ export default function ReviewQueue() {
     }
   }
 
-  async function handleReject(test) {
+  // Reject is destructive — a rejected test has to be manually restored
+  // to draft to come back into the queue, and a misclicked `r` keypress
+  // is otherwise silent. Splits into request → execute so the styled
+  // `<ModalShell>` confirmation can sit between user intent and the API
+  // call. (Approve is intentionally confirmation-free — it's the primary
+  // action and adding friction there would slow the page's main flow.)
+  function handleReject(test) {
+    setConfirmDialog({ kind: "reject", payload: test });
+  }
+
+  async function executeReject(test) {
     setActionLoading(`reject-${test.id}`);
     try {
       await api.rejectTest(test.projectId, test.id);
@@ -548,10 +566,14 @@ export default function ReviewQueue() {
     }
   }
 
-  async function handleDelete(test) {
-    // Per AGENT.md, destructive actions need confirmation. Soft-delete only —
-    // tests land in the recycle bin and are recoverable from Settings.
-    if (!window.confirm(`Delete "${cleanTestName(test.name)}"? It will move to the recycle bin.`)) return;
+  // Delete (soft) is destructive but recoverable via the recycle bin in
+  // Settings. Same request/execute split as reject so a single
+  // `<ModalShell>` handles both paths.
+  function handleDelete(test) {
+    setConfirmDialog({ kind: "delete", payload: test });
+  }
+
+  async function executeDelete(test) {
     setActionLoading(`delete-${test.id}`);
     try {
       await api.deleteTest(test.projectId, test.id);
@@ -569,9 +591,19 @@ export default function ReviewQueue() {
     }
   }
 
-  async function handleBulkAction(action) {
+  // Always confirm bulk actions — a misclicked "Approve 47" is the worst
+  // available misclick on this page and there's no per-row visual review
+  // step in the bulk flow. Both approve and reject route through the
+  // styled `<ModalShell>` (unlike single-test approve, which is the
+  // primary one-click flow and stays confirmation-free).
+  function handleBulkAction(action) {
     const ids = Array.from(selected);
     if (!ids.length) return;
+    setConfirmDialog({ kind: action === "approve" ? "bulkApprove" : "bulkReject", payload: ids });
+  }
+
+  async function executeBulkAction(action, ids) {
+    if (!ids?.length) return;
     setBulkError(null);
     setActionLoading(`bulk-${action}`);
 
@@ -1211,6 +1243,67 @@ export default function ReviewQueue() {
           </div>
         </div>
       )}
+
+      {/* Confirmation modal for the three destructive paths (single
+          reject, single delete, bulk approve, bulk reject). Replaces the
+          previous `window.confirm` to match the styled pattern Tests.jsx
+          and the old ProjectDetail review tab used. The `kind` switch
+          carries the per-action copy and styling (danger vs primary). */}
+      {confirmDialog && (() => {
+        const { kind, payload } = confirmDialog;
+        // Per-kind copy + execute handler. Centralised here so the
+        // closing-the-modal-then-firing-the-action dance only happens
+        // in one place — every branch dismisses the modal before kicking
+        // off the async work, so a network failure can't leave the
+        // modal stuck open.
+        const config =
+          kind === "reject" ? {
+            title: "Reject test?",
+            body: <>Reject <strong>{cleanTestName(payload.name)}</strong>? You can restore it to Draft from the Rejected tab.</>,
+            confirmLabel: "Reject test",
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeReject(payload),
+          } :
+          kind === "delete" ? {
+            title: "Delete test?",
+            body: <>Delete <strong>{cleanTestName(payload.name)}</strong>? It will move to the recycle bin and can be restored from Settings.</>,
+            confirmLabel: "Delete test",
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeDelete(payload),
+          } :
+          kind === "bulkApprove" ? {
+            title: `Approve ${payload.length} test${payload.length !== 1 ? "s" : ""}?`,
+            body: <>You're about to approve <strong>{payload.length} test{payload.length !== 1 ? "s" : ""}</strong> across all selected projects. They'll move to the regression suite.</>,
+            confirmLabel: `Approve ${payload.length}`,
+            confirmClass: "btn btn-primary btn-sm",
+            run: () => executeBulkAction("approve", payload),
+          } :
+          kind === "bulkReject" ? {
+            title: `Reject ${payload.length} test${payload.length !== 1 ? "s" : ""}?`,
+            body: <>You're about to reject <strong>{payload.length} test{payload.length !== 1 ? "s" : ""}</strong>. You can restore them to Draft from the Rejected tab.</>,
+            confirmLabel: `Reject ${payload.length}`,
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeBulkAction("reject", payload),
+          } : null;
+        if (!config) return null;
+        return (
+          <ModalShell onClose={() => setConfirmDialog(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
+            <div className="rq-confirm__title">{config.title}</div>
+            <div className="rq-confirm__body">{config.body}</div>
+            <div className="rq-confirm__actions">
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDialog(null)}>
+                Cancel
+              </button>
+              <button
+                className={config.confirmClass}
+                onClick={() => { setConfirmDialog(null); config.run(); }}
+              >
+                {config.confirmLabel}
+              </button>
+            </div>
+          </ModalShell>
+        );
+      })()}
     </div>
   );
 }
