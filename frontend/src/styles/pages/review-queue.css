@@ -255,6 +255,15 @@
 .rq-item:last-child { border-bottom: none; }
 .rq-item:hover { background: var(--bg2); }
 
+/* Keyboard focus outline for the row. Rows are `role="button"` + `tabIndex=0`
+   so the native outline would otherwise be suppressed by :focus-visible
+   defaults on non-interactive elements. Uses the accent-bg tint to match
+   the active-row styling below without fully selecting the row on focus. */
+.rq-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .rq-item--active {
   background: var(--accent-bg);
   border-left-color: var(--accent);
@@ -307,25 +316,18 @@
 }
 .rq-item__delete:disabled { opacity: 1; cursor: default; }
 
-/* Checkbox */
+/* Checkbox — now a real `<input type="checkbox">` for a11y (keyboard focus,
+   screen-reader announcement, Space toggle). `accent-color` tints the native
+   tick + fill to match the app's accent hue without needing a custom SVG.
+   Supported in every evergreen browser since 2022. Sizing matches the
+   previous custom control so the layout is unchanged. */
 .rq-item__check {
   width: 15px;
   height: 15px;
-  border-radius: 4px;
-  border: 1px solid var(--border2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  margin: 2px 0 0 0;
   flex-shrink: 0;
-  margin-top: 2px;
-  background: var(--surface);
   cursor: pointer;
-  transition: all 0.1s;
-}
-
-.rq-item__check--checked {
-  background: var(--accent);
-  border-color: var(--accent);
+  accent-color: var(--accent);
 }
 
 .rq-item__body { flex: 1; min-width: 0; }

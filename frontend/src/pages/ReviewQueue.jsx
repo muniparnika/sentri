@@ -197,7 +197,14 @@ function DetailSidebar({
             <span className="rq-quality-score" style={{ color: qualityColor(score) }}>
               {score}
             </span>
-            <div className="rq-quality-bar">
+            <div
+              className="rq-quality-bar"
+              role="progressbar"
+              aria-valuenow={score}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Quality score"
+            >
               <div
                 className="rq-quality-fill"
                 style={{ width: `${score}%`, background: qualityColor(score) }}
@@ -668,11 +675,19 @@ export default function ReviewQueue() {
         </div>
       </div>
 
-      {/* ── Tab bar ── */}
-      <div className="rq-tabs">
+      {/* ── Tab bar ──
+          WAI-ARIA authoring practices: tablist + tab + aria-selected +
+          aria-controls. The body panes below carry matching `id` + `role="tabpanel"`
+          so screen readers announce the relationship. */}
+      <div className="rq-tabs" role="tablist" aria-label="Review status">
         {TABS.map(t => (
           <button
             key={t.id}
+            role="tab"
+            id={`rq-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`rq-tabpanel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             className={`rq-tab ${tab === t.id ? "rq-tab--active" : ""}`}
             onClick={() => setTab(t.id)}
           >
@@ -694,7 +709,12 @@ export default function ReviewQueue() {
           <span className="rq-loading__text">Loading tests…</span>
         </div>
       ) : (
-        <div className="rq-body">
+        <div
+          className="rq-body"
+          role="tabpanel"
+          id={`rq-tabpanel-${tab}`}
+          aria-labelledby={`rq-tab-${tab}`}
+        >
 
           {/* ── Left: list pane ── */}
           <div className="rq-list-pane">
@@ -768,21 +788,22 @@ export default function ReviewQueue() {
               ))}
             </div>
 
-            {/* Select-all when items exist */}
+            {/* Select-all when items exist — real <label> + <input> so the
+                checkbox is in the tab order, screen-reader announced, and
+                togglable via Space per native semantics. */}
             {visibleTests.length > 0 && (
-              <div className="rq-select-all">
-                <div
-                  className={`rq-item__check rq-select-all__check ${selected.size === visibleTests.length && visibleTests.length > 0 ? "rq-item__check--checked" : ""}`}
-                  onClick={toggleAll}
-                >
-                  {selected.size === visibleTests.length && visibleTests.length > 0 && (
-                    <CheckCircle2 size={9} color="#fff" />
-                  )}
-                </div>
+              <label className="rq-select-all">
+                <input
+                  type="checkbox"
+                  className="rq-item__check rq-select-all__check"
+                  checked={selected.size === visibleTests.length && visibleTests.length > 0}
+                  onChange={toggleAll}
+                  aria-label={selected.size === visibleTests.length ? "Deselect all tests" : "Select all tests"}
+                />
                 <span className="rq-select-all__label">
                   {selected.size === visibleTests.length ? "Deselect all" : "Select all"}
                 </span>
-              </div>
+              </label>
             )}
 
             {/* Test rows */}
@@ -814,15 +835,33 @@ export default function ReviewQueue() {
                     <div
                       key={t.id}
                       className={`rq-item ${isActive ? "rq-item--active" : ""} ${isNew ? "rq-item--new" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isActive}
+                      aria-label={`${cleanTestName(t.name)}${isActive ? ", currently selected" : ""}`}
                       onClick={() => setActiveTestId(t.id)}
+                      onKeyDown={e => {
+                        // Enter / Space activate the row, matching the native
+                        // <button> contract that `role="button"` inherits.
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveTestId(t.id);
+                        }
+                      }}
                     >
-                      {/* Checkbox */}
-                      <div
-                        className={`rq-item__check ${isSelected ? "rq-item__check--checked" : ""}`}
-                        onClick={e => { e.stopPropagation(); toggleItem(t.id); }}
-                      >
-                        {isSelected && <CheckCircle2 size={9} color="#fff" />}
-                      </div>
+                      {/* Real checkbox — in the tab order so keyboard users
+                          can multi-select independently of row activation.
+                          `onClick` with stopPropagation prevents a click on
+                          the checkbox from also triggering the row-level
+                          `setActiveTestId`. */}
+                      <input
+                        type="checkbox"
+                        className="rq-item__check"
+                        checked={isSelected}
+                        onChange={() => toggleItem(t.id)}
+                        onClick={e => e.stopPropagation()}
+                        aria-label={`Select ${cleanTestName(t.name)}`}
+                      />
 
                       <div className="rq-item__body">
                         <div className="rq-item__name">
