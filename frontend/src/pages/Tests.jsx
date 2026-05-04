@@ -14,6 +14,7 @@ import RunRegressionModal from "../components/run/RunRegressionModal.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import ProjectExportMenu from "../components/project/ProjectExportMenu.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
+import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
 import { StatusBadge, ScenarioBadges, StaleBadge, FlakyBadge } from "../components/shared/TestBadges.jsx";
 import usePageTitle from "../hooks/usePageTitle.js";
@@ -36,31 +37,6 @@ const CATEGORY_FILTERS = [
 ];
 
 const PAGE_SIZE = 10;
-
-// ── Relative time utility ──────────────────────────────────────────────────────
-
-const RELATIVE_UNITS = [
-  { max: 60,          divisor: 1,       unit: "second"  },
-  { max: 3600,        divisor: 60,      unit: "minute"  },
-  { max: 86400,       divisor: 3600,    unit: "hour"    },
-  { max: 2592000,     divisor: 86400,   unit: "day"     },
-  { max: 31536000,    divisor: 2592000, unit: "month"   },
-  { max: Infinity,    divisor: 31536000,unit: "year"    },
-];
-
-function relativeTime(dateStr) {
-  if (!dateStr) return "—";
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 10) return "just now";
-  for (const { max, divisor, unit } of RELATIVE_UNITS) {
-    if (diff < max) {
-      const val = Math.floor(diff / divisor);
-      return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-val, unit);
-    }
-  }
-  return "—";
-}
-
 
 // ── Empty State ────────────────────────────────────────────────────────────────
 
@@ -815,7 +791,7 @@ export default function Tests() {
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ fontSize: "0.8rem", color: "var(--text2)" }} title={t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : undefined}>
-                            {relativeTime(t.lastRunAt)}
+                            {fmtRelativeTimeFull(t.lastRunAt)}
                           </span>
                           {isHovered && (
                             <div style={{ display: "flex", gap: 4, marginLeft: "auto" }} onClick={e => e.stopPropagation()}>

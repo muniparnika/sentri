@@ -33,6 +33,7 @@ import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
+import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
 import highlightCode from "../utils/highlightCode.js";
@@ -52,29 +53,6 @@ const SORT_OPTIONS = [
   { id: "quality", label: "Quality score" },
   { id: "project", label: "Project" },
 ];
-
-// ── Relative time ─────────────────────────────────────────────────────────────
-const RELATIVE_UNITS = [
-  { max: 60,       divisor: 1,        unit: "second" },
-  { max: 3600,     divisor: 60,       unit: "minute" },
-  { max: 86400,    divisor: 3600,     unit: "hour"   },
-  { max: 2592000,  divisor: 86400,    unit: "day"    },
-  { max: 31536000, divisor: 2592000,  unit: "month"  },
-  { max: Infinity, divisor: 31536000, unit: "year"   },
-];
-
-function relativeTime(dateStr) {
-  if (!dateStr) return "—";
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 10) return "just now";
-  for (const { max, divisor, unit } of RELATIVE_UNITS) {
-    if (diff < max) {
-      const val = Math.floor(diff / divisor);
-      return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-val, unit);
-    }
-  }
-  return "—";
-}
 
 // ── Quality score colour helper ───────────────────────────────────────────────
 function qualityColor(score) {
@@ -262,7 +240,7 @@ function DetailSidebar({
       <div className="rq-info-row">
         <div className="rq-info-label">Generated</div>
         <div className="rq-info-val rq-info-val--sm">
-          {relativeTime(test.createdAt)}
+          {fmtRelativeTimeFull(test.createdAt)}
         </div>
       </div>
 
