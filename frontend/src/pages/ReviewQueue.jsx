@@ -688,10 +688,15 @@ export default function ReviewQueue() {
   useEffect(() => {
     function handler(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading) {
+      // Tab-gate approve/reject so the keyboard shortcuts mirror the visible
+      // button predicates (see DetailSidebar's Quick-decision group and the
+      // detail-pane header). Without this guard, pressing `a` on the rejected
+      // tab would directly approve the test — bypassing the "restore to draft
+      // first, then re-review" trust contract the queue exists to enforce.
+      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading && tab === "draft") {
         handleApproveRef.current(activeTest);
       }
-      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading) {
+      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading && tab !== "rejected") {
         handleRejectRef.current(activeTest);
       }
       if (e.key === "j" || e.key === "ArrowDown") {
@@ -706,7 +711,7 @@ export default function ReviewQueue() {
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTest, activeIdx, visibleTests, actionLoading]);
+  }, [activeTest, activeIdx, visibleTests, actionLoading, tab]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   // `data-mobile-view` toggles which pane is visible on narrow viewports.
