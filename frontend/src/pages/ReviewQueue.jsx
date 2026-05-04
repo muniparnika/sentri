@@ -22,9 +22,9 @@ import React, {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  CheckCircle2, XCircle, ChevronRight, ChevronLeft,
+  CheckCircle2, XCircle,
   Search, X, Loader2, ExternalLink, Copy,
-  ThumbsUp, ThumbsDown, AlertCircle, MoreHorizontal,
+  ThumbsUp, ThumbsDown, AlertCircle,
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
@@ -395,9 +395,12 @@ export default function ReviewQueue() {
     if (!activeTestId && visibleTests.length > 0) {
       setActiveTestId(visibleTests[0].id);
     } else if (activeTestId && !visibleTests.find(t => t.id === activeTestId)) {
-      // Active test left the list (e.g. was approved while on draft tab) — advance
-      const idx = visibleTests.indexOf(visibleTests.find(t => t.id === activeTestId));
-      setActiveTestId(visibleTests[Math.max(0, idx)]?.id ?? null);
+      // Active test left the list (e.g. was approved while on draft tab).
+      // The handleApprove/handleReject callbacks already attempt to advance to
+      // the next item before the cache update lands; this is the fallback when
+      // those callbacks aren't responsible for the disappearance (filter
+      // change, refetch from another tab, etc.). Reset to the first item.
+      setActiveTestId(visibleTests[0]?.id ?? null);
     }
   }, [visibleTests, activeTestId]);
 
@@ -474,7 +477,7 @@ export default function ReviewQueue() {
 
     const results = await Promise.allSettled(
       Object.entries(byProject).map(([pid, testIds]) =>
-        api.bulkTestAction(pid, testIds, action),
+        api.bulkUpdateTests(pid, testIds, action),
       ),
     );
 
@@ -515,11 +518,24 @@ export default function ReviewQueue() {
   }
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  // The handler reads `handleApprove` / `handleReject` via refs so the closure
+  // always sees the latest functions without forcing every render to re-bind
+  // the global `keydown` listener. The `actionLoading` guard prevents rapid
+  // `a`/`r` keypresses from firing concurrent requests for the same test.
+  const handleApproveRef = useRef(handleApprove);
+  const handleRejectRef  = useRef(handleReject);
+  handleApproveRef.current = handleApprove;
+  handleRejectRef.current  = handleReject;
+
   useEffect(() => {
     function handler(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest) handleApprove(activeTest);
-      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest) handleReject(activeTest);
+      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading) {
+        handleApproveRef.current(activeTest);
+      }
+      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading) {
+        handleRejectRef.current(activeTest);
+      }
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
         if (activeIdx < visibleTests.length - 1) setActiveTestId(visibleTests[activeIdx + 1].id);
@@ -532,7 +548,7 @@ export default function ReviewQueue() {
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTest, activeIdx, visibleTests]);
+  }, [activeTest, activeIdx, visibleTests, actionLoading]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (

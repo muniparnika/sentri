@@ -1,21 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  Search, Trash2, ArrowRight,
-  ThumbsUp, ThumbsDown,
-  RotateCcw, Info,
-} from "lucide-react";
 import { api } from "../api.js";
 import { queryClient, projectDetailQueryKeys } from "../queryClient.js";
 import {
   useProjectDetailQuery,
   useTraceabilityQuery,
 } from "../hooks/queries/useProjectDetailQueries.js";
-import AgentTag from "../components/shared/AgentTag.jsx";
-import ModalShell from "../components/shared/ModalShell.jsx";
-import { cleanTestName } from "../utils/formatTestName.js";
-import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
-import { StatusBadge, ReviewBadge, ScenarioBadges } from "../components/shared/TestBadges.jsx";
 import usePageTitle from "../hooks/usePageTitle.js";
 import useProjectRunMonitor from "../hooks/useProjectRunMonitor.js";
 import { useNotifications } from "../context/NotificationContext.jsx";
@@ -25,22 +15,7 @@ import ActiveRunBanner from "../components/project/ActiveRunBanner.jsx";
 import RunToast from "../components/project/RunToast.jsx";
 import RunsTab from "../components/project/RunsTab.jsx";
 import TraceabilityTab from "../components/project/TraceabilityTab.jsx";
-
 import ProjectHeader from "../components/project/ProjectHeader.jsx";
-import TablePagination from "../components/shared/TablePagination.jsx";
-
-function ConfBar({ score }) {
-  if (score == null) return <span style={{ color: "var(--text3)", fontSize: "0.73rem" }}>—</span>;
-  const color = score >= 80 ? "var(--green)" : score >= 60 ? "var(--amber)" : "var(--red)";
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <div style={{ width: 52, height: 4, borderRadius: 2, background: "var(--bg3)", overflow: "hidden" }}>
-        <div style={{ width: `${score}%`, height: "100%", background: color, borderRadius: 2 }} />
-      </div>
-      <span style={{ fontSize: "0.73rem", color: "var(--text2)", fontWeight: 500 }}>{score}%</span>
-    </div>
-  );
-}
 
 // Tests created within this window are considered "new" and highlighted.
 const NEW_TEST_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
@@ -188,8 +163,6 @@ export default function ProjectDetail() {
   }
 
 
-  const reviewTotalPages = Math.max(1, Math.ceil(testsMeta.total / PAGE_SIZE));
-
   if (loading) return (
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
       {[80, 400].map((h, i) => <div key={i} className="skeleton" style={{ height: h, borderRadius: 12, marginBottom: 16 }} />)}
@@ -261,17 +234,15 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Tabs */}
+      {/* Tabs — review/Tests removed in PR #7; the Tests tab content was
+          migrated to /review-queue. Keeping it here would render an empty
+          area when clicked. */}
       <div className="pd-tab-bar">
         {[
-          ["review", `Tests (${testCounts.total})`],
-          ["runs",   `Runs (${runsMeta.total})`],
+          ["runs",         `Runs (${runsMeta.total})`],
           ["traceability", "Traceability"],
         ].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} className={`pd-tab${tab === key ? " pd-tab--active" : ""}`}>
-            {key === "review" && testCounts.draft > 0 && (
-              <span className="pd-tab-badge">{testCounts.draft}</span>
-            )}
             {label}
           </button>
         ))}
