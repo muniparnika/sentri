@@ -23,9 +23,11 @@ const REVIEW_TAB_TO_REVIEW_STATUS = {
  * @param {string}  params.projectId  - "all" or a workspace project id
  * @param {string}  params.search     - free-text search
  * @param {string}  params.category   - "all" | "web" | "api" | "journey"
- *                                       (only `api` is server-side; `web` /
- *                                       `journey` are filtered client-side
- *                                       since the backend has no equivalent.)
+ *                                       All three filterable values are now
+ *                                       server-side (the backend understands
+ *                                       `api` / `ui` / `journey`); `web` maps
+ *                                       to the backend's `ui`. `all` is a
+ *                                       sentinel for "no filter".
  * @param {number}  params.page
  * @param {number}  [params.pageSize=50]
  * @returns {{
@@ -36,12 +38,14 @@ const REVIEW_TAB_TO_REVIEW_STATUS = {
  * }}
  */
 export default function useReviewQueueQuery({ tab, projectId, search, category, page, pageSize = 50 }) {
-  // Map UI category → backend `category` filter. Backend understands `api`/`ui`;
-  // `web` matches `ui`, while `journey` is purely a client-side concern (the
-  // `isJourneyTest` flag isn't a column).
+  // Map UI category → backend `category` filter. Backend understands
+  // `api` / `ui` / `journey`; the UI's `web` chip maps to `ui` for backwards
+  // compatibility with the original copy. `all` (or anything unrecognised)
+  // sends `undefined` so the backend skips the WHERE-clause altogether.
   const backendCategory =
-    category === "api" ? "api" :
-    category === "web" ? "ui"  : undefined;
+    category === "api"     ? "api"     :
+    category === "web"     ? "ui"      :
+    category === "journey" ? "journey" : undefined;
 
   const filters = {
     reviewStatus: REVIEW_TAB_TO_REVIEW_STATUS[tab],

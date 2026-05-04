@@ -426,20 +426,15 @@ export default function ReviewQueue() {
     return ids;
   }, [pageTests, now]);
 
-  // ── Page-local filter + sort ─────────────────────────────────────────────────
-  // Server already filtered by tab, projectId, search, and api/web category.
-  // Only `journey` (no backend column) is applied here, plus all sorts —
-  // sorting is intentionally page-local so the user can re-order what they
-  // currently see without paying a round-trip. Tab/project/search filter
-  // changes reset the page to 1, so this never spans pages by accident.
+  // ── Page-local sort ─────────────────────────────────────────────────────────
+  // Every filter (tab, projectId, search, api/web/journey category) is now
+  // server-side; the only thing we apply locally is the sort, since the
+  // backend always returns by `createdAt DESC` and the UI lets the user pick
+  // alternate orderings. Sorting in-place is intentional — re-fetching on
+  // sort change would burn a round-trip for a purely visual reorder of the
+  // tests already on the current page.
   const visibleTests = useMemo(() => {
-    let list = pageTests;
-
-    if (catFilter === "journey") {
-      list = list.filter(t => t.isJourneyTest);
-    }
-
-    list = [...list].sort((a, b) => {
+    const list = [...pageTests].sort((a, b) => {
       if (sortBy === "oldest")  return new Date(a.createdAt) - new Date(b.createdAt);
       if (sortBy === "quality") return (b.qualityScore ?? -1) - (a.qualityScore ?? -1);
       if (sortBy === "project") return (projMap[a.projectId]?.name ?? "").localeCompare(projMap[b.projectId]?.name ?? "");
@@ -447,7 +442,7 @@ export default function ReviewQueue() {
     });
 
     return list;
-  }, [pageTests, catFilter, sortBy, projMap]);
+  }, [pageTests, sortBy, projMap]);
 
   const totalPages = Math.max(1, Math.ceil(meta.total / PAGE_SIZE));
 

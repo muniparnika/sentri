@@ -173,7 +173,10 @@ export function countDraftByProjectIds(projectIds) {
  * @param {number}   pageSize
  * @param {Object}   [filters]
  * @param {string}   [filters.reviewStatus]  - "draft" | "approved" | "rejected"
- * @param {string}   [filters.category]      - "api" | "ui"
+ * @param {string}   [filters.category]      - "api" | "ui" | "journey"
+ *                                             ("journey" matches `isJourneyTest = 1`,
+ *                                             orthogonal to api/ui — same column
+ *                                             contract as `getByProjectIdPaged`.)
  * @param {string}   [filters.search]        - LIKE match against name + sourceUrl
  * @param {boolean}  [filters.stale]
  * @param {string}   [filters.projectId]     - Narrow to a single project; ignored
@@ -207,6 +210,12 @@ export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}
     conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
   } else if (filters.category === "ui") {
     conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    // Journeys are an orthogonal axis to api/ui (a journey is always a UI test
+    // today, but the column is reserved for future cross-cutting types).
+    // Backed by the `isJourneyTest` boolean column — `1` after testToRow's
+    // boolean→int coercion, so the comparison stays a literal `= 1`.
+    conditions.push("isJourneyTest = 1");
   }
   if (filters.stale) {
     conditions.push("isStale = 1");
@@ -244,7 +253,9 @@ export function getByProjectId(projectId) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @param {Object}        [filters]
  * @param {string}        [filters.reviewStatus] — "draft", "approved", "rejected", or undefined for all.
- * @param {string}        [filters.category]     — "api", "ui", or undefined for all.
+ * @param {string}        [filters.category]     — "api", "ui", "journey", or undefined for all.
+ *                                                  ("journey" matches `isJourneyTest = 1` —
+ *                                                  orthogonal to api/ui.)
  * @param {string}        [filters.search]       — free-text search against name and sourceUrl.
  * @returns {PagedResult}
  */
@@ -263,6 +274,8 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
   } else if (filters.category === "ui") {
     conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    conditions.push("isJourneyTest = 1");
   }
   if (filters.stale) {
     conditions.push("isStale = 1");
