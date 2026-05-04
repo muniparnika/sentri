@@ -164,6 +164,7 @@ export default function Tests() {
   const setStaleFilter   = useCallback((v) => setSearchParams(p => { const n = new URLSearchParams(p); v ? n.set("stale", "true") : n.delete("stale"); return n; }, { replace: true }), [setSearchParams]);
 
   const [showRunModal, setShowRunModal] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState("all");
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);   // "status" | "lastRun" | "project"
   const [sortDir, setSortDir] = useState("asc");   // "asc" | "desc"
@@ -203,6 +204,8 @@ export default function Tests() {
 
   const filtered = useMemo(() => {
     const list = tests.filter(t => {
+      // Project filter — mirrors the Review Queue's project dropdown
+      if (selectedProjectId !== "all" && t.projectId !== selectedProjectId) return false;
       const matchReview =
         reviewFilter === "All Tests" ? true :
         reviewFilter === "Approved" ? t.reviewStatus === "approved" :
@@ -238,14 +241,14 @@ export default function Tests() {
       });
     }
     return list;
-  }, [tests, reviewFilter, search, filter, categoryFilter, staleFilter, sortCol, sortDir, projMap]);
+  }, [tests, reviewFilter, search, filter, categoryFilter, staleFilter, selectedProjectId, sortCol, sortDir, projMap]);
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [search, filter, reviewFilter, categoryFilter, staleFilter]);
+  useEffect(() => { setPage(1); }, [search, filter, reviewFilter, categoryFilter, staleFilter, selectedProjectId]);
 
   // ── Sorting ────────────────────────────────────────────────────────────────
   function toggleSort(col) {
@@ -405,20 +408,38 @@ export default function Tests() {
             </button>
           )}
           <div style={{ flex: 1 }} />
-          {projectsWithTests.length > 0 && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {projectsWithTests.map(p => (
-                <ProjectExportMenu
-                  key={p.id}
-                  projectId={p.id}
-                  totalTests={p.totalTests}
-                  approvedCount={p.approvedTests}
-                  label={projectsWithTests.length === 1 ? "Export" : `Export · ${p.name}`}
-                  buttonClassName="btn btn-ghost btn-sm"
-                />
+          {/* Project dropdown — mirrors the Review Queue's project filter.
+              Scopes the export button to a single project so users with 3+
+              projects don't see 3+ export buttons cluttering the header. */}
+          {projects.length > 1 && (
+            <select
+              className="input"
+              value={selectedProjectId}
+              onChange={e => setSelectedProjectId(e.target.value)}
+              style={{ height: 32, fontSize: "0.78rem", padding: "0 28px 0 10px", minWidth: 140 }}
+            >
+              <option value="all">All projects</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-            </div>
+            </select>
           )}
+          {projectsWithTests.length > 0 && (() => {
+            // Show export for the selected project, or the first project if "all"
+            const exportProject = selectedProjectId !== "all"
+              ? projectsWithTests.find(p => p.id === selectedProjectId)
+              : projectsWithTests[0];
+            if (!exportProject) return null;
+            return (
+              <ProjectExportMenu
+                projectId={exportProject.id}
+                totalTests={exportProject.totalTests}
+                approvedCount={exportProject.approvedTests}
+                label="Export"
+                buttonClassName="btn btn-ghost btn-sm"
+              />
+            );
+          })()}
           <button className="btn btn-ghost btn-sm" style={{ gap: 5 }} onClick={() => navigate("/test-lab")}>
             ⚗️ Test Lab
           </button>
