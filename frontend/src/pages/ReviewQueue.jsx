@@ -399,6 +399,32 @@ export default function ReviewQueue() {
   // single test or the array of selected ids. `null` = no modal.
   const [confirmDialog, setConfirmDialog] = useState(null);
 
+  // Debounced search — `searchDraft` mirrors the input field (immediate
+  // feedback so typing feels responsive), and a 300ms idle timer commits
+  // it to the URL `?q` param, which is what drives `useReviewQueueQuery`'s
+  // server fetch. Without this, every keystroke fired a paginated tests
+  // request to the backend (10 chars typed = 10 round-trips).
+  //
+  // Bi-directional sync: external URL writes (clear button, tab switch
+  // dropping `?q`, deep-link nav) reset `searchDraft` to match the new
+  // committed value so the input doesn't display stale text.
+  const [searchDraft, setSearchDraft] = useState(listSearch);
+  useEffect(() => {
+    if (searchDraft === listSearch) return;
+    const t = setTimeout(() => setListSearch(searchDraft), 300);
+    return () => clearTimeout(t);
+    // `setListSearch` is a stable closure that calls `setSearchParams`;
+    // omitting it from deps avoids re-running the effect when its
+    // identity drifts but the URL itself hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDraft]);
+  useEffect(() => {
+    // External URL change (clear button, tab nav) — sync the input back
+    // so the field matches what the server is filtering on.
+    if (listSearch !== searchDraft) setSearchDraft(listSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listSearch]);
+
   // Reset to page 1 whenever the filter set changes — otherwise a "page 4"
   // cursor on the Draft tab would still apply when the user switches to
   // Approved (which may have <4 pages of items).
@@ -802,13 +828,13 @@ export default function ReviewQueue() {
               <input
                 className="rq-list-search__input"
                 placeholder="Search tests…"
-                value={listSearch}
-                onChange={e => setListSearch(e.target.value)}
+                value={searchDraft}
+                onChange={e => setSearchDraft(e.target.value)}
               />
-              {listSearch && (
+              {searchDraft && (
                 <button
                   className="rq-list-search__clear"
-                  onClick={() => setListSearch("")}
+                  onClick={() => { setSearchDraft(""); setListSearch(""); }}
                   aria-label="Clear search"
                 >
                   <X size={11} />
