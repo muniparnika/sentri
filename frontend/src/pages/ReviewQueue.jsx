@@ -1144,7 +1144,15 @@ export default function ReviewQueue() {
                     {cleanTestName(activeTest.name)}
                   </div>
                   <div className="rq-detail-pane__actions">
-                    {tab !== "approved" && (
+                    {/* Header decision buttons — same tab contract as the
+                        sidebar's Quick-decision group: draft shows
+                        Approve+Reject, rejected shows Restore-to-Draft only,
+                        approved shows Reject only. The earlier `tab !== "approved"`
+                        guard let a rejected test be re-approved without
+                        re-review (skipping the trust contract the queue
+                        exists to enforce); now `tab === "draft"` matches
+                        the sidebar's tightened predicate. */}
+                    {tab === "draft" && (
                       <button
                         className="btn-approve"
                         onClick={() => handleApprove(activeTest)}
@@ -1166,6 +1174,18 @@ export default function ReviewQueue() {
                           ? <Loader2 size={12} className="spin" />
                           : <XCircle size={12} />}
                         Reject
+                      </button>
+                    )}
+                    {tab === "rejected" && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handleRestore(activeTest)}
+                        disabled={!!actionLoading}
+                      >
+                        {actionLoading === `restore-${activeTest.id}`
+                          ? <Loader2 size={12} className="spin" />
+                          : <RotateCcw size={12} />}
+                        Restore to Draft
                       </button>
                     )}
                     <button
