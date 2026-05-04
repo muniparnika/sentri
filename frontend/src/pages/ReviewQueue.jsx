@@ -24,12 +24,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle2, XCircle,
   Search, X, Loader2, ExternalLink, Copy,
-  ThumbsUp, ThumbsDown, AlertCircle,
+  ThumbsUp, ThumbsDown, AlertCircle, Trash2,
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import useReviewQueueQuery, { invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
 import usePageTitle from "../hooks/usePageTitle.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
@@ -290,10 +292,16 @@ function DetailSidebar({
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+// Tests created within this window are highlighted with a "NEW" badge.
+// Mirrors the threshold previously used by `ProjectDetail.jsx`.
+const NEW_TEST_THRESHOLD_MS = 5 * 60 * 1000;
+
 export default function ReviewQueue() {
   usePageTitle("Review Queue");
   const navigate   = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user: authUser } = useAuth();
+  const canEdit = userHasRole(authUser, "qa_lead");
 
   // Projects list only — tests now flow through the server-paginated
   // `useReviewQueueQuery` hook, so we no longer fetch every test in the
@@ -358,6 +366,23 @@ export default function ReviewQueue() {
     () => Object.fromEntries(projects.map(p => [p.id, p])),
     [projects],
   );
+
+  // ── "NEW" badge for recently-created tests ──────────────────────────────────
+  // `now` ticks every 60s so the badge auto-expires without requiring a manual
+  // refresh. Mirrors the tick cadence used by `ProjectDetail.jsx`.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const newTestIds = useMemo(() => {
+    const cutoff = now - NEW_TEST_THRESHOLD_MS;
+    const ids = new Set();
+    for (const t of pageTests) {
+      if (t.createdAt && new Date(t.createdAt).getTime() > cutoff) ids.add(t.id);
+    }
+    return ids;
+  }, [pageTests, now]);
 
   // ── Page-local filter + sort ─────────────────────────────────────────────────
   // Server already filtered by tab, projectId, search, and api/web category.
@@ -439,6 +464,27 @@ export default function ReviewQueue() {
     } catch (err) {
       console.error("Reject failed:", err);
       setBulkError(`Reject failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleDelete(test) {
+    // Per AGENT.md, destructive actions need confirmation. Soft-delete only —
+    // tests land in the recycle bin and are recoverable from Settings.
+    if (!window.confirm(`Delete "${cleanTestName(test.name)}"? It will move to the recycle bin.`)) return;
+    setActionLoading(`delete-${test.id}`);
+    try {
+      await api.deleteTest(test.projectId, test.id);
+      // Advance to next item, same pattern as approve/reject.
+      const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      setBulkError(`Delete failed: ${err.message}`);
       setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
@@ -692,6 +738,7 @@ export default function ReviewQueue() {
                 visibleTests.map(t => {
                   const isActive   = t.id === activeTestId;
                   const isSelected = selected.has(t.id);
+                  const isNew      = newTestIds.has(t.id);
                   const proj       = projMap[t.projectId];
                   const score      = t.qualityScore;
                   const isApi      = t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
@@ -699,7 +746,7 @@ export default function ReviewQueue() {
                   return (
                     <div
                       key={t.id}
-                      className={`rq-item ${isActive ? "rq-item--active" : ""}`}
+                      className={`rq-item ${isActive ? "rq-item--active" : ""} ${isNew ? "rq-item--new" : ""}`}
                       onClick={() => setActiveTestId(t.id)}
                     >
                       {/* Checkbox */}
@@ -711,7 +758,10 @@ export default function ReviewQueue() {
                       </div>
 
                       <div className="rq-item__body">
-                        <div className="rq-item__name">{cleanTestName(t.name)}</div>
+                        <div className="rq-item__name">
+                          {cleanTestName(t.name)}
+                          {isNew && <span className="rq-new-badge">NEW</span>}
+                        </div>
                         <div className="rq-item__meta">
                           {isApi
                             ? <span className="badge badge-blue badge--xs">API</span>
@@ -733,6 +783,24 @@ export default function ReviewQueue() {
                           )}
                         </div>
                       </div>
+
+                      {/* Per-row delete (qa_lead+). Soft-deletes — the test
+                          lands in the recycle bin and can be restored from
+                          Settings. Stops propagation so it doesn't also
+                          select the row. */}
+                      {canEdit && (
+                        <button
+                          className="rq-item__delete"
+                          onClick={e => { e.stopPropagation(); handleDelete(t); }}
+                          disabled={actionLoading === `delete-${t.id}`}
+                          title="Delete (move to recycle bin)"
+                          aria-label={`Delete ${cleanTestName(t.name)}`}
+                        >
+                          {actionLoading === `delete-${t.id}`
+                            ? <Loader2 size={11} className="spin" />
+                            : <Trash2 size={11} />}
+                        </button>
+                      )}
                     </div>
                   );
                 })
