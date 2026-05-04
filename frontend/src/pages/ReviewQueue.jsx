@@ -112,8 +112,7 @@ function CodeView({ code }) {
       <div className="rq-code-toolbar">
         <span className="rq-code-lang">TypeScript</span>
         <button
-          className="btn btn-ghost btn-xs"
-          style={{ gap: 4, fontSize: "0.7rem" }}
+          className="btn btn-ghost btn-xs rq-code-toolbar__copy"
           onClick={handleCopy}
         >
           {copied ? <CheckCircle2 size={10} color="var(--green)" /> : <Copy size={10} />}
@@ -141,7 +140,7 @@ function DetailSidebar({
       {score != null && (
         <div className="rq-info-row">
           <div className="rq-info-label">Quality score</div>
-          <div className="rq-quality-row" style={{ marginBottom: 0 }}>
+          <div className="rq-quality-row rq-quality-row--flush">
             <span className="rq-quality-score" style={{ color: qualityColor(score) }}>
               {score}
             </span>
@@ -196,7 +195,7 @@ function DetailSidebar({
       {/* Generated */}
       <div className="rq-info-row">
         <div className="rq-info-label">Generated</div>
-        <div className="rq-info-val" style={{ fontSize: "0.75rem" }}>
+        <div className="rq-info-val rq-info-val--sm">
           {relativeTime(test.createdAt)}
         </div>
       </div>
@@ -209,18 +208,10 @@ function DetailSidebar({
             href={test.sourceUrl}
             target="_blank"
             rel="noreferrer"
-            style={{
-              fontSize: "0.7rem",
-              color: "var(--accent)",
-              fontFamily: "var(--font-mono)",
-              wordBreak: "break-all",
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 3,
-            }}
+            className="rq-source-url"
           >
             {test.sourceUrl.replace(/^https?:\/\/[^/]+/, "") || "/"}
-            <ExternalLink size={9} style={{ flexShrink: 0, marginTop: 2 }} />
+            <ExternalLink size={9} className="rq-source-url__icon" />
           </a>
         </div>
       )}
@@ -228,12 +219,11 @@ function DetailSidebar({
       <hr className="rq-sidebar-divider" />
 
       {/* Quick decision buttons */}
-      <div className="rq-info-label" style={{ marginBottom: 8 }}>Quick decision</div>
+      <div className="rq-info-label rq-info-label--gap">Quick decision</div>
       <div className="rq-decision-btns">
         {tab !== "approved" && (
           <button
-            className="btn-approve"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn-approve btn-block"
             onClick={() => onApprove(test)}
             disabled={!!actionLoading}
           >
@@ -245,8 +235,7 @@ function DetailSidebar({
         )}
         {tab !== "rejected" && (
           <button
-            className="btn-reject"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn-reject btn-block"
             onClick={() => onReject(test)}
             disabled={!!actionLoading}
           >
@@ -258,8 +247,7 @@ function DetailSidebar({
         )}
         {tab === "rejected" && (
           <button
-            className="btn-approve"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn-approve btn-block"
             onClick={() => onApprove(test)}
             disabled={!!actionLoading}
           >
@@ -270,8 +258,7 @@ function DetailSidebar({
           </button>
         )}
         <button
-          className="btn btn-ghost btn-sm"
-          style={{ width: "100%", justifyContent: "center", gap: 5 }}
+          className="btn btn-ghost btn-sm btn-block btn-block--gap"
           onClick={() => navigate(`/tests/${test.id}`)}
         >
           Open in Test Detail <ExternalLink size={11} />
@@ -564,10 +551,9 @@ export default function ReviewQueue() {
         <div className="rq-header__controls">
           {/* Project filter */}
           <select
-            className="input"
+            className="input rq-header-select"
             value={projectId}
             onChange={e => setProjectId(e.target.value)}
-            style={{ height: 32, fontSize: "0.78rem", padding: "0 28px 0 10px", minWidth: 140 }}
           >
             <option value="all">All projects</option>
             {projects.map(p => (
@@ -586,10 +572,10 @@ export default function ReviewQueue() {
             onClick={() => setTab(t.id)}
           >
             {t.label}
-            <span className={`badge ${
+            <span className={`badge rq-tab__badge ${
               t.id === "draft"    ? "badge-amber" :
               t.id === "rejected" ? "badge-red"   : "badge-green"
-            }`} style={{ marginLeft: 2 }}>
+            }`}>
               {tabCounts[t.id]}
             </span>
           </button>
@@ -598,9 +584,9 @@ export default function ReviewQueue() {
 
       {/* ── Body ── */}
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, gap: 10, color: "var(--text3)" }}>
+        <div className="rq-loading">
           <Loader2 size={18} className="spin" />
-          <span style={{ fontSize: "0.88rem" }}>Loading tests…</span>
+          <span className="rq-loading__text">Loading tests…</span>
         </div>
       ) : (
         <div className="rq-body">
@@ -676,21 +662,16 @@ export default function ReviewQueue() {
 
             {/* Select-all when items exist */}
             {visibleTests.length > 0 && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 12px", borderBottom: "1px solid var(--border)",
-                background: "var(--bg2)", flexShrink: 0,
-              }}>
+              <div className="rq-select-all">
                 <div
-                  className={`rq-item__check ${selected.size === visibleTests.length && visibleTests.length > 0 ? "rq-item__check--checked" : ""}`}
+                  className={`rq-item__check rq-select-all__check ${selected.size === visibleTests.length && visibleTests.length > 0 ? "rq-item__check--checked" : ""}`}
                   onClick={toggleAll}
-                  style={{ cursor: "pointer" }}
                 >
                   {selected.size === visibleTests.length && visibleTests.length > 0 && (
                     <CheckCircle2 size={9} color="#fff" />
                   )}
                 </div>
-                <span style={{ fontSize: "0.7rem", color: "var(--text3)" }}>
+                <span className="rq-select-all__label">
                   {selected.size === visibleTests.length ? "Deselect all" : "Select all"}
                 </span>
               </div>
@@ -699,7 +680,7 @@ export default function ReviewQueue() {
             {/* Test rows */}
             <div className="rq-list">
               {visibleTests.length === 0 ? (
-                <div className="rq-empty" style={{ paddingTop: 32 }}>
+                <div className="rq-empty rq-empty--list">
                   <div className="rq-empty__icon">✓</div>
                   <div className="rq-empty__title">
                     {listSearch || catFilter !== "all" ? "No matches" : TABS.find(t2 => t2.id === tab)?.emptyLabel}
@@ -738,16 +719,16 @@ export default function ReviewQueue() {
                         <div className="rq-item__name">{cleanTestName(t.name)}</div>
                         <div className="rq-item__meta">
                           {isApi
-                            ? <span className="badge badge-blue" style={{ fontSize: "0.62rem" }}>API</span>
+                            ? <span className="badge badge-blue badge--xs">API</span>
                             : t.isJourneyTest
-                              ? <span className="badge badge-amber" style={{ fontSize: "0.62rem" }}>Journey</span>
-                              : <span className="badge badge-gray" style={{ fontSize: "0.62rem" }}>Web</span>}
+                              ? <span className="badge badge-amber badge--xs">Journey</span>
+                              : <span className="badge badge-gray badge--xs">Web</span>}
                           {proj && (
-                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>
+                            <span className="rq-item__meta-text">
                               {proj.name}
                             </span>
                           )}
-                          <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>
+                          <span className="rq-item__meta-text">
                             · {(t.steps ?? []).length} steps
                           </span>
                           {score != null && (
@@ -803,17 +784,13 @@ export default function ReviewQueue() {
 
             {/* Bulk error feedback */}
             {bulkError && (
-              <div style={{
-                padding: "8px 12px", background: "var(--amber-bg)",
-                borderTop: "1px solid var(--border)",
-                display: "flex", alignItems: "center", gap: 6,
-                fontSize: "0.75rem", color: "var(--amber)", flexShrink: 0,
-              }}>
+              <div className="rq-bulk-error" role="alert">
                 <AlertCircle size={12} />
-                <span style={{ flex: 1 }}>{bulkError}</span>
+                <span className="rq-bulk-error__msg">{bulkError}</span>
                 <button
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--amber)" }}
+                  className="rq-bulk-error__close"
                   onClick={() => setBulkError(null)}
+                  aria-label="Dismiss error"
                 >
                   <X size={11} />
                 </button>
@@ -889,7 +866,7 @@ export default function ReviewQueue() {
                     {activeTest.description && (
                       <div>
                         <div className="rq-section-label">Description</div>
-                        <p style={{ fontSize: "0.85rem", color: "var(--text2)", lineHeight: 1.65, margin: 0 }}>
+                        <p className="rq-description">
                           {activeTest.description}
                         </p>
                       </div>
@@ -922,10 +899,7 @@ export default function ReviewQueue() {
 
                     {/* Empty steps state */}
                     {!activeTest.playwrightCode && (activeTest.steps ?? []).length === 0 && (
-                      <div style={{
-                        padding: "32px 0", textAlign: "center",
-                        color: "var(--text3)", fontSize: "0.85rem",
-                      }}>
+                      <div className="rq-empty-inline">
                         No steps or code available for this test.
                       </div>
                     )}

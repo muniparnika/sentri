@@ -646,6 +646,134 @@
 
 .rq-kbd-hints__group { margin-right: 10px; }
 
+/* ── Misc utilities used by ReviewQueue.jsx — kept here so the page stays
+   class-driven per AGENT.md ("do not write equivalent inline styles"). ── */
+
+/* Header project filter — undersized variant of `.input` to fit the
+   compact header row alongside `.rq-header__title`. */
+.rq-header-select {
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
+  min-width: 140px;
+}
+
+/* Tab badge spacing — the count chip after each tab label. */
+.rq-tab__badge { margin-left: 2px; }
+
+/* Page-level loading state, shown while `useProjectData` resolves. */
+.rq-loading {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+}
+.rq-loading__text { font-size: 0.88rem; }
+
+/* Code-toolbar Copy button override (compact gap + smaller text). */
+.rq-code-toolbar__copy {
+  gap: 4px;
+  font-size: 0.7rem;
+}
+
+/* Select-all row above the test list. */
+.rq-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+.rq-select-all__check { cursor: pointer; }
+.rq-select-all__label {
+  font-size: 0.7rem;
+  color: var(--text3);
+}
+
+/* Empty list state — overrides the default `.rq-empty` top padding when
+   the empty state is shown inside the scrolling list pane. */
+.rq-empty--list { padding-top: 32px; }
+
+/* Compact tag inside `.rq-item__meta`. */
+.badge--xs { font-size: 0.62rem; }
+
+/* Project / steps text in `.rq-item__meta`. */
+.rq-item__meta-text {
+  font-size: 0.68rem;
+  color: var(--text3);
+}
+
+/* Bulk error banner pinned above the bulk-action bar. */
+.rq-bulk-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--amber-bg);
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+.rq-bulk-error__msg { flex: 1; }
+.rq-bulk-error__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--amber);
+  padding: 0;
+  display: flex;
+}
+
+/* Description paragraph in the detail pane. */
+.rq-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text2);
+  line-height: 1.65;
+}
+
+/* Inline empty state for tests with no steps or code. */
+.rq-empty-inline {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text3);
+  font-size: 0.85rem;
+}
+
+/* DetailSidebar overrides — sibling-modifier classes for `.rq-info-row`
+   children when extra top padding / smaller font is required. */
+.rq-quality-row--flush { margin-bottom: 0; }
+.rq-info-val--sm { font-size: 0.75rem; }
+.rq-info-label--gap { margin-bottom: 8px; }
+
+/* Source URL anchor in DetailSidebar. */
+.rq-source-url {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--accent);
+  word-break: break-all;
+}
+.rq-source-url__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Full-width decision buttons in the detail sidebar. */
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+.btn-block--gap { gap: 5px; }
+
+
 .rq-kbd-hints kbd {
   padding: 1px 5px;
   background: var(--bg2);
