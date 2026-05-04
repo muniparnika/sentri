@@ -262,10 +262,23 @@ function DetailSidebar({
 
       <hr className="rq-sidebar-divider" />
 
-      {/* Quick decision buttons */}
+      {/* Quick decision buttons.
+          The three branches are mutually exclusive by construction:
+          - draft     → Approve + Reject (the standard review decision)
+          - rejected  → Restore to Approved (no second "Approve" button —
+                        the restore variant *is* the approve action with
+                        clearer copy for previously-rejected tests)
+          - approved  → Reject only (approving an already-approved test
+                        is a no-op; rejecting it is the only state change
+                        a reviewer might want here)
+          The earlier `tab !== "approved"` guard rendered both the generic
+          Approve and the "Restore to Approved" button on the rejected
+          tab, producing two identical green buttons. Each branch now
+          declares its tab explicitly so adding a fourth tab in the future
+          requires a deliberate decision rather than an accidental fall-through. */}
       <div className="rq-info-label rq-info-label--gap">Quick decision</div>
       <div className="rq-decision-btns">
-        {tab !== "approved" && (
+        {tab === "draft" && (
           <button
             className="btn-approve btn-block"
             onClick={() => onApprove(test)}
