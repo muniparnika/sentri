@@ -21,14 +21,14 @@ export { parsePagination };
 
 // ─── Row ↔ Object helpers ─────────────────────────────────────────────────────
 
-const JSON_FIELDS = ["steps", "tags"];
+const JSON_FIELDS = ["steps", "tags", "qualityScoreFactors"];
 const BOOL_FIELDS = ["isJourneyTest", "assertionEnhanced", "isApiTest", "isStale"];
 
 function rowToTest(row) {
   if (!row) return undefined;
   const obj = { ...row };
   for (const f of JSON_FIELDS) {
-    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" ? [] : null);
+    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" || f === "qualityScoreFactors" ? [] : null);
   }
   for (const f of BOOL_FIELDS) {
     obj[f] = obj[f] === 1 ? true : obj[f] === 0 ? false : obj[f];
@@ -54,7 +54,7 @@ function testToRow(t, { fillDefaults = false } = {}) {
 const INSERT_COLS = [
   "id", "projectId", "name", "description", "steps", "playwrightCode",
   "playwrightCodePrev", "priority", "type", "sourceUrl", "pageTitle",
-  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore",
+  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore", "qualityScoreFactors",
   "isJourneyTest", "journeyType", "assertionEnhanced", "reviewStatus",
   "reviewedAt", "promptVersion", "modelUsed", "linkedIssueKey", "tags",
   "generatedFrom", "isApiTest", "scenario", "codeRegeneratedAt",

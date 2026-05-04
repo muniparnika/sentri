@@ -77,18 +77,69 @@ function relativeTime(dateStr) {
 }
 
 // ── Quality score colour helper ───────────────────────────────────────────────
-function qualityClass(score) {
-  if (score == null) return "";
-  if (score >= 75) return "rq-score--high";
-  if (score >= 50) return "rq-score--medium";
-  return "rq-score--low";
-}
-
 function qualityColor(score) {
   if (score == null) return "var(--text3)";
   if (score >= 75) return "var(--green)";
   if (score >= 50) return "var(--amber)";
   return "var(--red)";
+}
+
+// ── Quality score explainer popover ──────────────────────────────────────────
+// "Why was this drafted?" — surfaces the factor breakdown that produced
+// `qualityScore` (e.g. `+20 URL assertion`, `-30 No assertions`) so reviewers
+// don't have to read the test code to grade it. Backed by the `qualityScoreFactors`
+// JSON column populated by `scoreTestWithFactors()` in the pipeline.
+function QualityScoreChip({ score, factors }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function h(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  if (score == null) return null;
+  const hasFactors = Array.isArray(factors) && factors.length > 0;
+
+  return (
+    <div className="rq-quality-chip-wrap" ref={wrapRef}>
+      <button
+        className="rq-quality-chip"
+        onClick={() => hasFactors && setOpen(v => !v)}
+        disabled={!hasFactors}
+        title={hasFactors ? "Why this score?" : "No factor breakdown available"}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        style={{ color: qualityColor(score) }}
+      >
+        Q:{score}{hasFactors ? " ▾" : ""}
+      </button>
+      {open && hasFactors && (
+        <div className="rq-quality-popover" role="dialog" aria-label="Quality score breakdown">
+          <div className="rq-quality-popover__header">
+            Quality {score} / 100
+          </div>
+          <ul className="rq-quality-popover__list">
+            {factors.map(f => (
+              <li key={f.id} className={`rq-quality-popover__item rq-quality-popover__item--${f.kind}`}>
+                <span className="rq-quality-popover__icon" aria-hidden="true">
+                  {f.kind === "reward" ? "✓" : "✗"}
+                </span>
+                <span className="rq-quality-popover__label">{f.label}</span>
+                <span className="rq-quality-popover__delta">
+                  {f.delta > 0 ? `+${f.delta}` : f.delta} pts
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Inline code viewer with copy ──────────────────────────────────────────────
@@ -152,6 +203,12 @@ function DetailSidebar({
                 style={{ width: `${score}%`, background: qualityColor(score) }}
               />
             </div>
+          </div>
+          {/* Click-to-expand factor breakdown — same component used in the
+              list pane so reviewers can audit the score without leaving the
+              detail view. */}
+          <div className="rq-quality-explain">
+            <QualityScoreChip score={score} factors={test.qualityScoreFactors} />
           </div>
         </div>
       )}
@@ -777,8 +834,11 @@ export default function ReviewQueue() {
                             · {(t.steps ?? []).length} steps
                           </span>
                           {score != null && (
-                            <span className={`rq-item__score ${qualityClass(score)}`}>
-                              Q:{score}
+                            <span
+                              className="rq-item__score"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <QualityScoreChip score={score} factors={t.qualityScoreFactors} />
                             </span>
                           )}
                         </div>

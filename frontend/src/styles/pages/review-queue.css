@@ -352,15 +352,108 @@
 }
 
 .rq-item__score {
+  display: inline-flex;
   font-size: 0.68rem;
   font-family: var(--font-mono);
   font-weight: 600;
 }
 
-/* Quality score colour helpers */
-.rq-score--high   { color: var(--green); }
-.rq-score--medium { color: var(--amber); }
-.rq-score--low    { color: var(--red); }
+/* ── Quality score chip + factor-breakdown popover ──────────────────────────── */
+/* Anchors the popover via a relative wrapper so the absolute popover positions
+   relative to the chip rather than escaping into the parent flex row. */
+.rq-quality-chip-wrap { position: relative; display: inline-flex; }
+
+/* The clickable chip itself — colour comes from `qualityColor()` inline so
+   the value-driven hue stays out of CSS. */
+.rq-quality-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.rq-quality-chip:hover:not(:disabled) { background: var(--bg2); }
+.rq-quality-chip:disabled { cursor: default; }
+
+/* Popover anchored to the chip; pinned width so a long factor list doesn't
+   stretch the row above. z-index sits above the list pane so it can overflow
+   the rq-item border. */
+.rq-quality-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: 280px;
+  padding: 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--font-sans);
+}
+
+.rq-quality-popover__header {
+  padding: 0 12px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.rq-quality-popover__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.rq-quality-popover__item {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 0.74rem;
+}
+
+.rq-quality-popover__icon {
+  font-weight: 700;
+  text-align: center;
+}
+
+.rq-quality-popover__item--reward .rq-quality-popover__icon  { color: var(--green); }
+.rq-quality-popover__item--penalty .rq-quality-popover__icon { color: var(--red); }
+
+.rq-quality-popover__label {
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-quality-popover__delta {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+.rq-quality-popover__item--reward .rq-quality-popover__delta  { color: var(--green); }
+.rq-quality-popover__item--penalty .rq-quality-popover__delta { color: var(--red); }
+
+/* Right-pane explainer slot — sits below the quality bar in DetailSidebar. */
+.rq-quality-explain {
+  margin-top: 6px;
+}
 
 /* ── Pager (server-side pagination footer) ──────────────────────────────────── */
 .rq-pager {

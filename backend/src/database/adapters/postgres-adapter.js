@@ -292,7 +292,7 @@ const _COL_MAP = buildColumnMap([
   "deletedAt", "workspaceId",
   // tests
   "projectId", "playwrightCode", "playwrightCodePrev", "sourceUrl", "pageTitle",
-  "lastResult", "lastRunAt", "qualityScore", "isJourneyTest", "journeyType",
+  "lastResult", "lastRunAt", "qualityScore", "qualityScoreFactors", "isJourneyTest", "journeyType",
   "assertionEnhanced", "reviewStatus", "reviewedAt", "promptVersion", "modelUsed",
   "linkedIssueKey", "generatedFrom", "isApiTest", "codeRegeneratedAt",
   "aiFixAppliedAt", "codeVersion",
