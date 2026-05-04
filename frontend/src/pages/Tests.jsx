@@ -8,7 +8,6 @@ import {
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import { queryClient, projectDataQueryKeys } from "../queryClient.js";
-import RecorderModal from "../components/run/RecorderModal.jsx";
 import AgentTag from "../components/shared/AgentTag.jsx";
 import RunRegressionModal from "../components/run/RunRegressionModal.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
@@ -16,7 +15,7 @@ import ProjectExportMenu from "../components/project/ProjectExportMenu.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
-import { StatusBadge, ScenarioBadges, StaleBadge, FlakyBadge } from "../components/shared/TestBadges.jsx";
+import { StatusBadge, ScenarioBadges } from "../components/shared/TestBadges.jsx";
 import usePageTitle from "../hooks/usePageTitle.js";
 import TablePagination from "../components/shared/TablePagination.jsx";
 
@@ -165,8 +164,6 @@ export default function Tests() {
   const setStaleFilter   = useCallback((v) => setSearchParams(p => { const n = new URLSearchParams(p); v ? n.set("stale", "true") : n.delete("stale"); return n; }, { replace: true }), [setSearchParams]);
 
   const [showRunModal, setShowRunModal] = useState(false);
-  const [showRecorderModal, setShowRecorderModal] = useState(false);
-  const [recorderProjectId, setRecorderProjectId] = useState(null);
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);   // "status" | "lastRun" | "project"
   const [sortDir, setSortDir] = useState("asc");   // "asc" | "desc"
@@ -831,24 +828,6 @@ export default function Tests() {
           cards above now navigate there instead of opening modals. */}
       {showRunModal && (
         <RunRegressionModal projects={projects} onClose={() => setShowRunModal(false)} defaultProjectId={filtered[0]?.projectId || projects[0]?.id || ""} />
-      )}
-
-      {showRecorderModal && recorderProjectId && (
-        <RecorderModal
-          open={showRecorderModal}
-          onClose={() => setShowRecorderModal(false)}
-          projectId={recorderProjectId}
-          projects={projects}
-          defaultUrl={projects.find(p => p.id === recorderProjectId)?.url || ""}
-          onSaved={(t) => {
-            // Use the saved test's projectId (not the seed `recorderProjectId`)
-            // because the user may have switched projects in the modal's idle
-            // form before launching — invalidating the wrong project's cache
-            // would leave the newly-recorded test invisible until a refresh.
-            invalidateProjectDataCache(t?.projectId || recorderProjectId);
-            navigate(`/tests/${t.id}`);
-          }}
-        />
       )}
 
       {/* Bulk delete confirmation modal */}

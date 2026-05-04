@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { queryClient, projectDetailQueryKeys } from "../queryClient.js";
@@ -9,16 +9,11 @@ import {
 import usePageTitle from "../hooks/usePageTitle.js";
 import useProjectRunMonitor from "../hooks/useProjectRunMonitor.js";
 import { useNotifications } from "../context/NotificationContext.jsx";
-import { useAuth } from "../context/AuthContext.jsx";
-import { userHasRole } from "../utils/roles.js";
 import ActiveRunBanner from "../components/project/ActiveRunBanner.jsx";
 import RunToast from "../components/project/RunToast.jsx";
 import RunsTab from "../components/project/RunsTab.jsx";
 import TraceabilityTab from "../components/project/TraceabilityTab.jsx";
 import ProjectHeader from "../components/project/ProjectHeader.jsx";
-
-// Tests created within this window are considered "new" and highlighted.
-const NEW_TEST_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function ProjectDetail() {
   const { id } = useParams();
@@ -29,26 +24,19 @@ export default function ProjectDetail() {
   const [actionLoading, setActionLoading] = useState(null);
   const [parallelWorkers, setParallelWorkers] = useState(1);
   const [tab, setTab]                     = useState("runs");
-  const [categoryFilter, setCategoryFilter] = useState("all"); // "all" | "ui" | "api"
-  const [searchInput, setSearchInput]     = useState("");
-  const [search, setSearch]               = useState("");
   const PAGE_SIZE = 10;
   const [runsPage, setRunsPage]           = useState(1);
   const [toast, setToast]                 = useState({ msg: "", type: "info", visible: false, showLink: false, runId: null });
-  const [showNewBadges, setShowNewBadges] = useState(true);
-  const [now, setNow] = useState(Date.now);
 
   // ── TanStack Query: composite project detail + traceability ─────────────
-  const detailQuery = useProjectDetailQuery({
-    projectId: id,
-    runsPage,
-    categoryFilter,
-    search,
-  });
+  // The hook still expects `categoryFilter` / `search` / `reviewPage` because
+  // it's shared with other consumers; passing `undefined` is safe — the hook
+  // skips the corresponding filter and `getTestsPaged` defaults to page 1.
+  // The page no longer renders the tests pane (migrated to /review-queue),
+  // so `data.tests` and `data.testsMeta` are intentionally not extracted.
+  const detailQuery = useProjectDetailQuery({ projectId: id, runsPage });
   const data = detailQuery.data;
   const project = data?.project ?? null;
-  const tests = data?.tests ?? [];
-  const testsMeta = data?.testsMeta ?? { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false };
   const runs = data?.runs ?? [];
   const runsMeta = data?.runsMeta ?? { total: 0, page: 1, pageSize: PAGE_SIZE, hasMore: false };
   const testCounts = data?.testCounts ?? { draft: 0, approved: 0, rejected: 0, total: 0, passed: 0, failed: 0, api: 0, ui: 0 };
@@ -60,39 +48,6 @@ export default function ProjectDetail() {
 
   usePageTitle(project?.name ? `${project.name} — Project` : "Project");
   const { addNotification } = useNotifications();
-  const { user: authUser } = useAuth();
-  const canEdit = userHasRole(authUser, "qa_lead");
-
-  // ── Debounce search input → search state (300ms) ───────────────────────────
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearch(searchInput);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
-
-  // ── Highlight recently created tests ──────────────────────────────────────
-  // Any test created within the last 5 minutes is "new" — works regardless of
-  // how the user navigated here (breadcrumbs, back button, direct link, etc.)
-  const newTestIds = useMemo(() => {
-    if (!showNewBadges) return new Set();
-    const cutoff = now - NEW_TEST_THRESHOLD_MS;
-    const ids = new Set();
-    for (const t of tests) {
-      if (t.createdAt && new Date(t.createdAt).getTime() > cutoff) {
-        ids.add(t.id);
-      }
-    }
-    return ids;
-  }, [tests, showNewBadges, now]);
-
-  // Auto-expire "NEW" badges: tick `now` every 60s so the useMemo re-evaluates
-  // and drops tests that have aged past the 5-minute threshold.
-  useEffect(() => {
-    if (!showNewBadges) return;
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, [showNewBadges]);
 
   const showToast = (msg, type = "info", runId = null) => {
     setToast({ msg, type, visible: true, showLink: !!runId, runId });
@@ -184,7 +139,6 @@ export default function ProjectDetail() {
       <ProjectHeader
         project={project}
         projectId={id}
-        tests={tests}
         totalTests={testCounts.total}
         parallelWorkers={parallelWorkers}
         onWorkersChange={setParallelWorkers}

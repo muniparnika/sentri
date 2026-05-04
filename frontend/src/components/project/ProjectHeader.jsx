@@ -23,7 +23,6 @@ import ProjectExportMenu from "./ProjectExportMenu.jsx";
  * @param {Object} props
  * @param {Object} props.project - { name, url }
  * @param {string} props.projectId
- * @param {Object[]} props.tests - Current page of tests (used for export dropdown items).
  * @param {number} props.totalTests - Server-side total test count across all pages.
  * @param {number} props.parallelWorkers - Current parallel worker count.
  * @param {Function} props.onWorkersChange - Called with new worker count.
@@ -32,7 +31,7 @@ import ProjectExportMenu from "./ProjectExportMenu.jsx";
  * @param {Object} props.stats - { draftTests, approvedTests, rejectedTests, apiTests, uiTests, passed, failed }
  */
 export default function ProjectHeader({
-  project, projectId, tests, totalTests,
+  project, projectId, totalTests,
   parallelWorkers, onWorkersChange,
   actionLoading, onRun,
   stats,
