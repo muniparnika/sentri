@@ -53,7 +53,25 @@ router.get("/healing/summary", requireRole("viewer"), (req, res) => {
   // patterns so we never pull other workspaces' healing rows into memory.
   // Replaces the old `getAllAsDict()` + JS filter, which scaled with total
   // system data rather than the requesting workspace's data.
-  const rows = healingRepo.getByTestIds(testIds);
+  //
+  // Rows arrive ordered `strategyVersion ASC NULLS FIRST` (legacy unversioned
+  // first, then v1, v2, …). Deduplicate via "later-row-wins" Map.set keyed on
+  // `<baseTestId>::<action>::<label>` so a versioned entry overrides any
+  // legacy unversioned row for the same tuple — mirrors the dict-overwrite
+  // pattern in `healingRepo.getByTestId`. Without this, workspaces upgraded
+  // from pre-versioned scopes would double-count strategy totals,
+  // `wouldFail`, and selector heal/totalCounts.
+  const rawRows = healingRepo.getByTestIds(testIds);
+  const dedup = new Map();
+  for (const r of rawRows) {
+    const sepIdx = String(r.key).indexOf("::");
+    if (sepIdx < 0) continue;
+    const rawTestId = r.key.slice(0, sepIdx);
+    const baseTestId = rawTestId.replace(/@v\d+$/, "");
+    const suffix = r.key.slice(sepIdx + 2); // "<action>::<label>"
+    dedup.set(`${baseTestId}::${suffix}`, r);
+  }
+  const rows = [...dedup.values()];
 
   const byStrategy = new Map();
   const selectorAgg = new Map(); // selector → { selector, healCount, totalCount }

@@ -120,8 +120,16 @@ export function getByTestId(testId) {
  * the current workspace. Matches both `<testId>::%` (raw) and `<testId>@v%::%`
  * (versioned scope) prefixes, mirroring `countByTestIds` / `deleteByTestIds`.
  *
+ * Returns raw rows — when the same `(testId, action, label)` tuple has both
+ * a legacy unversioned row and one or more versioned rows, callers will see
+ * one entry per row. `ORDER BY strategyVersion ASC NULLS FIRST` mirrors the
+ * sort `getByTestId` uses so callers can deduplicate via the
+ * "later-row-wins" pattern (Map.set keyed on `baseTestId::action::label`)
+ * and end up with the versioned entry as the survivor — matching the
+ * single-test reader's semantics.
+ *
  * @param {string[]} testIds
- * @returns {Object[]} Raw healing_history rows (key, strategyIndex, succeededAt, failCount, …).
+ * @returns {Object[]} Raw healing_history rows (key, strategyIndex, succeededAt, failCount, strategyVersion, …), oldest-first by strategyVersion.
  */
 export function getByTestIds(testIds) {
   if (!testIds || testIds.length === 0) return [];
@@ -134,7 +142,7 @@ export function getByTestIds(testIds) {
     params.push(`${tid}::%`, `${tid}@v%::%`);
   }
   return db.prepare(
-    `SELECT * FROM healing_history WHERE ${clauses.join(" OR ")}`
+    `SELECT * FROM healing_history WHERE ${clauses.join(" OR ")} ORDER BY strategyVersion ASC NULLS FIRST`
   ).all(...params);
 }
 
