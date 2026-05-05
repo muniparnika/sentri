@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, X, CheckCircle2, XCircle, Clock,
   ChevronRight, Loader2, Play,
-  AlertCircle, ArrowUpDown, Trash2, Inbox,
+  AlertCircle, ArrowUpDown, Trash2, Inbox, Atom,
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
@@ -450,17 +450,89 @@ export default function Tests() {
               />
             );
           })()}
-          <button className="btn btn-ghost btn-sm" style={{ gap: 5 }} onClick={() => navigate("/test-lab")}>
-            ⚗️ Test Lab
-          </button>
-          <button
-            className="btn btn-primary btn-sm"
-            style={{ gap: 5 }}
-            onClick={() => projects.length === 0 ? navigate("/projects/new") : setShowRunModal(true)}
-          >
-            <Play size={13} /> Run Tests
-          </button>
         </div>
+      </div>
+
+      {/* ── Quick Actions ──
+          Three-card grid: Test Lab (creation), Review Drafts (approval),
+          Run Tests (execution) — mirrors the three-pane mental model the
+          Review Queue PR formalised (creation → approval → execution).
+          Cards stay project-aware: when a single project is selected in
+          the dropdown, deep-links carry `?projectId=…`/`/projects/:id/…`
+          so the user lands in the same scope they're filtering on. */}
+      <div className="stat-grid mb-lg" style={{ marginBottom: 20 }}>
+        {[
+          {
+            icon: <Atom size={16} />,
+            title: "Test Lab",
+            desc: "Crawl an app or generate from a requirement",
+            color: "var(--accent-bg)",
+            iconColor: "var(--accent)",
+            action: () => projects.length === 0
+              ? navigate("/projects/new")
+              : navigate(selectedProjectId !== "all"
+                  ? `/projects/${selectedProjectId}/test-lab`
+                  : "/test-lab"),
+          },
+          {
+            icon: <Inbox size={16} />,
+            title: "Review Drafts",
+            desc: draftCount > 0
+              ? `${draftCount} draft${draftCount !== 1 ? "s" : ""} pending review`
+              : "Approve or reject generated tests",
+            color: "var(--amber-bg)",
+            iconColor: "var(--amber)",
+            badge: draftCount > 0 ? draftCount : null,
+            action: () => projects.length === 0
+              ? navigate("/projects/new")
+              : navigate(selectedProjectId !== "all"
+                  ? `/review-queue?projectId=${selectedProjectId}`
+                  : "/review-queue"),
+          },
+          {
+            icon: <Play size={16} />,
+            title: "Run Tests",
+            desc: "Execute approved regression suite",
+            color: "var(--green-bg)",
+            iconColor: "var(--green)",
+            action: () => projects.length === 0 ? navigate("/projects/new") : setShowRunModal(true),
+          },
+        ].map((a, i) => (
+          <div
+            key={i}
+            className="card"
+            style={{ padding: 16, cursor: "pointer", transition: "box-shadow 0.15s", position: "relative" }}
+            onClick={a.action}
+            onMouseEnter={e => e.currentTarget.style.boxShadow = "var(--shadow)"}
+            onMouseLeave={e => e.currentTarget.style.boxShadow = ""}
+          >
+            {a.badge != null && (
+              <span style={{
+                position: "absolute", top: 10, right: 10,
+                minWidth: 20, height: 20, borderRadius: 10,
+                background: a.iconColor, color: "#fff",
+                fontSize: "0.68rem", fontWeight: 700,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                padding: "0 5px", lineHeight: 1,
+              }}>
+                {a.badge > 99 ? "99+" : a.badge}
+              </span>
+            )}
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{
+                width: 34, height: 34, borderRadius: 9,
+                background: a.color, display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 16, flexShrink: 0, color: a.iconColor,
+              }}>
+                {a.icon}
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "0.88rem", marginBottom: 2 }}>{a.title}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text2)", lineHeight: 1.5 }}>{a.desc}</div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
             {/* Tests table */}
