@@ -30,9 +30,10 @@ async function main() {
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    const { token, user } = await t.registerAndLogin(base, {
+    const { token, payload } = await t.registerAndLogin(base, {
       name: "QA", email: "heal@example.com", password: "Password123!",
     });
+    const wsId = payload.workspaceId;
 
     // ── Empty workspace → empty payload shape ────────────────────────────
     let out = await t.req(base, "/api/v1/healing/summary", { method: "GET", token });
@@ -43,14 +44,13 @@ async function main() {
     assert.deepEqual(out.json.savingsTrend, []);
 
     // ── Seed two projects with healing histogram + savings samples ───────
-    const wsId = user.workspaceId;
     projectRepo.create({ id: "PRJ-HEAL-1", workspaceId: wsId, name: "P1", url: "https://a.test",
       createdAt: new Date().toISOString(), status: "idle" });
     projectRepo.create({ id: "PRJ-HEAL-2", workspaceId: wsId, name: "P2", url: "https://b.test",
       createdAt: new Date().toISOString(), status: "idle" });
 
-    testRepo.create({ id: "TC-HEAL-1", projectId: "PRJ-HEAL-1", name: "t1", code: "", reviewStatus: "approved" });
-    testRepo.create({ id: "TC-HEAL-2", projectId: "PRJ-HEAL-2", name: "t2", code: "", reviewStatus: "approved" });
+    testRepo.create({ id: "TC-HEAL-1", projectId: "PRJ-HEAL-1", name: "t1", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId });
+    testRepo.create({ id: "TC-HEAL-2", projectId: "PRJ-HEAL-2", name: "t2", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId });
 
     healingRepo.set("TC-HEAL-1::click::Login", { strategyIndex: 0, succeededAt: new Date().toISOString(), failCount: 0 });
     healingRepo.set("TC-HEAL-1::click::Save",  { strategyIndex: 2, succeededAt: new Date().toISOString(), failCount: 1 });
