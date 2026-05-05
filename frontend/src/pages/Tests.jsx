@@ -2,21 +2,20 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, X, CheckCircle2, XCircle, Clock,
-  ChevronRight, Loader2, Play, Flag, Sparkles,
-  AlertCircle, ArrowUpDown, Trash2,
-  ThumbsUp, ThumbsDown, AlertTriangle, Video,
+  ChevronRight, Loader2, Play,
+  AlertCircle, ArrowUpDown, Trash2, Inbox, Atom,
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import { queryClient, projectDataQueryKeys } from "../queryClient.js";
-import RecorderModal from "../components/run/RecorderModal.jsx";
 import AgentTag from "../components/shared/AgentTag.jsx";
 import RunRegressionModal from "../components/run/RunRegressionModal.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import ProjectExportMenu from "../components/project/ProjectExportMenu.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
+import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
-import { StatusBadge, ScenarioBadges, StaleBadge, FlakyBadge } from "../components/shared/TestBadges.jsx";
+import { StatusBadge, ScenarioBadges } from "../components/shared/TestBadges.jsx";
 import usePageTitle from "../hooks/usePageTitle.js";
 import TablePagination from "../components/shared/TablePagination.jsx";
 
@@ -28,7 +27,7 @@ const STATUS_FILTERS = [
   { key: "Not Run", tooltip: "Not run",  activeColor: "#64748b", activeBg: "rgba(100,116,139,0.12)", icon: <Clock        size={14} /> },
 ];
 const REVIEW_FILTERS = [
-  { key: "Approved", tooltip: "Approved", activeColor: "#16a34a", activeBg: "rgba(34,197,94,0.12)",  icon: <ThumbsUp    size={14} /> },
+  { key: "Approved", tooltip: "Approved", activeColor: "#16a34a", activeBg: "rgba(34,197,94,0.12)",  icon: <CheckCircle2 size={14} /> },
   { key: "Draft",    tooltip: "Draft",    activeColor: "#d97706", activeBg: "rgba(217,119,6,0.12)",  icon: <AlertCircle size={14} /> },
 ];
 const CATEGORY_FILTERS = [
@@ -37,70 +36,6 @@ const CATEGORY_FILTERS = [
 ];
 
 const PAGE_SIZE = 10;
-
-// ── Relative time utility ──────────────────────────────────────────────────────
-
-const RELATIVE_UNITS = [
-  { max: 60,          divisor: 1,       unit: "second"  },
-  { max: 3600,        divisor: 60,      unit: "minute"  },
-  { max: 86400,       divisor: 3600,    unit: "hour"    },
-  { max: 2592000,     divisor: 86400,   unit: "day"     },
-  { max: 31536000,    divisor: 2592000, unit: "month"   },
-  { max: Infinity,    divisor: 31536000,unit: "year"    },
-];
-
-function relativeTime(dateStr) {
-  if (!dateStr) return "—";
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 10) return "just now";
-  for (const { max, divisor, unit } of RELATIVE_UNITS) {
-    if (diff < max) {
-      const val = Math.floor(diff / divisor);
-      return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-val, unit);
-    }
-  }
-  return "—";
-}
-
-
-// ── Review Modal ───────────────────────────────────────────────────────────────
-
-function ReviewModal({ projects, onClose }) {
-  const navigate = useNavigate();
-
-  return (
-    <ModalShell onClose={onClose} width="min(420px, 95vw)" style={{ overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 16px", borderBottom: "1px solid var(--border)" }}>
-        <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, flex: 1 }}>Review & Fix Tests</h2>
-        <button className="modal-close" onClick={onClose}><X size={18} /></button>
-      </div>
-      <div style={{ padding: "20px 22px 24px" }}>
-        <p style={{ fontSize: "0.82rem", color: "var(--text2)", marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
-          Go to a project to review generated draft tests, approve them for regression, or reject failing ones.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-          {projects.length === 0 ? (
-            <div style={{ fontSize: "0.82rem", color: "var(--text3)", textAlign: "center", padding: "16px 0" }}>No projects yet.</div>
-          ) : projects.map(p => (
-            <button
-              key={p.id}
-              className="btn btn-ghost btn-sm"
-              style={{ justifyContent: "flex-start", gap: 10 }}
-              onClick={() => { onClose(); navigate(`/projects/${p.id}`); }}
-            >
-              <Flag size={13} color="var(--accent)" />
-              {p.name}
-              <ChevronRight size={13} style={{ marginLeft: "auto" }} />
-            </button>
-          ))}
-        </div>
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
 
 // ── Empty State ────────────────────────────────────────────────────────────────
 
@@ -229,9 +164,7 @@ export default function Tests() {
   const setStaleFilter   = useCallback((v) => setSearchParams(p => { const n = new URLSearchParams(p); v ? n.set("stale", "true") : n.delete("stale"); return n; }, { replace: true }), [setSearchParams]);
 
   const [showRunModal, setShowRunModal] = useState(false);
-  const [showReviewModal, setShowReviewModal] = useState(false);
-  const [showRecorderModal, setShowRecorderModal] = useState(false);
-  const [recorderProjectId, setRecorderProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState("all");
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);   // "status" | "lastRun" | "project"
   const [sortDir, setSortDir] = useState("asc");   // "asc" | "desc"
@@ -271,6 +204,8 @@ export default function Tests() {
 
   const filtered = useMemo(() => {
     const list = tests.filter(t => {
+      // Project filter — mirrors the Review Queue's project dropdown
+      if (selectedProjectId !== "all" && t.projectId !== selectedProjectId) return false;
       const matchReview =
         reviewFilter === "All Tests" ? true :
         reviewFilter === "Approved" ? t.reviewStatus === "approved" :
@@ -306,14 +241,14 @@ export default function Tests() {
       });
     }
     return list;
-  }, [tests, reviewFilter, search, filter, categoryFilter, staleFilter, sortCol, sortDir, projMap]);
+  }, [tests, reviewFilter, search, filter, categoryFilter, staleFilter, selectedProjectId, sortCol, sortDir, projMap]);
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [search, filter, reviewFilter, categoryFilter, staleFilter]);
+  useEffect(() => { setPage(1); }, [search, filter, reviewFilter, categoryFilter, staleFilter, selectedProjectId]);
 
   // ── Sorting ────────────────────────────────────────────────────────────────
   function toggleSort(col) {
@@ -344,72 +279,6 @@ export default function Tests() {
 
   function toggleAll(checked, ids) {
     setSelected(checked ? new Set(ids) : new Set());
-  }
-
-  async function executeBulkAction(action, ids) {
-    setBulkConfirm(null);
-    setBulkError(null);
-    if (!ids?.length) return;
-    setActionLoading(action);
-
-    // ── Optimistic update ───────────────────────────────────────────────
-    // Immediately reflect the new reviewStatus in local state so the list
-    // updates without waiting for the server round-trip. If any requests
-    // fail, we roll back only those specific tests to their original status.
-    const idSet = new Set(ids);
-    const newStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : null;
-
-    // Capture original statuses BEFORE the cache update so we can roll back
-    // on partial failure. Reading from `tests` (the current useProjectData
-    // snapshot) is safe because it's a stable reference at this point in the
-    // handler.
-    const originalStatuses = {};
-    if (newStatus) {
-      for (const t of tests) {
-        if (idSet.has(t.id)) originalStatuses[t.id] = t.reviewStatus;
-      }
-      updateTestsCache(prev => prev.map(t =>
-        idSet.has(t.id) ? { ...t, reviewStatus: newStatus } : t
-      ));
-    }
-
-    try {
-      // Use allSettled so one failure doesn't abort the rest of the batch
-      const results = await Promise.allSettled(ids.map(testId => {
-        const t = tests.find(x => x.id === testId);
-        if (!t) return Promise.resolve();
-        if (action === "approve") return api.approveTest(t.projectId, testId);
-        if (action === "reject") return api.rejectTest(t.projectId, testId);
-        return Promise.resolve();
-      }));
-
-      // Roll back only the tests that failed — keep the successful ones updated
-      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-      if (failedIds.length > 0) {
-        const failedSet = new Set(failedIds);
-        updateTestsCache(prev => prev.map(t =>
-          failedSet.has(t.id) ? { ...t, reviewStatus: originalStatuses[t.id] } : t
-        ));
-        const failedCount = failedIds.length;
-        console.warn(`Bulk ${action}: ${failedCount}/${ids.length} failed`);
-        setBulkError(`${failedCount} of ${ids.length} tests failed to ${action}. The rest were updated successfully.`);
-        setTimeout(() => setBulkError(null), 6000);
-      }
-
-      // Bust shared cache so other pages (Dashboard, Reports, etc.) see fresh data
-      invalidateProjectDataCache();
-      setSelected(new Set());
-    } catch (err) {
-      // Full failure — roll back all optimistic updates
-      if (newStatus) {
-        updateTestsCache(prev => prev.map(t =>
-          idSet.has(t.id) ? { ...t, reviewStatus: originalStatuses[t.id] } : t
-        ));
-      }
-      console.error("Bulk action failed:", err);
-    } finally {
-      setActionLoading(null);
-    }
   }
 
   async function executeBulkDelete(ids) {
@@ -465,18 +334,6 @@ export default function Tests() {
     }
   }
 
-  function requestBulkAction(action) {
-    const ids = selected.size > 0
-      ? Array.from(selected)
-      : filtered.filter(t => !t.reviewStatus || t.reviewStatus === "draft").map(t => t.id);
-    if (!ids.length) return;
-    if (selected.size === 0 && ids.length > 1) {
-      setBulkConfirm({ action, ids });
-      return;
-    }
-    executeBulkAction(action, ids);
-  }
-
   // ── Row actions ────────────────────────────────────────────────────────────
   async function runSingleTest(e, testId) {
     e.stopPropagation();
@@ -505,15 +362,19 @@ export default function Tests() {
     function handler(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       if (e.key === "/" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); searchRef.current?.focus(); }
-      if (e.key === "a" && !e.metaKey && !e.ctrlKey && selected.size > 0) requestBulkAction("approve");
-      if (e.key === "r" && !e.metaKey && !e.ctrlKey && selected.size > 0) requestBulkAction("reject");
       if (e.key === "Escape") setSelected(new Set());
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [selected, filtered]);
 
-  const draftCount = tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length;
+  // Scope the draft chip's count + click target to the selected project so the
+  // chip reads the same way the rest of the page does — when the user has
+  // narrowed to one project, the Review Queue link should land them there too.
+  const draftCount = tests.filter(t =>
+    (!t.reviewStatus || t.reviewStatus === "draft") &&
+    (selectedProjectId === "all" || t.projectId === selectedProjectId)
+  ).length;
 
   // ── Export: unified with ProjectDetail via ProjectExportMenu (Zephyr / TestRail / Playwright ZIP).
   // All three export targets are project-scoped server-side, so the menu
@@ -532,96 +393,111 @@ export default function Tests() {
     }));
   }, [projects, tests]);
 
-  const quickActions = [
-    {
-      icon: <Search size={16} />,
-      title: "Crawl",
-      desc: "Discover pages & auto-generate tests",
-      color: "var(--blue-bg)",
-      iconColor: "var(--blue)",
-      action: () => projects.length === 0
-        ? navigate("/projects/new")
-        // Migrated out of CrawlProjectModal — the Test Lab page is now the
-        // single home for crawl & AI generation. Use `projects[0]` (not
-        // `filtered[0]?.projectId`) so the target project doesn't depend on
-        // whatever filter happens to be active on the Tests page; users can
-        // switch projects from Test Lab's sidebar.
-        : navigate(`/projects/${projects[0]?.id}/test-lab?tab=crawl`),
-    },
-    {
-      icon: <Sparkles size={16} />,
-      title: "Generate",
-      desc: "Create tests from a requirement",
-      color: "var(--accent-bg)",
-      iconColor: "var(--accent)",
-      action: () => projects.length === 0
-        ? navigate("/projects/new")
-        : navigate(`/projects/${projects[0]?.id}/test-lab?tab=requirement`),
-    },
-    {
-      // DIF-015 — Interactive browser recorder
-      icon: <Video size={16} />,
-      title: "Record a test",
-      desc: "Click through the app; Sentri captures each step",
-      color: "var(--red-bg)",
-      iconColor: "var(--red)",
-      action: () => {
-        if (projects.length === 0) { navigate("/projects/new"); return; }
-        setRecorderProjectId(projects[0].id);
-        setShowRecorderModal(true);
-      },
-    },
-    {
-      icon: <Play size={16} />,
-      title: "Run Tests",
-      desc: "Execute approved regression suite",
-      color: "var(--green-bg)",
-      iconColor: "var(--green)",
-      action: () => projects.length === 0 ? navigate("/projects/new") : setShowRunModal(true),
-    },
-    {
-      icon: <Flag size={16} />,
-      title: "Review Drafts",
-      desc: draftCount > 0 ? `${draftCount} draft${draftCount !== 1 ? "s" : ""} pending review` : "Approve or reject generated tests",
-      color: "var(--amber-bg)",
-      iconColor: "var(--amber)",
-      badge: draftCount > 0 ? draftCount : null,
-      action: () => projects.length === 0 ? navigate("/projects/new") : setShowReviewModal(true),
-    },
-  ];
-
   return (
     <div className="fade-in">
-      {/* Header */}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Tests</h1>
-          <p className="page-subtitle">
-            Manage, run, and review test cases across all projects
-          </p>
-        </div>
-        {/* Unified export — one menu per project (Zephyr / TestRail / Playwright ZIP).
-            Project-scoped because the backend export endpoints all take a projectId;
-            this matches the dropdown shown on ProjectDetail for consistency. */}
-        {projectsWithTests.length > 0 && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {projectsWithTests.map(p => (
+      {/* ── Header ── */}
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <h1 className="page-title">Tests</h1>
+            <p className="page-subtitle">Manage, run, and review test cases across all projects</p>
+          </div>
+          {draftCount > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ gap: 6, background: "var(--amber-bg)", border: "1px solid rgba(217,119,6,0.3)", color: "var(--amber)" }}
+              onClick={() => navigate(
+                selectedProjectId !== "all"
+                  ? `/review-queue?projectId=${selectedProjectId}`
+                  : "/review-queue",
+              )}
+            >
+              <Inbox size={13} />
+              {draftCount} draft{draftCount !== 1 ? "s" : ""} — Review Queue
+              <ChevronRight size={12} />
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          {/* Project dropdown — mirrors the Review Queue's project filter.
+              Scopes the export button to a single project so users with 3+
+              projects don't see 3+ export buttons cluttering the header. */}
+          {projects.length > 1 && (
+            <select
+              className="input"
+              value={selectedProjectId}
+              onChange={e => setSelectedProjectId(e.target.value)}
+              style={{ height: 32, fontSize: "0.78rem", padding: "0 28px 0 10px", minWidth: 140 }}
+            >
+              <option value="all">All projects</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          {projectsWithTests.length > 0 && (() => {
+            // Show export for the selected project, or the first project if "all"
+            const exportProject = selectedProjectId !== "all"
+              ? projectsWithTests.find(p => p.id === selectedProjectId)
+              : projectsWithTests[0];
+            if (!exportProject) return null;
+            return (
               <ProjectExportMenu
-                key={p.id}
-                projectId={p.id}
-                totalTests={p.totalTests}
-                approvedCount={p.approvedTests}
-                label={projectsWithTests.length === 1 ? "Export" : `Export · ${p.name}`}
+                projectId={exportProject.id}
+                totalTests={exportProject.totalTests}
+                approvedCount={exportProject.approvedTests}
+                label="Export"
                 buttonClassName="btn btn-ghost btn-sm"
               />
-            ))}
-          </div>
-        )}
+            );
+          })()}
+        </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="stat-grid mb-lg">
-        {quickActions.map((a, i) => (
+      {/* ── Quick Actions ──
+          Three-card grid: Test Lab (creation), Review Drafts (approval),
+          Run Tests (execution) — mirrors the three-pane mental model the
+          Review Queue PR formalised (creation → approval → execution).
+          Cards stay project-aware: when a single project is selected in
+          the dropdown, deep-links carry `?projectId=…`/`/projects/:id/…`
+          so the user lands in the same scope they're filtering on. */}
+      <div className="stat-grid mb-lg" style={{ marginBottom: 20 }}>
+        {[
+          {
+            icon: <Atom size={16} />,
+            title: "Test Lab",
+            desc: "Crawl an app or generate from a requirement",
+            color: "var(--accent-bg)",
+            iconColor: "var(--accent)",
+            action: () => projects.length === 0
+              ? navigate("/projects/new")
+              : navigate(selectedProjectId !== "all"
+                  ? `/projects/${selectedProjectId}/test-lab`
+                  : "/test-lab"),
+          },
+          {
+            icon: <Inbox size={16} />,
+            title: "Review Drafts",
+            desc: draftCount > 0
+              ? `${draftCount} draft${draftCount !== 1 ? "s" : ""} pending review`
+              : "Approve or reject generated tests",
+            color: "var(--amber-bg)",
+            iconColor: "var(--amber)",
+            badge: draftCount > 0 ? draftCount : null,
+            action: () => projects.length === 0
+              ? navigate("/projects/new")
+              : navigate(selectedProjectId !== "all"
+                  ? `/review-queue?projectId=${selectedProjectId}`
+                  : "/review-queue"),
+          },
+          {
+            icon: <Play size={16} />,
+            title: "Run Tests",
+            desc: "Execute approved regression suite",
+            color: "var(--green-bg)",
+            iconColor: "var(--green)",
+            action: () => projects.length === 0 ? navigate("/projects/new") : setShowRunModal(true),
+          },
+        ].map((a, i) => (
           <div
             key={i}
             className="card"
@@ -659,7 +535,7 @@ export default function Tests() {
         ))}
       </div>
 
-      {/* Tests table */}
+            {/* Tests table */}
       <div className="card tests-table">
         <div className="tests-filter-bar" style={{
           padding: "14px 16px", borderBottom: "1px solid var(--border)",
@@ -888,19 +764,23 @@ export default function Tests() {
           />
         ) : (
           <>
-            {/* Bulk action bar */}
+            {/* Bulk action bar — delete only (review actions live in Review Queue) */}
             {selected.size > 0 && (
               <div className="tests-bulk-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "var(--accent-bg)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
                 <span style={{ fontSize: "0.82rem", color: "var(--accent)", fontWeight: 500 }}>
                   {selected.size} selected
                 </span>
-                <button className="btn btn-sm" style={{ background: "var(--green-bg)", color: "var(--green)", border: "1px solid #86efac" }}
-                  onClick={() => requestBulkAction("approve")} disabled={!!actionLoading}>
-                  <ThumbsUp size={12} /> Approve
-                </button>
-                <button className="btn btn-sm" style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
-                  onClick={() => requestBulkAction("reject")} disabled={!!actionLoading}>
-                  <ThumbsDown size={12} /> Reject
+                <button
+                  className="btn btn-sm"
+                  style={{ background: "var(--red-bg)", color: "var(--red)", border: "1px solid #fca5a5" }}
+                  onClick={() => {
+                    const ids = Array.from(selected);
+                    if (ids.length > 1) setBulkConfirm({ action: "delete", ids });
+                    else executeBulkDelete(ids);
+                  }}
+                  disabled={!!actionLoading}
+                >
+                  <Trash2 size={12} /> Delete
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>Clear selection</button>
               </div>
@@ -1011,7 +891,7 @@ export default function Tests() {
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ fontSize: "0.8rem", color: "var(--text2)" }} title={t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : undefined}>
-                            {relativeTime(t.lastRunAt)}
+                            {fmtRelativeTimeFull(t.lastRunAt)}
                           </span>
                           {isHovered && (
                             <div style={{ display: "flex", gap: 4, marginLeft: "auto" }} onClick={e => e.stopPropagation()}>
@@ -1043,16 +923,7 @@ export default function Tests() {
         )}
       </div>
 
-      {/* Keyboard shortcut hints */}
-      {selected.size > 0 && (
-        <div className="tests-kbd-hints" style={{ marginTop: 8, textAlign: "center", fontSize: "0.72rem", color: "var(--text3)" }}>
-          <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>a</kbd> approve
-          {" · "}
-          <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>r</kbd> reject
-          {" · "}
-          <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.7rem" }}>Esc</kbd> clear
-        </div>
-      )}
+
 
       {/* Modals */}
       {/* CrawlProjectModal and GenerateTestModal have been migrated to the
@@ -1061,41 +932,18 @@ export default function Tests() {
       {showRunModal && (
         <RunRegressionModal projects={projects} onClose={() => setShowRunModal(false)} defaultProjectId={filtered[0]?.projectId || projects[0]?.id || ""} />
       )}
-      {showReviewModal && (
-        <ReviewModal projects={projects} onClose={() => setShowReviewModal(false)} />
-      )}
-      {showRecorderModal && recorderProjectId && (
-        <RecorderModal
-          open={showRecorderModal}
-          onClose={() => setShowRecorderModal(false)}
-          projectId={recorderProjectId}
-          projects={projects}
-          defaultUrl={projects.find(p => p.id === recorderProjectId)?.url || ""}
-          onSaved={(t) => {
-            // Use the saved test's projectId (not the seed `recorderProjectId`)
-            // because the user may have switched projects in the modal's idle
-            // form before launching — invalidating the wrong project's cache
-            // would leave the newly-recorded test invisible until a refresh.
-            invalidateProjectDataCache(t?.projectId || recorderProjectId);
-            navigate(`/tests/${t.id}`);
-          }}
-        />
-      )}
 
-      {/* Bulk action confirmation modal */}
-      {bulkConfirm && (
+      {/* Bulk delete confirmation modal */}
+      {bulkConfirm && bulkConfirm.action === "delete" && (
         <ModalShell onClose={() => setBulkConfirm(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
-          <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Confirm bulk action</div>
+          <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: 10 }}>Delete {bulkConfirm.ids.length} tests?</div>
           <div style={{ fontSize: "0.875rem", color: "var(--text2)", marginBottom: 20, lineHeight: 1.6 }}>
-            You are about to <strong>{bulkConfirm.action}</strong> <strong>{bulkConfirm.ids.length} tests</strong> (all visible draft tests). This cannot be undone easily.
+            These tests will be moved to the recycle bin. This cannot be undone easily.
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(null)}>Cancel</button>
-            <button
-              className={`btn btn-sm ${bulkConfirm.action === "approve" ? "btn-primary" : "btn-danger"}`}
-              onClick={() => executeBulkAction(bulkConfirm.action, bulkConfirm.ids)}
-            >
-              {bulkConfirm.action === "approve" ? "Approve all" : "Reject all"}
+            <button className="btn btn-danger btn-sm" onClick={() => executeBulkDelete(bulkConfirm.ids)}>
+              Delete {bulkConfirm.ids.length} tests
             </button>
           </div>
         </ModalShell>

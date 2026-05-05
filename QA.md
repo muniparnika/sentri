@@ -23,65 +23,68 @@ If the user asks for… read only this section:
 
 | User intent | Section (anchor) | Lines |
 |---|---|---|
-| "Run / write all happy paths" | [Golden E2E Happy Path](#-golden-e2e-happy-path-must-pass-before-release) | 240–339 |
-| "Write Playwright tests for the deployed app" | [Canonical UI test shape](#canonical-ui-test-shape--emit-this-by-default) + [Tests Page §3](#-tests-page) | 94–108, 418–453 |
-| "Write an API test" | [Tests Page §4](#-tests-page) + [API Test Imports](#-api-test-imports-openapi-har-plain-english-api) | 418–453, 943–958 |
-| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 521–543 |
-| "Record a test" | [Recorder](#-recorder) | 457–491 |
-| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 495–517 |
-| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 547–575 |
-| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 579–602 |
-| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 606–622 |
+| "Run / write all happy paths" | [Golden E2E Happy Path](#-golden-e2e-happy-path-must-pass-before-release) | 241–342 |
+| "Write Playwright tests for the deployed app" | [Canonical UI test shape](#canonical-ui-test-shape--emit-this-by-default) + [Tests Page §3](#-tests-page) | 95–109, 430–467 |
+| "Write an API test" | [Tests Page §4](#-tests-page) + [API Test Imports](#-api-test-imports-openapi-har-plain-english-api) | 430–467, 1108–1124 |
+| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 578–600 |
+| "Record a test" | [Recorder](#-recorder) | 470–510 |
+| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 514–536 |
+| "Review / approve / reject drafts" | [Review Queue](#-review-queue) | 540–574 |
+| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 604–651 |
+| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 655–685 |
+| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 746–762 |
 | "Verify permissions" | [`permissions.json`](./backend/src/middleware/permissions.json) **(canonical, read this, not prose)** | — |
-| "Verify security / authorization" | [Security](#-security) | 783–810 |
-| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 890–917 |
-| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1065–1098 |
+| "Verify security / authorization" | [Security](#-security) | 925–952 |
+| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 1032–1076 |
+| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1230–1263 |
 
 ### Section index (line ranges, for `sed -n 'A,Bp'` / partial reads)
 
 ```yaml
 # Feature sections
-authentication:      { lines: 353-376 }
-workspaces:          { lines: 379-395 }
-projects:            { lines: 399-414 }
-tests-page:          { lines: 418-453 }
-recorder:            { lines: 457-491 }
-runs:                { lines: 495-517 }
-ai-fix:              { lines: 521-543 }
-test-code-editing:   { lines: 547-575 }
-automation:          { lines: 579-602 }
-visual-testing:      { lines: 606-622 }
-dashboard:           { lines: 626-642 }
-ai-chat:             { lines: 646-675 }
-settings:            { lines: 679-696 }
-account-gdpr:        { lines: 700-709 }
-email-verification:  { lines: 713-720 }
-recycle-bin:         { lines: 724-733 }
-audit-log:           { lines: 737-745 }
-notifications:       { lines: 749-779 }
-security:            { lines: 783-810 }
-reports-pdf:         { lines: 814-829 }
-system-diagnostics:  { lines: 833-842 }
-new-project:         { lines: 846-857 }
-runs-list:           { lines: 861-871 }
-project-detail:      { lines: 875-886 }
-bulk-actions:        { lines: 890-917 }
-modals:              { lines: 921-939 }
-api-test-imports:    { lines: 943-958 }
-onboarding:          { lines: 962-971 }
-demo-mode:           { lines: 975-986 }
-settings-data-tab:   { lines: 990-1004 }
-workspace-switcher:  { lines: 1008-1016 }
+authentication:      { lines: 356-381 }
+workspaces:          { lines: 384-401 }
+projects:            { lines: 404-427 }
+tests-page:          { lines: 430-467 }
+recorder:            { lines: 470-510 }
+runs:                { lines: 514-536 }
+review-queue:        { lines: 540-574 }     # NEW (PR #7)
+ai-fix:              { lines: 578-600 }
+test-code-editing:   { lines: 604-651 }
+automation:          { lines: 655-685 }
+quality-gates:       { lines: 689-743 }     # NEW (AUTO-012)
+visual-testing:      { lines: 746-762 }
+dashboard:           { lines: 766-784 }
+ai-chat:             { lines: 788-817 }
+settings:            { lines: 821-838 }
+account-gdpr:        { lines: 842-851 }
+email-verification:  { lines: 855-862 }
+recycle-bin:         { lines: 866-875 }
+audit-log:           { lines: 879-887 }
+notifications:       { lines: 891-921 }
+security:            { lines: 925-952 }
+reports-pdf:         { lines: 956-971 }
+system-diagnostics:  { lines: 975-984 }
+new-project:         { lines: 988-999 }
+runs-list:           { lines: 1003-1013 }
+project-detail:      { lines: 1017-1028 }
+bulk-actions:        { lines: 1032-1076 }
+modals:              { lines: 1080-1104 }
+api-test-imports:    { lines: 1108-1123 }
+onboarding:          { lines: 1127-1136 }
+demo-mode:           { lines: 1140-1151 }
+settings-data-tab:   { lines: 1155-1169 }
+workspace-switcher:  { lines: 1173-1181 }
 
 # Meta sections
-golden-happy-path:       { lines: 240-339 }
-canonical-ui-test-shape: { lines: 94-108 }
-permissions-matrix:      { lines: 151-199 }
-setup:                   { lines: 203-237 }
-cross-cutting-checks:    { lines: 1020-1046 }
-known-issues:            { lines: 1050-1061 }
-bug-template:            { lines: 1065-1098 }
-coverage-checklist:      { lines: 1102-1146 }
+golden-happy-path:       { lines: 241-342 }
+canonical-ui-test-shape: { lines: 95-109 }
+permissions-matrix:      { lines: 152-200 }
+setup:                   { lines: 204-237 }
+cross-cutting-checks:    { lines: 1185-1213 }
+known-issues:            { lines: 1217-1228 }
+bug-template:            { lines: 1232-1263 }
+coverage-checklist:      { lines: 1267-1313 }
 ```
 
 > **Read-only boundary:** line ranges are approximate and can drift ±5 lines after edits — always stop at the next `### ` heading. Don't read beyond the listed range for a given section.
@@ -266,14 +269,14 @@ Run this single end-to-end journey **as User A (admin)** in a fresh browser. Eve
 
 
 ### 6. Record — manual recorder
-10. Click **Record a test** → Playwright browser opens via CDP screencast.
+10. Open Test Lab (`/projects/:id/test-lab` via the "Test Lab" quick-action card on the Tests page) → click the red **Record a test** CTA in the topbar → Playwright browser opens via CDP screencast. The Tests page no longer has its own Record button (PR #5 — recorder launch consolidated into Test Lab).
 11. Perform: click, fill, press, select, navigate. Stop.
-12. New Draft test appears with `safeClick` / `safeFill` calls and per-step entries.
+12. New Draft test appears with `safeClick` / `safeFill` calls and per-step entries; user is navigated to the Test Detail view.
 
 ### 7. Review — approve / reject
-13. Open a Draft → review steps **and** Playwright code via the **Steps / Source toggle** on TestDetail.
-14. Reject one obviously bad test → archived, excluded from regression.
-15. Approve at least 3 tests → moved to active suite.
+13. Open the **Review Queue** at `/review-queue` (also reachable via the "Review Drafts" quick-action card on the Tests page). Draft tab active by default; the first draft auto-selects in the detail pane showing steps + Playwright code (with the same Steps/Source rendering used on TestDetail).
+14. Reject one obviously bad test via the styled confirmation modal → archived, excluded from regression. Switch to the Rejected tab to verify it lands there.
+15. Approve at least 3 tests (use the `a` keyboard shortcut for speed) → moved to active suite. Watch the Draft tab badge tick down and the Approved tab badge tick up — both update via the single `GET /tests/counts` aggregate query.
 
 ### 8. Edit — verify auto-generated Playwright code
 16. Open an approved test → switch to **Source** tab → confirm code uses role-based selectors (`getByRole`, `getByLabel`, `getByText`), starts with `await page.goto(...)`, has ≥ 3 `expect(...)` assertions, no `import` lines (`backend/src/routes/tests.js:218-224`).
@@ -533,6 +536,44 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 - Viewer attempts to trigger run → blocked.
 - `qa_lead` stops another user's run → **allowed** (no per-user "own runs" gate exists in code, `routes/runs.js:257` only requires `qa_lead`). If product intent is to restrict to the run's owner, file as security enhancement.
 - Browser close mid-run → run continues on backend; status visible on return.
+
+---
+
+### 📥 Review Queue
+
+**Preconditions:** Workspace has ≥ 1 draft test. Open `/review-queue`. Reachable via the **Review Drafts** quick-action card on the Tests page (`frontend/src/pages/Tests.jsx`) or by direct URL. Replaces the legacy `ReviewModal` (deleted in PR #7).
+
+**Layout:**
+- Two-pane: left list (sort, search, category chips, multi-select) + right detail pane (steps, generated Playwright code, quality score).
+- Tab bar at top: **Draft** / **Rejected** / **Approved** with live counts from `GET /api/v1/tests/counts` (single aggregate query — partitions Draft / Approved / Rejected via `SUM(CASE WHEN reviewStatus = ...)`).
+- URL-driven state: `?tab=`, `?projectId=`, `?q=` are deep-linkable.
+- Header project filter (dropdown) — narrows list, counts, and the Review Drafts deep-link target on the Tests page.
+
+**Steps & expected:**
+1. Open `/review-queue` → Draft tab active by default; first draft auto-selected in the detail pane.
+2. Click any test row → detail pane shows description, steps, syntax-highlighted Playwright code (with one-click copy), and a sidebar with quality-score bar, project, type, priority, last run, generated-time, source URL.
+3. Click the `Q:NN ▾` chip on a row or in the sidebar → factor-breakdown popover lists rewards (`✓ +20 URL assertion`) and penalties (`✗ -30 No assertions`) that produced the score. Backed by `qualityScoreFactors` JSON column populated by `scoreTestWithFactors()` in `backend/src/pipeline/deduplicator.js` (re-scored after assertion enhancement, so the persisted breakdown matches the persisted code).
+4. **Sort dropdown** (newest / oldest / quality / name) → server-side `ORDER BY` via `?sortBy=` (whitelisted by `SORT_BY_CLAUSES` in `backend/src/database/repositories/testRepo.js`). Switching from "newest" to "quality" reorders **across all pages**, not just the current page; pager resets to page 1.
+5. **Search input** → debounced 300 ms before committing to URL `?q=` and firing the server query (`useReviewQueueQuery`).
+6. **Category chips** (All / Web / API / Journey) → server-side filter; "Journey" maps to `isJourneyTest = 1` (orthogonal to api/ui).
+7. **Approve a draft** — click Approve in the detail-pane header, sidebar Quick-decision group, or press `a` → `PATCH /projects/:id/tests/:testId/approve` fires (no confirmation modal — primary action stays one-click). Active selection advances to the next visible test before the cache invalidation lands.
+8. **Reject a draft** — click Reject or press `r` → styled `<ModalShell>` confirmation dialog → execute → `PATCH /projects/:id/tests/:testId/reject`.
+9. **Switch to Rejected tab** → only Restore-to-Draft action is available (no direct rejected→approved path; verify by inspecting the sidebar Quick-decision group and the detail-pane header). Pressing `a` on this tab is a no-op (tab-gated).
+10. **Restore a rejected test** → `PATCH /projects/:id/tests/:testId/restore` returns it to Draft so it re-enters the queue for re-review.
+11. **Switch to Approved tab** → only Reject is available (no Approve duplication).
+12. **Bulk approve / bulk reject** — select ≥ 2 drafts via checkboxes → bulk bar appears at bottom of list pane → both routes go through the styled confirmation modal.
+13. **Per-row delete** (qa_lead+) → trash icon hidden until row is hovered or active; soft-deletes to recycle bin via styled confirmation.
+14. **Inbox-zero coaching** — when the Draft tab is empty (no search/filter active), the page renders a green-check coaching layout: "Inbox zero" headline + workspace approval count + "Generate more tests →" primary CTA (deep-links to `/projects/:id/test-lab` if a project is selected, otherwise `/test-lab`) + "Audit recent approvals" secondary CTA (switches to Approved tab).
+15. **Mobile layout** (< 640px) — single-pane "back-to-list" pattern: picking a row hides the list and shows only the detail pane; a `<` button in the detail header returns to the list.
+16. **Tab counts** — single aggregate query (not three `pageSize:1` probes) so flipping projects / search updates all three badges in lock-step.
+
+**Negative / edge:**
+- Search returns no matches → "No matches" empty state (does not surface the inbox-zero coaching).
+- Pressing `a` / `r` while inside the search input → no-op (input-focus guard).
+- Rapid `a`/`r` keypresses → guarded by `actionLoading` so the same test cannot fire two concurrent mutations.
+- Project deleted while open in detail pane → next refetch drops the test; auto-select advances to the first visible row.
+- Workspace switch → all Review Queue queries reset (TanStack Query cache invalidation is workspace-scoped via the parent project filter).
+- Viewer attempts approve/reject/restore → 403 (`requireRole("qa_lead")` on the underlying endpoints).
 
 ---
 
@@ -994,47 +1035,70 @@ The settings API requires **at least one channel** to be enabled (confirmed by `
 
 **Preconditions:** Tests page (`/tests`) with ≥ 5 tests in mixed statuses.
 
-**Bulk actions** (`POST /api/v1/projects/:id/tests/bulk`, see `backend/src/routes/tests.js:19`):
-1. Select multiple tests via checkboxes → bulk bar appears showing "N selected" with **Approve**, **Reject**, **Clear selection** (`frontend/src/pages/Tests.jsx:914-927`).
-2. **Bulk approve** → all selected tests move to active suite; **one audit-log entry per test**, each tagged with the acting user (`docs/changelog.md` #78).
-3. **Bulk reject** → all selected archived; one activity per test.
-4. **Bulk delete** → soft-deletes selected tests into Recycle Bin.
-5. **Bulk restore** (from Recycle Bin) → restores all selected.
-6. Mixing roles: Viewer cannot use bulk actions → buttons hidden or 403.
+**Surface split (PR #7):** Bulk **approve / reject** moved to the **Review
+Queue** page (`/review-queue`) — see [Review Queue](#-review-queue) for that
+flow. The Tests page retains bulk **delete** only; review actions are
+intentionally one-surface to keep approval state consistent across tab counts.
 
-**Keyboard shortcuts** (`frontend/src/pages/Tests.jsx:508-518`):
-7. `/` → focuses search input (when no input is focused).
-8. `a` (with selection) → triggers bulk approve.
-9. `r` (with selection) → triggers bulk reject.
+**Bulk actions on Tests page** (`POST /api/v1/projects/:id/tests/bulk` with
+`action: "delete"`, see `backend/src/routes/tests.js`):
+1. Select multiple tests via checkboxes → bulk bar appears showing "N selected" with **Delete** + **Clear selection** (`frontend/src/pages/Tests.jsx`). Approve / Reject buttons are NOT shown here — those live in Review Queue.
+2. **Bulk delete** → soft-deletes selected tests into Recycle Bin; ≥ 2 selected → confirmation dialog. One audit-log entry per test, tagged with the acting user (`docs/changelog.md` #78).
+3. **Bulk restore** (from Recycle Bin) → restores all selected.
+4. Mixing roles: Viewer cannot use bulk actions → buttons hidden or 403.
+
+**Bulk actions on Review Queue page** (`/review-queue`):
+5. Select multiple drafts via the row checkboxes → bulk bar with **Approve N**, **Reject N**, **Clear** appears at the bottom of the list pane. Both approve and reject route through a styled `<ModalShell>` confirmation (no `window.confirm`).
+6. **Bulk approve** → groups selection by `projectId` and fires `POST /tests/bulk` per project via `Promise.allSettled`; partial failures surface in an inline amber banner.
+7. **Bulk reject** → same per-project grouping + confirmation flow.
+8. After mutation: `invalidateReviewQueueCache()` busts the list, tab-count badges, and the per-status counts; `invalidateProjectDataCache()` busts shared project state on Dashboard / Reports.
+
+**Keyboard shortcuts on Tests page** (`frontend/src/pages/Tests.jsx`):
+9. `/` → focuses search input (when no input is focused).
 10. `Esc` → clears selection.
 11. Typing in inputs/textareas / contenteditable → shortcuts **must NOT** fire (verify `INPUT`/`TEXTAREA`/`isContentEditable` guard).
+12. **`a` / `r` shortcuts removed** from the Tests page in PR #7 (they were tied to bulk approve/reject which moved). Use Review Queue for `a` approve / `r` reject.
+
+**Keyboard shortcuts on Review Queue page** (`frontend/src/pages/ReviewQueue.jsx`):
+13. `a` → approve the currently active draft (only fires on the **Draft** tab — gate matches the visible Approve button so a stray `a` on the Rejected tab cannot bypass the "rejected → draft → re-review" trust contract).
+14. `r` → reject the currently active draft (suppressed on the **Rejected** tab; on the **Approved** tab it routes through the styled confirmation modal).
+15. `j` / `↓` → next test; `k` / `↑` → previous test.
+16. `Esc` → clear selection.
+17. Same input-focus guard as Tests page — typing in the search input doesn't trigger shortcuts.
 
 **Command palette** (`⌘K` / `Ctrl+K`):
-12. Press `⌘K` (mac) or `Ctrl+K` (win/linux) → palette opens with navigation entries + AI chat entry.
-13. Type a page name → fuzzy match; `Enter` navigates.
-14. `Esc` closes the palette.
+18. Press `⌘K` (mac) or `Ctrl+K` (win/linux) → palette opens with navigation entries + AI chat entry.
+19. Type a page name → fuzzy match; `Enter` navigates.
+20. `Esc` closes the palette.
 
 **Negative / edge:**
 - Bulk action with 0 selected → action button disabled.
 - Bulk action mid-run on the same tests → handled gracefully (queued or rejected with clear error).
 - Refresh after partial bulk failure → state consistent (no half-applied bulk).
+- Tests page bulk delete fired with `a` or `r` keypress → must be a no-op (those shortcuts no longer exist on this page).
 
 ---
 
-### 🪟 Modals (Tests page)
+### 🪟 Modals & full-page surfaces (Tests page)
 
-**Preconditions:** Tests page open.
+**Preconditions:** Tests page open. Most legacy modals on the Tests page were
+migrated to dedicated pages in PR #5 (Test Lab) and PR #7 (Review Queue) — the
+remaining true modals are **Run Regression**, **Recorder**, and **AI Fix**.
+The Tests page now exposes three quick-action **cards** (Test Lab / Review
+Drafts / Run Tests, see `frontend/src/pages/Tests.jsx` quick-action grid)
+that navigate to those surfaces; the legacy `CrawlProjectModal`,
+`GenerateTestModal`, and `ReviewModal` no longer exist.
 
-For each modal: open → fill → submit → close behavior.
+For each surface: open → fill → submit → close behavior.
 
-| Modal | Trigger | Verify |
+| Surface | Trigger | Verify |
 |---|---|---|
-| **Test Lab — Crawl & Generate tab** | Tests page "Crawl" quick action (now navigates to `/projects/:id/test-lab?tab=crawl`) | Project pre-selected via the route; mode picker (Link Crawl / State Exploration); Coverage / Perspectives / Quality chip groups; Test Count + Profile selects; Start button kicks off the 8-stage SSE pipeline. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests. Migrated from the legacy `CrawlProjectModal` (now removed). |
-| **Test Lab — Generate from Requirement tab** | Tests page "Generate" quick action (now navigates to `/projects/:id/test-lab?tab=requirement`) | Project pre-selected via the route; large requirement / user-story textarea; example prompts; Coverage + Quality chips. **Default output: UI / browser tests** from the supplied requirement plus crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests. Migrated from the legacy `GenerateTestModal` (now removed). |
-| **RunRegressionModal** | "Run Regression" | Project picker, browser selector (Chromium/Firefox/WebKit), device dropdown, locale/timezone/geolocation (AUTO-007), network condition (`fast` / `slow3g` / `offline`, AUTO-006), parallelism 1–10; submit opens RunDetail |
-| **ReviewModal** | "Review" / opening a Draft | Step-by-step approval queue; Approve/Reject/Skip; advances to next test |
-| **RecorderModal** | "Record a test" | Live CDP screencast; record/stop controls; on stop saves Draft |
-| **AiFixPanel** | "Fix with AI" on failed test | SSE token stream; diff vs current code; Accept/Discard |
+| **Test Lab — Crawl & Generate tab** (page) | Tests page "Test Lab" quick-action card → navigates to `/projects/:id/test-lab?tab=crawl` (or `/test-lab?tab=crawl` when no project is selected) | Project pre-selected via the route or the in-page sidebar; mode picker (Link Crawl / State Exploration); Coverage / Perspectives / Quality chip groups; Test Count + Profile selects; Start button kicks off the 8-stage SSE pipeline. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests. Migrated from the legacy `CrawlProjectModal` (deleted in PR #5). |
+| **Test Lab — Generate from Requirement tab** (page) | Tests page "Test Lab" quick-action card → switch to "Generate from Requirement" tab inside Test Lab | Project pre-selected via the route or sidebar; large requirement / user-story textarea; example prompts; Coverage + Quality chips. **Default output: UI / browser tests** from the supplied requirement plus crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests. Migrated from the legacy `GenerateTestModal` (deleted in PR #5). |
+| **Review Queue** (page, not modal) | Tests page "Review Drafts" quick-action card → navigates to `/review-queue` (or `/review-queue?projectId=<id>` when a project is selected) | Two-pane page: left list (sort, search, category chips, multi-select); right detail pane (steps, generated code, quality score with factor-breakdown popover). Tab bar (Draft / Rejected / Approved) with live counts; keyboard shortcuts `a` approve / `r` reject / `j`/`k` navigate / `Esc` clear. Replaces the legacy `ReviewModal` (deleted in PR #7). See [Review Queue](#-review-queue) for the full flow. |
+| **RunRegressionModal** | Tests page "Run Tests" quick-action card | Project picker, browser selector (Chromium/Firefox/WebKit), device dropdown, locale/timezone/geolocation (AUTO-007), network condition (`fast` / `slow3g` / `offline`, AUTO-006), parallelism 1–10; submit opens RunDetail. |
+| **RecorderModal** | Test Lab page topbar "Record a test" button (red CTA) — Tests page no longer has its own Record button | Live CDP screencast; record/stop controls; on stop saves Draft and navigates to Test Detail. Project is taken from the Test Lab's currently-selected project. |
+| **AiFixPanel** | "Fix with AI" on failed test (Test Detail) | SSE token stream; diff vs current code; Accept/Discard. |
 
 **Common checks for every modal:**
 - Click outside or `Esc` closes (only if no unsaved input — otherwise warns).
@@ -1226,6 +1290,7 @@ Mark status per browser: ✅ pass · ❌ fail · ⚠️ partial · ⬜ not teste
 | API Test Generation (additional output) | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Recorder | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Runs (cross-browser, mobile, parallel, abort, self-heal) | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Review Queue (PR #7 — tabs, sort, search, bulk, keyboard, mobile, inbox-zero)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **AI Fix (manual + auto feedback loop)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Test Code Editing (Steps ↔ Source)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Automation (trigger tokens + schedules) | ⬜ | ⬜ | ⬜ | ⬜ | |

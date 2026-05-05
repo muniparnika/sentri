@@ -1126,7 +1126,7 @@ export default function TestLab() {
                       {(runData?.testsGenerated ?? 0) > 0 && (
                         <button
                           className="btn btn-primary btn-xs"
-                          onClick={() => navigate(`/tests?filter=draft&projectId=${activeRun.projectId}`)}
+                          onClick={() => navigate(`/review-queue?projectId=${activeRun.projectId}`)}
                         >
                           Review {runData.testsGenerated} draft{runData.testsGenerated !== 1 ? "s" : ""} <ChevronRight size={12} />
                         </button>
@@ -1553,7 +1553,7 @@ export default function TestLab() {
                         <button
                           className="btn btn-primary"
                           style={{ width: "100%", justifyContent: "center", gap: 6 }}
-                          onClick={() => navigate(`/tests?filter=draft&projectId=${activeRun.projectId}`)}
+                          onClick={() => navigate(`/review-queue?projectId=${activeRun.projectId}`)}
                         >
                           Review {runData.testsGenerated} draft{runData.testsGenerated !== 1 ? "s" : ""} <ChevronRight size={13} />
                         </button>

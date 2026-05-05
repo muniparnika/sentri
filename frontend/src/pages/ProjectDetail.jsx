@@ -11,6 +11,7 @@ import {
   useProjectDetailQuery,
   useTraceabilityQuery,
 } from "../hooks/queries/useProjectDetailQueries.js";
+import { invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
 import AgentTag from "../components/shared/AgentTag.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import { cleanTestName } from "../utils/formatTestName.js";
@@ -208,6 +209,11 @@ export default function ProjectDetail() {
       else if (action === "reject") await api.rejectTest(id, testId);
       else if (action === "restore") await api.restoreTest(id, testId);
       await refresh();
+      // Bust the Review Queue cache too — the cross-project list, tab-count
+      // badges, and the sidebar draft-count badge all live under the
+      // `reviewQueueQueryKeys.root` namespace and would otherwise display
+      // stale counts after a per-project mutation.
+      invalidateReviewQueueCache();
       setSelected(s => { const n = new Set(s); n.delete(testId); return n; });
       const msgs = { approve: "Test approved → Regression suite", reject: "Test rejected", restore: "Test restored to Draft" };
       showToast(msgs[action], action === "approve" ? "success" : action === "reject" ? "error" : "info");
@@ -234,7 +240,9 @@ export default function ProjectDetail() {
     if (!ids?.length) return;
     try {
       const res = await api.bulkUpdateTests(id, ids, action);
-      await refresh(); setSelected(new Set());
+      await refresh();
+      invalidateReviewQueueCache();
+      setSelected(new Set());
       const label = action === "approve" ? "approved → Regression" : action === "reject" ? "rejected" : "restored to Draft";
       showToast(`${res.updated} tests ${label}`, action === "approve" ? "success" : "info");
     } catch (err) { showToast(err.message, "error"); }
@@ -245,7 +253,9 @@ export default function ProjectDetail() {
     if (!ids?.length) return;
     try {
       const res = await api.bulkDeleteTests(id, ids);
-      await refresh(); setSelected(new Set());
+      await refresh();
+      invalidateReviewQueueCache();
+      setSelected(new Set());
       showToast(`${res.deleted} test${res.deleted !== 1 ? "s" : ""} deleted`, "info");
     } catch (err) { showToast(err.message, "error"); }
   }

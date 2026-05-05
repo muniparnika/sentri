@@ -9,28 +9,33 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
 
+// Review Queue intentionally has no sidebar entry — it's reached via the
+// "Review Drafts" quick-action card on the Tests page (`Tests.jsx`), which
+// carries the live draft count and project-scoped deep-link. Adding a
+// sidebar entry here would duplicate that surface; the `/review-queue`
+// route itself remains registered in `App.jsx` for the card's navigate().
 const NAV_GROUPS = [
   {
     label: "Core",
     items: [
-      { to: "/dashboard", icon: Home, label: "Dashboard", tour: "tour-dashboard" },
-      { to: "/projects",  icon: FolderKanban, label: "Projects",  tour: "tour-projects" },
-      { to: "/tests",     icon: SquareCheckBig, label: "Tests", tour: "tour-tests" },
-      { to: "/test-lab",  icon: Atom, label: "Test Lab" },
+      { to: "/dashboard",     icon: Home,          label: "Dashboard",     tour: "tour-dashboard" },
+      { to: "/projects",      icon: FolderKanban,  label: "Projects",      tour: "tour-projects"  },
+      { to: "/tests",         icon: SquareCheckBig,label: "Tests",         tour: "tour-tests"     },
+      { to: "/test-lab",      icon: Atom,          label: "Test Lab"                              },
     ],
   },
   {
     label: "Activity",
     items: [
-      { to: "/runs",    icon: PlayCircle, label: "Runs" },
-      { to: "/reports", icon: BarChart3, label: "Reports" },
+      { to: "/runs",    icon: PlayCircle, label: "Runs"    },
+      { to: "/reports", icon: BarChart3,  label: "Reports" },
     ],
   },
   {
     label: "Automation",
     items: [
-      { to: "/automation", icon: Bot, label: "Automation" },
-      { to: "/system",     icon: Server, label: "System" },
+      { to: "/automation", icon: Bot,    label: "Automation" },
+      { to: "/system",     icon: Server, label: "System"     },
     ],
   },
 ];
@@ -71,6 +76,7 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const hasMultipleWorkspaces = user?.workspaces?.length > 1;
+
   // Force-expand the dropdown closed when the sidebar collapses to a rail —
   // the dropdown is anchored to the wide-mode workspace switcher and would
   // float into the main content area otherwise.

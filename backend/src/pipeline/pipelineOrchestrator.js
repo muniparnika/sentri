@@ -10,7 +10,7 @@
  */
 
 import { throwIfAborted } from "../utils/abortHelper.js";
-import { deduplicateTests, deduplicateAcrossRuns } from "./deduplicator.js";
+import { deduplicateTests, deduplicateAcrossRuns, scoreTestWithFactors } from "./deduplicator.js";
 import { enhanceTests } from "./assertionEnhancer.js";
 import { validateTest } from "./testValidator.js";
 import { applyHealingTransforms } from "../selfHealing.js";
@@ -60,6 +60,22 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
   const { tests: enhancedTests, enhancedCount } = enhanceTests(finalTests, snapshotsByUrl, classifiedPagesByUrl);
   log(run, `   ${enhancedCount} tests had assertions strengthened`);
   structuredLog("pipeline.enhance", { runId: run.id, enhanced: enhancedCount, total: enhancedTests.length });
+
+  // ── Step 6a: Re-score quality factors against the enhanced code ─────────
+  // The dedup stage (Step 5) attached `_quality` and `_qualityFactors` based
+  // on the *pre-enhancement* `playwrightCode`. Step 6 then injects assertions
+  // (toBeVisible, toHaveURL, …) which directly affect the rubric outcome —
+  // a test that hit `assert.none -30` before enhancement should no longer
+  // carry that penalty after the enhancer adds an `expect(...)`. Without
+  // this re-score, the Review Queue's "why was this drafted?" popover
+  // shows penalties that no longer apply to the persisted code, and
+  // `qualityScore` is systematically biased downward for any test that
+  // benefited from enhancement.
+  for (const t of enhancedTests) {
+    const { score, factors } = scoreTestWithFactors(t);
+    t._quality = score;
+    t._qualityFactors = factors;
+  }
 
   // ── Step 6b: Apply self-healing transforms ────────────────────────────
   // Rewrite raw Playwright calls (page.click, page.fill, page.getByRole().click())

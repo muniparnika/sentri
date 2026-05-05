@@ -41,6 +41,13 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       lastResult: null,
       lastRunAt: null,
       qualityScore: t._quality || 0,
+      // Per-factor breakdown that produced `qualityScore` — surfaced as the
+      // "why was this drafted?" explainer in the Review Queue. `_qualityFactors`
+      // is set by `deduplicateTests`; we coerce missing data to `[]` so the
+      // column is never `undefined` (SQLite would store it as `null` then
+      // `rowToTest` already round-trips `null` → `[]`, but being explicit here
+      // means the test record matches what the API returns).
+      qualityScoreFactors: Array.isArray(t._qualityFactors) ? t._qualityFactors : [],
       isJourneyTest: t.isJourneyTest || false,
       journeyType: t.journeyType || null,
       assertionEnhanced: t._assertionEnhanced || false,

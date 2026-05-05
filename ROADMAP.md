@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `CAP-004 + MET-001 + PROC-002` (bundled) — self-healing telemetry dashboard + shared time-series metrics + sprint-tracker hand-off automation (promoted per `NEXT.md` rotation after `CAP-003` shipped in PR #12) · **Blockers:** none remaining (`INF-006` ✅ shipped in PR #1 — hosted-deploy persistence blueprint + ephemeral-storage warning) · **Remaining:** 23 items (CAP-003 ✅ shipped in PR #12 — secret scanner gate on AI-generated Playwright tests; UI-REFACTOR-001 ✅ shipped in PR #6 — `ConfigurablePanel` abstraction + Automation page tabs + status-chip cache; combined recorder PR `DIF-015b Gap 3` + `DIF-015c Gap 1` ✅ shipped in PR #11 — iframe `frameLocator` emission, shadow-DOM via Playwright's InjectedScript, paste-as-single-`fill`, opt-in `shortcutCaptureBudget`; AUTO-019 ✅ shipped in PR #10; DIF-005 ✅ shipped in PR #9; AUTO-017 ✅ shipped in PR #8; DIF-015b Gap 2 ✅ shipped in PR #4; AUTO-012 ✅ shipped in PR #2; INF-006 ✅ shipped in PR #1; ENH-036 + ENH-036b ✅ shipped in PR #127; AUTO-016b ✅ shipped in PR #127; DIF-007 ✅ shipped in PR #123; MNT-006 ✅ shipped in PR #122)
+> **Current sprint:** `CAP-004 + MET-001 + PROC-002` (bundled) — self-healing telemetry dashboard + shared time-series metrics + sprint-tracker hand-off automation (promoted per `NEXT.md` rotation after `CAP-003` shipped in PR #12) · **Blockers:** none remaining (`INF-006` ✅ shipped in PR #1 — hosted-deploy persistence blueprint + ephemeral-storage warning) · **Remaining:** 24 items (CAP-003 ✅ shipped in PR #12 — secret scanner gate on AI-generated Playwright tests; UI-REFACTOR-001 ✅ shipped in PR #6 — `ConfigurablePanel` abstraction + Automation page tabs + status-chip cache; combined recorder PR `DIF-015b Gap 3` + `DIF-015c Gap 1` ✅ shipped in PR #11 — iframe `frameLocator` emission, shadow-DOM via Playwright's InjectedScript, paste-as-single-`fill`, opt-in `shortcutCaptureBudget`; AUTO-019 ✅ shipped in PR #10; DIF-005 ✅ shipped in PR #9; AUTO-017 ✅ shipped in PR #8; DIF-015b Gap 2 ✅ shipped in PR #4; AUTO-012 ✅ shipped in PR #2; INF-006 ✅ shipped in PR #1; ENH-036 + ENH-036b ✅ shipped in PR #127; AUTO-016b ✅ shipped in PR #127; DIF-007 ✅ shipped in PR #123; MNT-006 ✅ shipped in PR #122)
 
 ---
 
@@ -124,7 +124,7 @@ The following items have been verified complete against the codebase and are **n
 | Phase 1 — Production Hardening | Security, reliability, data integrity | ✅ Complete                                                                                                                                                                            | — |
 | Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | 🔄 In progress — `INF-006` ✅ shipped in PR #1 (Render blueprint + ephemeral-storage warning); `ENH-036` ✅ shipped in PR #127 (project credential edit + auto-login in ENH-036b); `SEC-004` deferred     | 8–10 weeks |
 | Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔄 In progress — most differentiators shipped (DIF-001/002/002b/003/004/005/006/007/011/013/014/015/016 ✅ — DIF-005 embedded trace viewer shipped in PR #9); remaining: DIF-008–010, DIF-012, DIF-015b/c sub-items | 10–12 weeks |
-| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/017/019 ✅ (AUTO-016b UI shipped in PR #1; AUTO-012 full backend + UI + CI consumer docs shipped in PR #2; AUTO-017 Web Vitals budgets shipped in PR #8; AUTO-019 per-test run diffing shipped in PR #10); remaining: AUTO-001/002/003/004, AUTO-008–011, AUTO-014/015, AUTO-018                                | 14–18 weeks |
+| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/017/019 ✅ (AUTO-016b UI shipped in PR #1; AUTO-012 full backend + UI + CI consumer docs shipped in PR #2; AUTO-017 Web Vitals budgets shipped in PR #8; AUTO-019 per-test run diffing shipped in PR #10); remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018                                | 14–18 weeks |
 | Ongoing — Maintenance & Platform Health | Healing AI, DX, exports, accessibility | 🔄 Continuous                                                                                                                                                                         | — |
 
 ---
@@ -642,11 +642,11 @@ The following items have been verified complete against the codebase and are **n
 
 **Fix:** Add a "Record a test" mode that opens the target URL in a Playwright browser served via CDP screencast (the live view infrastructure already exists). Capture user interactions (clicks, fills, navigations) as raw Playwright actions. On stop, run the captured actions through the existing assertion enhancement pipeline (Stage 6) and self-healing transform (`applyHealingTransforms`). Save as a draft test with the recorded code.
 
-**Files to change:**
-- New `backend/src/runner/recorder.js` — Playwright `page.on('action')` capture + CDP session management
-- `backend/src/routes/runs.js` — `POST /api/projects/:id/record` endpoint to start/stop recording
-- `frontend/src/components/run/RecorderModal.jsx` — live browser view with record/stop controls
-- `frontend/src/pages/Tests.jsx` — "Record a test" button alongside existing Crawl and Generate
+**Files changed (historical scope as shipped):**
+- `backend/src/runner/recorder.js` — Playwright capture + CDP session management
+- `backend/src/routes/tests.js` — `POST /api/v1/projects/:id/record` start, `/stop`, `/input`, `/assertion` endpoints (note: recorder routes live on `tests.js`, not `runs.js` — earlier roadmap text predates that move)
+- `frontend/src/components/run/RecorderModal.jsx` — live browser view with record/stop controls (still the active modal — consumed by `frontend/src/pages/TestLab.jsx`'s topbar Record CTA after PR #5 consolidated the recorder launch into Test Lab)
+- ~~`frontend/src/pages/Tests.jsx` — "Record a test" button~~ — superseded by Test Lab. PR #5 removed the Tests-page Record button; PR #7 added the Test Lab quick-action card on Tests so the entry point now flows Tests → Test Lab → topbar Record CTA → RecorderModal.
 
 **Dependencies:** None (reuses existing CDP screencast and self-healing transform infrastructure)
 
@@ -1044,6 +1044,73 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 - `frontend/src/pages/Tests.jsx` — auto-approved filter badge
 
 **Dependencies:** None
+
+---
+
+### AUTO-003b — Auto-approval provenance & audit trail 🟢 Differentiator
+
+**Status:** 🔲 Planned | **Effort:** M | **Source:** Follow-on from AUTO-003 (PR #7 review thread on `review-queue` branch — clear approval ownership for human vs auto)
+
+**Problem:** AUTO-003 ships the *mechanism* (auto-approve above a confidence threshold) but not the *trust contract* around it. Without explicit provenance, an approved test can't tell a reviewer **who** approved it (human vs `auto-approver`), **why** (judgment vs score X above threshold Y), or **how to revoke it**. The first time auto-approval ships a bad test, trust in the entire system collapses unless reviewers can scan a table and see at a glance which approvals were machine-made and one-click reverse them. AUTO-003's scope deliberately stops at "tests above threshold are persisted as `approved` + activity row written" — it does not add the provenance columns, the two-tone badge, the revoke endpoint, or the calibration feedback loop in project settings.
+
+**Fix:**
+
+*Data model — combine into the AUTO-003 migration if it hasn't shipped, otherwise new migration. Critical: persist `approvalThreshold` at decision time, not just a flag, so the audit can flag historical approvals that would no longer pass after a threshold raise.*
+
+```sql
+ALTER TABLE tests ADD COLUMN approvalSource TEXT;     -- 'human' | 'auto' | null
+ALTER TABLE tests ADD COLUMN approvalThreshold REAL;  -- threshold value at decision time
+ALTER TABLE tests ADD COLUMN approvedAt INTEGER;      -- epoch ms
+ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approver'
+```
+
+*Backend:*
+- Populate the four provenance columns on every approval path (auto + human) in `backend/src/pipeline/testPersistence.js`.
+- Write one `activities` row per auto-approval (`userName: "auto-approver"`, `meta: { score, threshold }`). No batching.
+- New `GET /api/v1/projects/:id/approval-stats` — counts (human / auto / draft) + 7-day revert rate for the calibration line.
+- New `POST /api/v1/tests/:id/revoke` — moves an approved test (auto or human) back to `draft`, writes an activity row, clears `approvedAt` / `approvedBy`. Register both routes in `permissions.json`.
+
+*Frontend (the "scannable at table density, never hover-only" rule applies to all of these):*
+- `Tests.jsx` — replace the single "Approved" badge with a two-tone column: 🤖 `Auto · 0.91` (purple) vs 👤 `Human · alice` (green) vs 📝 `Draft · 0.62` (amber). ⚠ overlay on auto-approved rows whose first run failed (the calibration safety net). New filter pill row: `All | Human-approved | Auto-approved | Draft`. **Do not** merge auto + human under one green badge.
+- `Tests.jsx` "Auto-approved" filter — default sort: lowest confidence first; required column: first-run pass rate; bulk action: "Send back to draft for review".
+- `ReviewQueue.jsx` — render a "Last 24h auto-approvals" tray above the draft list when auto-approval is enabled, so reviewers can spot-audit yesterday's auto-batch in 30 seconds.
+- Test header (likely `RunDetail.jsx` or `TestDetail.jsx`) — full provenance line + **Revoke to draft** button. Auto: `🤖 Auto-approved · score 0.91 · threshold 0.85 · 2h ago · [Revoke to draft]`. Human: `👤 Approved by @alice · 1d ago · [Revoke to draft]`. **The Revoke button is the single non-negotiable affordance** — auto-approval is only trustworthy if it is reversible in one click.
+- `ProjectDetail.jsx` — header aggregate: `24 tests · 18 human · 6 auto · 0 drafts`. Do not clutter per-run rows.
+- `Sidebar.jsx` — second badge alongside the draft count: `[3 drafts] [🤖 12 auto today]`. Hiding auto-activity makes the system feel idle when it's working.
+- Project Settings (`ProjectQualityCard` post-PR #6) — inline calibration line under the threshold input: `Last 7 days: 42 auto-approved, 3 reverted by humans (7%).` Heuristic surfaced as helper text: <5% → may be too high; 5–10% → healthy; >10% → tighten. First-time enablement guard: one-time modal showing "last 30 generated tests would have been auto-approved at this threshold — sample these before enabling."
+- New per-project Approvals timeline: daily groups (`🤖 12 auto-approved (avg score 0.89)` / `👤 @alice approved 3, rejected 1`). Click a batch → expanded list with per-test score, threshold-at-time, and per-test revoke action. Compliance bar: "who approved this test?" must be one click away six months later.
+
+**Files to change:**
+- New migration `0NN_test_approval_provenance.sql` — four provenance columns
+- `backend/src/pipeline/testPersistence.js` — populate provenance on both approval paths
+- New `backend/src/routes/approvalStats.js` (or extend `routes/projects.js`) — `GET /:id/approval-stats`
+- `backend/src/routes/tests.js` — `POST /:id/revoke`
+- `backend/src/middleware/permissions.json` — register both new routes
+- `frontend/src/api.js` — `getApprovalStats(projectId)`, `revokeApproval(testId)`
+- `frontend/src/pages/Tests.jsx` — two-tone badge column, source-filter pills, first-run-failed warning
+- `frontend/src/pages/ReviewQueue.jsx` — last-24h auto-approval tray
+- `frontend/src/pages/ProjectDetail.jsx` — header aggregate counts
+- `frontend/src/components/layout/Sidebar.jsx` — second `🤖 N auto today` badge
+- `frontend/src/pages/RunDetail.jsx` (or `TestDetail.jsx`) — provenance line + Revoke button
+- `frontend/src/components/automation/ProjectQualityCard.jsx` — calibration line + first-time-enable preview modal
+- New `frontend/src/pages/ApprovalsTimeline.jsx`
+- `backend/tests/auto-approval.test.js` (extend) — provenance persistence, activity row with score+threshold, revoke flow (auto→draft, human→draft), first-run-failed flag in API
+- New `frontend/tests/approval-provenance.test.jsx` — filter pill partitions human vs auto, Revoke button hits the right endpoint and updates the row
+- `docs/changelog.md` — `### Added` entry once shipped
+- `REVIEW.md` — new convention: auto-approval surfaces must show provenance
+
+**Acceptance criteria:**
+- Every auto-approval writes an `activities` row with `userName: "auto-approver"`, score, and threshold-at-time.
+- The four provenance columns are populated on every approval (auto and human); `approvalThreshold` reflects the value at decision time, not the current project setting.
+- `Tests.jsx` visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft in the table without hover.
+- Auto-approved tests with a failed first run surface a ⚠ icon in `Tests.jsx` and the auto-approved filter view.
+- `POST /tests/:id/revoke` returns the test to `draft` for both auto- and human-approved tests, and writes an activity row.
+- Sidebar shows `🤖 N auto today` alongside the draft count when N > 0.
+- First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting the setting.
+
+**Anti-patterns to reject in review:** merging auto + human under one "Approved" badge · provenance only on hover/tooltip · silent first-enable with no preview · skipping the activity row · shipping without the Revoke button · hiding the auto-count from the sidebar.
+
+**Dependencies:** AUTO-003 (provides `confidenceScore` + `autoApproveThreshold` that this item builds on)
 
 ---
 

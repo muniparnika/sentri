@@ -54,6 +54,25 @@ export const settingsQueryKeys = {
   ollamaStatus: ["settings", "ollamaStatus"],
 };
 
+export const reviewQueueQueryKeys = {
+  root: ["reviewQueue"],
+  /**
+   * @param {Object} params - { tab, projectId, q, category, page, pageSize }
+   * @returns {Array}
+   */
+  list: (params) => ["reviewQueue", "list", params],
+  /**
+   * Tab-count badges (Draft/Approved/Rejected) for the Review Queue,
+   * keyed by the same filter shape that drives the list query (minus
+   * `reviewStatus` since the counts partition on it). Lives under the
+   * same root prefix so `invalidateReviewQueueCache()` busts it too.
+   *
+   * @param {Object} params - { projectId, search, category }
+   * @returns {Array}
+   */
+  counts: (params) => ["reviewQueue", "counts", params],
+};
+
 export const automationStatusQueryKeys = {
   root: ["automationStatus"],
   /**
