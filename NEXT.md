@@ -175,6 +175,29 @@ After each crawl, store a `crawl_baseline` snapshot per project (page URL → DO
 - Second crawl with a modified page regenerates tests only for that URL; untouched pages' approved tests survive unchanged.
 - Pages removed from the site are surfaced in the run response so reviewers can decide whether to soft-delete their tests.
 
+### 6 · AI-001 — Generic OpenAI-compatible provider adapter (BYO endpoint)
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** Operator feedback — "support DeepSeek / Groq / Together / Fireworks / OpenRouter / Mistral / Azure OpenAI / xAI Grok / vLLM / LM Studio / LocalAI without hard-coding an SDK per vendor"
+
+Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`, (2) a new branch in `callProvider()` at `backend/src/aiProvider.js:813`, and (3) wiring through `CLOUD_KEY_MAP` / `CLOUD_DEFAULT_MODELS` / `PROVIDER_DOCS`. This blocks every "support DeepSeek" / "support Groq" / "support OpenRouter" request behind a code change. The industry has converged on the **OpenAI Chat Completions wire format** — DeepSeek, Groq, Together, Fireworks, OpenRouter, Mistral, xAI, Azure OpenAI, vLLM, LM Studio, and LocalAI all expose `/v1/chat/completions` with the OpenAI request/response schema. Reuse the existing `openai` SDK with `new OpenAI({ apiKey, baseURL })` (the SDK's own supported pattern) and we get every one of them with **zero new dependencies**.
+
+**Why reuse the SDK and not hand-roll `fetch()`:** the `openai` package is already a runtime dep, so removing it saves nothing; it correctly handles streaming, retry-after parsing, error-class normalisation, and `response_format` quirks that would be ~600 LOC of edge cases to re-implement in raw `fetch()`. The pragmatic position: keep the SDK, drop the hardcoded vendor list. **Anthropic and Google branches stay** — those use proprietary wire formats (Anthropic `messages`, Google `generateContent`) so SDK reuse only applies to the Chat Completions family.
+
+**Implementation sketch:**
+- Add an `"openai_compatible"` provider type that accepts user-supplied `{ baseUrl, apiKey, model, displayName }` triples; one adapter handles all of them through `new OpenAI({ apiKey, baseURL: <user URL> })` — same retry/circuit-breaker/fallback path as the existing `"openai"` branch.
+- Users add as many compat slots as they want via Settings (each gets a slot id like `compat:deepseek`, `compat:groq`, …). The existing `apiKeyRepo.set("local", { baseUrl, model })` precedent at `aiProvider.js:155` shows the JSON-value-per-slot shape already works.
+- **Critical SSRF boundary:** user-supplied `baseUrl` flows server-side and must be SSRF-validated via `validateUrl()` from `backend/src/utils/ssrfGuard.js` (matches the `notifications` route pattern at `projects.js:464-471`). Reject loopback/private addresses unless an explicit allowlist override is set — this is a real attack surface.
+
+**Files:** `backend/src/aiProvider.js` (new `"openai_compatible"` branch in `callProvider()`; extend `CLOUD_KEY_MAP` / `CLOUD_DEFAULT_MODELS` / `detectProvider()` to handle dynamic compat slots; extend `setRuntimeKey()` to accept `{ baseUrl, model }`) · `backend/src/database/repositories/apiKeyRepo.js` (list/get/set/delete compat slots — JSON `value` column already accepts the shape per the Ollama precedent) · `backend/src/routes/settings.js` (extend the provider validator to recognise `provider: "compat:<id>"` and SSRF-validate `baseUrl` at config time) · `frontend/src/pages/Settings.jsx` ("Add OpenAI-compatible provider" form + list/delete UI) · `frontend/src/components/header/ProviderDropdown.jsx` (or wherever the active-provider switcher lives — show compat slots alongside the four built-ins) · new `backend/tests/openai-compat-provider.test.js` (mock the `openai` SDK to assert (1) `baseURL` flows through, (2) auth-error / rate-limit / 5xx classification works, (3) circuit breaker tracks each compat slot independently, (4) SSRF-blocked baseUrls are rejected at config time) · `docs/changelog.md` (`### Added` entry under `## [Unreleased]`)
+
+**Acceptance criteria:**
+- Configuring a DeepSeek key + `https://api.deepseek.com/v1` baseUrl in Settings produces a working provider with zero code changes.
+- Same path works for Groq (`https://api.groq.com/openai/v1`), Together, OpenRouter, Mistral (`https://api.mistral.ai/v1`), Azure OpenAI (`https://<resource>.openai.azure.com/openai/deployments/<deployment>`), xAI Grok (`https://api.x.ai/v1`), and self-hosted vLLM / LM Studio / LocalAI on `http://localhost:8000/v1` (when SSRF override is enabled).
+- Existing Anthropic / Google / OpenAI / Ollama paths are **unchanged** — no regression to the four built-ins, no migration required for existing deployments.
+- Compat providers participate in the existing FEA-003 fallback chain and circuit breaker per-slot (one bad endpoint shouldn't drag down others).
+- SSRF guard rejects compat baseUrls pointing at private/loopback addresses unless an explicit allowlist override is set.
+
+**Anti-patterns to reject in review:** adding a new SDK per vendor (defeats the point) · hand-rolling raw `fetch()` (loses streaming + retry semantics for nothing) · skipping SSRF validation on user-supplied baseUrl (Sentri runs server-side, this is a real security boundary) · letting compat slots bypass the FEA-003 circuit breaker (one bad endpoint shouldn't be exempt from rate-limit accounting) · merging compat into the existing `"openai"` branch instead of a separate type (makes "is this our OpenAI key or a compat slot" indistinguishable in logs/metrics).
+
 ---
 
 ## ✅ Recently completed
