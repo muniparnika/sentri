@@ -6,6 +6,22 @@
 > **For humans:** Update this file when a PR ships. Move the completed item to ROADMAP.md ✅ table,
 > promote the next item from the queue below, and rewrite the "Current PR" block.
 
+> **Bundling guidance — for agents writing code:** When working on the Current PR, if you
+> spot adjacent items in the Queue (or in `ROADMAP.md`) that share files, infrastructure,
+> or a natural review boundary with the in-flight scope, **flag them as bundling candidates
+> in your PR description** rather than expanding the PR mid-flight. Good bundling signals:
+> (1) the items touch the same module / shared abstraction, so reviewing them together
+> reduces churn (e.g. CAP-004 + MET-001 share `<TrendChart>`); (2) one item validates
+> another end-to-end (e.g. PROC-002 promotes its own bundle as the integration test);
+> (3) both are S/XS effort and skipping a hand-off cycle saves more than it costs in
+> review surface (e.g. AUTO-017.3 + PROC-001 in slot 2). **Bad** bundling signals: items
+> in different phases, items that grow the PR past M effort, items that change the
+> reviewer's mental model (UX rewrite + backend rewrite), or items the agent identifies
+> *after* CI is already green on the original scope. When in doubt, surface the candidate
+> bundle as a comment on the PR and let the human decide — never silently expand scope
+> beyond the Current PR's `### PR checklist`. Recording the rejected candidates is also
+> useful: it builds the dataset for future planning.
+
 ---
 
 ## ▶ Current PR — CAP-004 + MET-001 + PROC-002 (bundled)
