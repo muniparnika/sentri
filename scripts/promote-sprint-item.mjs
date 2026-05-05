@@ -30,8 +30,16 @@ import path from "node:path";
 
 const args = process.argv.slice(2);
 const positional = args.filter((a) => !a.startsWith("--"));
+// Split only on the FIRST `=` so paths containing `=` aren't truncated.
+// `--root=/path/with=equals` → `{ root: "/path/with=equals" }`, not
+// `{ root: "/path/with" }` (which `.split("=")` + `Object.fromEntries`
+// would produce by silently dropping the tail).
 const flags = Object.fromEntries(
-  args.filter((a) => a.startsWith("--")).map((a) => a.replace(/^--/, "").split("="))
+  args.filter((a) => a.startsWith("--")).map((a) => {
+    const stripped = a.replace(/^--/, "");
+    const eq = stripped.indexOf("=");
+    return eq < 0 ? [stripped, true] : [stripped.slice(0, eq), stripped.slice(eq + 1)];
+  })
 );
 const [prNumber, nextItemId] = positional;
 const root = flags.root || process.cwd();
