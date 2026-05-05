@@ -15,6 +15,8 @@
 
 import { recordHealing, recordHealingFailure } from "../selfHealing.js";
 import { trackTelemetry } from "../utils/telemetry.js";
+import { recordMetric } from "../utils/recordMetric.js";
+import * as testRepo from "../database/repositories/testRepo.js";
 
 /**
  * persistHealingEvents(testId, events)
@@ -73,4 +75,22 @@ export function persistHealingEvents(testId, events) {
     // breakdown chart in the UI ("how often does strategy 2 win?").
     strategyHistogram,
   });
+
+  // MET-001: record a savings sample so the healing dashboard's TrendChart
+  // has real data. "Savings" = number of healing events that succeeded with a
+  // non-primary strategy (index > 0) — i.e. tests that would have failed
+  // without self-healing. Best-effort: testId may be a versioned scope
+  // ("TC-1@v2") and the test row may have been deleted; skip silently.
+  try {
+    const nonPrimaryHeals = Object.entries(strategyHistogram)
+      .filter(([idx]) => Number(idx) > 0)
+      .reduce((sum, [, n]) => sum + n, 0);
+    if (nonPrimaryHeals > 0) {
+      const baseTestId = String(testId).replace(/@v\d+$/, "");
+      const test = testRepo.getById(baseTestId);
+      if (test?.projectId) {
+        recordMetric(test.projectId, "healing.savings", nonPrimaryHeals, { testId: baseTestId });
+      }
+    }
+  } catch { /* best-effort — never flip a passing run */ }
 }
