@@ -24,14 +24,16 @@
 
 ---
 
-## ▶ Current PR — CAP-004 + MET-001 + PROC-002 (bundled)
+## ▶ Current PR — AUTO-017.3 + PROC-001 + PROC-003 (bundled)
 
-**Title:** Self-healing telemetry dashboard + shared time-series metrics + sprint-tracker hand-off automation
-**Branch:** `feat/cap-004-healing-met-001-proc-002`
-**Effort:** M (bundled) | **Priority:** 🔵 Medium
-**All dependencies:** none (promoted per rotation rule after PR #12 shipped CAP-003)
+**Title:** Web Vitals trend chart + no-orphan-routes CI guard + ROADMAP auto-prune on promotion
+**Branch:** `feat/auto-017.3-proc-001-proc-003`
+**Effort:** S (S + XS + S) | **Priority:** 🔵 Medium
+**All dependencies:** AUTO-017.3 needs MET-001 (✅ shipped in PR #8 — `<TrendChart>` + `recordMetric()` available); PROC-001 + PROC-003 have none
 
-> CAP-003 (secret scanner gate) ✅ shipped in PR #12. **Three queue items are bundled into this PR** so the agent has meaningful surface area and we avoid re-doing the trend chart twice (CAP-004's savings chart is the first consumer of MET-001's `<TrendChart>`). PROC-002 piggy-backs because it eliminates the exact NEXT.md / ROADMAP.md / changelog hand-off churn that PR #12 hit, and it pays for itself on the very next PR after this one.
+> CAP-004 + MET-001 + PROC-002 ✅ shipped in PR #8 (self-healing telemetry dashboard + shared time-series metrics primitive + sprint-tracker hand-off script). **Three queue items are bundled into this PR** because each is tiny on its own and they share a "tooling polish" theme — bundling saves two hand-off cycles versus shipping them separately. The PROC-002 script was used to generate this Current PR block (dogfooding the script's first real promotion after its self-promotion in PR #8).
+
+> **Bundling rationale (per the bundling-guidance note above):** AUTO-017.3 is the first **non-healing** consumer of MET-001's `<TrendChart>` and validates the abstraction works for a second metric source — that's the integration test for MET-001's reusability. PROC-001 and PROC-003 are both process-tooling improvements that pay back on every subsequent PR (no-orphan-routes catches API-without-UI drift; ROADMAP auto-prune keeps `ROADMAP.md` from regrowing past the cleanup threshold). All three scopes touch **disjoint files** (frontend `ProjectQualityCard` + `testRunner.js` for AUTO-017.3 · CI workflow + docs for PROC-001 · `scripts/promote-sprint-item.mjs` + `ROADMAP.md` for PROC-003) so the diff stays reviewable.
 
 **Do not split this PR.** Codex agents tend to ship the minimum viable slice; this prompt is the explicit instruction to ship all three together.
 
