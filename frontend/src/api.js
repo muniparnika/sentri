@@ -486,6 +486,24 @@ export const api = {
   /** @returns {Promise<Object>} Analytics: pass rate, defects, flaky tests, MTTR, etc. */
   getDashboard: () => req("GET", "/dashboard"),
 
+  // ── Healing Dashboard (CAP-004) ─────────────────────────────────────────────
+  /**
+   * Self-healing telemetry summary across the current workspace.
+   * Powers the `/healing` page: per-strategy success rates, top-healed
+   * selectors (deduplicated, sorted by real heal count), the
+   * "tests that would have failed without healing" estimate, and the
+   * `healing.savings` metric-sample trend (merged across all projects in
+   * the workspace by timestamp).
+   *
+   * @returns {Promise<{
+   *   strategies: Array<{ strategyIndex: number, total: number, successes: number, successRate: number }>,
+   *   topSelectors: Array<{ selector: string, healCount: number, totalCount: number }>,
+   *   estimates: { testsThatWouldHaveFailed: number },
+   *   savingsTrend: Array<{ ts: number, value: number }>,
+   * }>}
+   */
+  getHealingSummary: () => req("GET", "/healing/summary"),
+
   // ── Config & Settings ───────────────────────────────────────────────────────
   /** @returns {Promise<Object>} Active AI provider info `{ hasProvider, providerName, model }`. */
   getConfig:    ()                 => req("GET",    "/config"),

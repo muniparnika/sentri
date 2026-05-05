@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
-    Atom,
+    Atom, Shield,
 } from "lucide-react";
 import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -35,6 +35,7 @@ const NAV_GROUPS = [
     label: "Automation",
     items: [
       { to: "/automation", icon: Bot,    label: "Automation" },
+      { to: "/healing", icon: Shield, label: "Healing" },
       { to: "/system",     icon: Server, label: "System"     },
     ],
   },

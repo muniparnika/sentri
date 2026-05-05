@@ -53,6 +53,7 @@ import { requireAuth } from "./routes/auth.js";
 import chatRouter from "./routes/chat.js";
 import testFixRouter from "./routes/testFix.js";
 import recycleBinRouter from "./routes/recycleBin.js";
+import healingRouter from "./routes/healing.js";
 import workspacesRouter from "./routes/workspaces.js";
 import { spec as openapiSpec } from "./openapi.js";
 
@@ -256,6 +257,7 @@ app.use(API_PREFIX, requireAuth, workspaceScope, systemRouter);
 app.use(API_PREFIX, requireAuth, workspaceScope, chatRouter);
 app.use(API_PREFIX, requireAuth, workspaceScope, testFixRouter);
 app.use(API_PREFIX, requireAuth, workspaceScope, recycleBinRouter);
+app.use(API_PREFIX, requireAuth, workspaceScope, healingRouter);
 app.use(`${API_PREFIX}/workspaces`, requireAuth, workspaceScope, workspacesRouter);
 
 // ─── INF-005: Legacy /api/* → /api/v1/* 308 redirects ────────────────────────
