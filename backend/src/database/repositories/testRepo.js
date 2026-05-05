@@ -21,14 +21,14 @@ export { parsePagination };
 
 // ─── Row ↔ Object helpers ─────────────────────────────────────────────────────
 
-const JSON_FIELDS = ["steps", "tags"];
+const JSON_FIELDS = ["steps", "tags", "qualityScoreFactors"];
 const BOOL_FIELDS = ["isJourneyTest", "assertionEnhanced", "isApiTest", "isStale"];
 
 function rowToTest(row) {
   if (!row) return undefined;
   const obj = { ...row };
   for (const f of JSON_FIELDS) {
-    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" ? [] : null);
+    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" || f === "qualityScoreFactors" ? [] : null);
   }
   for (const f of BOOL_FIELDS) {
     obj[f] = obj[f] === 1 ? true : obj[f] === 0 ? false : obj[f];
@@ -54,7 +54,7 @@ function testToRow(t, { fillDefaults = false } = {}) {
 const INSERT_COLS = [
   "id", "projectId", "name", "description", "steps", "playwrightCode",
   "playwrightCodePrev", "priority", "type", "sourceUrl", "pageTitle",
-  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore",
+  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore", "qualityScoreFactors",
   "isJourneyTest", "journeyType", "assertionEnhanced", "reviewStatus",
   "reviewedAt", "promptVersion", "modelUsed", "linkedIssueKey", "tags",
   "generatedFrom", "isApiTest", "scenario", "codeRegeneratedAt",
@@ -154,6 +154,76 @@ export function countDraftByProjectIds(projectIds) {
 }
 
 /**
+ * Per-status test counts across a set of project IDs, with the same filter
+ * shape as {@link getAllPagedByProjectIds}. Powers the Review Queue's tab
+ * badges in a single COUNT-aggregated query — replaces the previous trio
+ * of `pageSize: 1` paginated probes (one per tab) which produced three
+ * concurrent round-trips on every filter / page change.
+ *
+ * The aggregate uses `SUM(CASE WHEN ...)` so the `WHERE` filters apply to
+ * every status uniformly — switching the project filter or the search
+ * input updates all three counts in lock-step.
+ *
+ * @param {string[]} projectIds
+ * @param {Object}   [filters]   - Same shape as `getAllPagedByProjectIds`'s
+ *                                 `filters` arg, minus `reviewStatus` (which
+ *                                 is partitioned in the SUM, not filtered).
+ * @returns {{ draft: number, approved: number, rejected: number, total: number }}
+ */
+export function countReviewQueueByProjectIds(projectIds, filters = {}) {
+  if (!projectIds || projectIds.length === 0) {
+    return { draft: 0, approved: 0, rejected: 0, total: 0 };
+  }
+
+  // Mirror the ACL-scoped projectId narrowing from getAllPagedByProjectIds —
+  // a `projectId` outside the workspace set is silently ignored, never
+  // widens scope.
+  let scopedIds = projectIds;
+  if (filters.projectId && projectIds.includes(filters.projectId)) {
+    scopedIds = [filters.projectId];
+  }
+
+  const db = getDatabase();
+  const placeholders = scopedIds.map(() => "?").join(", ");
+  const conditions = [`projectId IN (${placeholders})`, "deletedAt IS NULL"];
+  const params = [...scopedIds];
+
+  if (filters.category === "api") {
+    conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
+  } else if (filters.category === "ui") {
+    conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    conditions.push("isJourneyTest = 1");
+  }
+  if (filters.stale) {
+    conditions.push("isStale = 1");
+  }
+  if (filters.search) {
+    conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
+    const like = `%${filters.search}%`;
+    params.push(like, like);
+  }
+
+  const where = conditions.join(" AND ");
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN reviewStatus = 'draft'    THEN 1 ELSE 0 END) AS draft,
+      SUM(CASE WHEN reviewStatus = 'approved' THEN 1 ELSE 0 END) AS approved,
+      SUM(CASE WHEN reviewStatus = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+      COUNT(*)                                                   AS total
+    FROM tests
+    WHERE ${where}
+  `).get(...params);
+
+  return {
+    draft:    row?.draft    || 0,
+    approved: row?.approved || 0,
+    rejected: row?.rejected || 0,
+    total:    row?.total    || 0,
+  };
+}
+
+/**
  * Get all non-deleted tests belonging to the given project IDs with pagination.
  * Used by the workspace-scoped GET /api/tests endpoint (ACL-001).
  * @param {string[]} projectIds
@@ -161,22 +231,111 @@ export function countDraftByProjectIds(projectIds) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @returns {PagedResult}
  */
-export function getAllPagedByProjectIds(projectIds, page, pageSize) {
+/**
+ * Cross-project paginated list with optional filters.
+ *
+ * Mirrors `getByProjectIdPaged`'s filter shape so the cross-project Review
+ * Queue can server-paginate without forcing the client to fetch every test
+ * in the workspace and filter in memory.
+ *
+ * @param {string[]} projectIds  - Workspace-scoped project IDs (ACL gate).
+ * @param {number}   page
+ * @param {number}   pageSize
+ * @param {Object}   [filters]
+ * @param {string}   [filters.reviewStatus]  - "draft" | "approved" | "rejected"
+ * @param {string}   [filters.category]      - "api" | "ui" | "journey"
+ *                                             ("journey" matches `isJourneyTest = 1`,
+ *                                             orthogonal to api/ui — same column
+ *                                             contract as `getByProjectIdPaged`.)
+ * @param {string}   [filters.search]        - LIKE match against name + sourceUrl
+ * @param {boolean}  [filters.stale]
+ * @param {string}   [filters.projectId]     - Narrow to a single project; ignored
+ *                                             if the project isn't in `projectIds`.
+ * @param {string}   [filters.sortBy]        - "newest" (default) | "oldest" |
+ *                                             "quality" | "name". Applied
+ *                                             server-side BEFORE the LIMIT/OFFSET
+ *                                             so a global sort can span pages —
+ *                                             a client-side sort over the
+ *                                             current page would only reorder
+ *                                             the rows already in hand.
+ */
+export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}) {
   if (!projectIds || projectIds.length === 0) {
     const { page: p, pageSize: ps } = parsePagination(page, pageSize);
     return { data: [], meta: { total: 0, page: p, pageSize: ps, hasMore: false } };
   }
+
+  // Honour the optional `projectId` filter — but only if it falls inside the
+  // ACL-scoped set. Never let the param widen scope beyond `projectIds`.
+  let scopedIds = projectIds;
+  if (filters.projectId && projectIds.includes(filters.projectId)) {
+    scopedIds = [filters.projectId];
+  }
+
   const db = getDatabase();
   const { page: p, pageSize: ps, offset } = parsePagination(page, pageSize);
-  const placeholders = projectIds.map(() => "?").join(", ");
+  const placeholders = scopedIds.map(() => "?").join(", ");
+
+  const conditions = [`projectId IN (${placeholders})`, "deletedAt IS NULL"];
+  const params = [...scopedIds];
+
+  if (filters.reviewStatus) {
+    conditions.push("reviewStatus = ?");
+    params.push(filters.reviewStatus);
+  }
+  if (filters.category === "api") {
+    conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
+  } else if (filters.category === "ui") {
+    conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    // Journeys are an orthogonal axis to api/ui (a journey is always a UI test
+    // today, but the column is reserved for future cross-cutting types).
+    // Backed by the `isJourneyTest` boolean column — `1` after testToRow's
+    // boolean→int coercion, so the comparison stays a literal `= 1`.
+    conditions.push("isJourneyTest = 1");
+  }
+  if (filters.stale) {
+    conditions.push("isStale = 1");
+  }
+  if (filters.search) {
+    conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
+    const like = `%${filters.search}%`;
+    params.push(like, like);
+  }
+
+  const where = conditions.join(" AND ");
+  // Resolve sortBy to a fixed ORDER BY clause. The mapping is hardcoded
+  // (no string interpolation of caller input) so this can never be a SQL
+  // injection vector even though SQLite doesn't bind ORDER BY values.
+  // `qualityScore IS NULL` ordering puts un-scored tests last when sorting
+  // by quality desc — without it NULLs would float to the top in SQLite.
+  // Guard against inherited prototype keys (`__proto__`, `constructor`,
+  // `toString`, …) — a plain `SORT_BY_CLAUSES[key] || …` lookup would return
+  // truthy values from `Object.prototype` for those keys and bypass the
+  // fallback, producing invalid SQL like `ORDER BY [object Object]`.
+  // `Object.hasOwn` keeps the whitelist limited to declared own keys.
+  const orderBy = Object.hasOwn(SORT_BY_CLAUSES, filters.sortBy)
+    ? SORT_BY_CLAUSES[filters.sortBy]
+    : SORT_BY_CLAUSES.newest;
   const total = db.prepare(
-    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
-  ).get(...projectIds).cnt;
+    `SELECT COUNT(*) as cnt FROM tests WHERE ${where}`
+  ).get(...params).cnt;
   const data = db.prepare(
-    `SELECT * FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`
-  ).all(...projectIds, ps, offset).map(rowToTest);
+    `SELECT * FROM tests WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`
+  ).all(...params, ps, offset).map(rowToTest);
   return { data, meta: { total, page: p, pageSize: ps, hasMore: offset + data.length < total } };
 }
+
+// Whitelist of allowed ORDER BY clauses. Keys are the public `sortBy` values
+// the API exposes; values are the literal SQL fragment substituted into the
+// query. Adding a new sort = add an entry here. Never interpolate caller
+// input directly — even without bind support for ORDER BY this stays safe.
+const SORT_BY_CLAUSES = {
+  newest:  "createdAt DESC",
+  oldest:  "createdAt ASC",
+  quality: "qualityScore IS NULL, qualityScore DESC, createdAt DESC",
+  name:    "LOWER(name) ASC, createdAt DESC",
+};
 
 /**
  * Get non-deleted tests for a specific project.
@@ -195,7 +354,9 @@ export function getByProjectId(projectId) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @param {Object}        [filters]
  * @param {string}        [filters.reviewStatus] — "draft", "approved", "rejected", or undefined for all.
- * @param {string}        [filters.category]     — "api", "ui", or undefined for all.
+ * @param {string}        [filters.category]     — "api", "ui", "journey", or undefined for all.
+ *                                                  ("journey" matches `isJourneyTest = 1` —
+ *                                                  orthogonal to api/ui.)
  * @param {string}        [filters.search]       — free-text search against name and sourceUrl.
  * @returns {PagedResult}
  */
@@ -214,6 +375,8 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
   } else if (filters.category === "ui") {
     conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    conditions.push("isJourneyTest = 1");
   }
   if (filters.stale) {
     conditions.push("isStale = 1");

@@ -51,7 +51,7 @@ The NEXT.md / ROADMAP.md / `docs/changelog.md` update dance after every shipped 
 
 ---
 
-## ⏭ Queue (next 3 PRs after current)
+## ⏭ Queue (next 4 PRs after current)
 
 ### 2 · AUTO-017.3 + PROC-001 (bundled)
 **Effort:** S (S + XS) | **Priority:** 🔵 Medium | **Dependencies:** AUTO-017.3 needs MET-001 (shipped in Current PR — `<TrendChart>` available); PROC-001 has none | **Source:** ROADMAP.md Phase 4 + `docs/roadmap-gaps-pr8.md` § PROC-001
@@ -86,7 +86,58 @@ Every generated test currently requires manual approval (`reviewStatus: 'draft'`
 - With a threshold set, tests above the score are persisted as `approved` and an activity-log entry is written attributing the approval to the auto-approver pseudo-user.
 - The Tests page exposes a "Auto-approved" filter so reviewers can audit the bypass path without trawling activities.
 
-### 4 · AUTO-002 — Change detection / diff-aware crawling
+### 4 · AUTO-003b — Auto-approval provenance & audit trail
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-003 (item 3 — adds `confidenceScore` + `autoApproveThreshold`) | **Source:** ROADMAP.md Phase 4 follow-up to AUTO-003
+
+> **Why this is a separate PR from AUTO-003:** AUTO-003 ships the *mechanism* (auto-approve above threshold). This item ships the *trust contract* — provenance, revoke, and audit surfaces. Bundling them risks the agent stopping at "auto-approval works" and skipping the UX that makes it safe to ship. Without this PR, the first bad auto-approval collapses trust in the whole system.
+
+Every approved test must answer three questions at a glance: **who** approved it (human vs `auto-approver`), **why** (reviewer judgment vs score X above threshold Y), and **can I revoke it** (one-click back to draft). All three must be scannable at table density — never hover-only.
+
+**Core principle — the single non-negotiable affordance:** a **Revoke to draft** button on every auto-approved test. Auto-approval is only trustworthy if it is reversible in one click. Every other element (badges, trays, timelines, calibration metrics) is decoration around that one affordance.
+
+#### Data model (combine into the AUTO-003 migration if AUTO-003 hasn't landed yet; otherwise new migration)
+
+```sql
+ALTER TABLE tests ADD COLUMN approvalSource TEXT;     -- 'human' | 'auto' | null
+ALTER TABLE tests ADD COLUMN approvalThreshold REAL;  -- threshold value at decision time
+ALTER TABLE tests ADD COLUMN approvedAt INTEGER;      -- epoch ms
+ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approver'
+```
+
+**Critical:** persist `approvalThreshold` *at decision time*, not just a flag. If the threshold is later raised, the audit can flag historical approvals that would no longer pass.
+
+#### Backend
+
+- Migration adding the four provenance columns above.
+- `backend/src/pipeline/testPersistence.js` — populate provenance on the auto-approval path; write one `activities` row per auto-approval (`userName: "auto-approver"`, `meta: { score, threshold }`). No batching, no exceptions.
+- New `GET /api/v1/projects/:id/approval-stats` — returns counts (human / auto / draft) + 7-day revert rate for the project-settings calibration line.
+- New `POST /api/v1/tests/:id/revoke` — moves an approved test (auto or human) back to `draft`, writes an activity row, clears `approvedAt` / `approvedBy`. Register both routes in `backend/src/middleware/permissions.json`.
+
+#### Frontend
+
+- **`Tests.jsx`** — replace single "Approved" badge with a two-tone badge column: 🤖 `Auto · 0.91` (purple) vs 👤 `Human · alice` (green) vs 📝 `Draft · 0.62` (amber). Add ⚠ overlay on auto-approved rows whose first run failed (the calibration safety-net). Add filter pill row: `All | Human-approved | Auto-approved | Draft`. **Do not** merge auto + human under one green badge.
+- **`Tests.jsx` "Auto-approved" filter** — default sort: lowest confidence first; required column: first-run pass rate; bulk action: "Send back to draft for review".
+- **`ReviewQueue.jsx`** — render a "Last 24h auto-approvals" tray above the draft list when auto-approval is enabled. One-line strip with score chips so reviewers can spot-audit yesterday's auto-batch in 30 seconds.
+- **Test header (likely `RunDetail.jsx` or `TestDetail.jsx`)** — full provenance line + **Revoke to draft** button. Auto: `🤖 Auto-approved · score 0.91 · threshold 0.85 · 2h ago · [Revoke to draft]`. Human: `👤 Approved by @alice · 1d ago · [Revoke to draft]`.
+- **`ProjectDetail.jsx`** — header aggregate: `24 tests · 18 human · 6 auto · 0 drafts`. Do **not** clutter per-run rows.
+- **`Sidebar.jsx`** — second badge alongside draft count: `[3 drafts] [🤖 12 auto today]`. Hiding auto activity from the sidebar makes the system feel idle when it's working.
+- **Project Settings (`ProjectQualityCard` or wherever `autoApproveThreshold` lives post-PR #6)** — show inline calibration line under the threshold input: `Last 7 days: 42 auto-approved, 3 reverted by humans (7%).` Heuristic: <5% → threshold may be too high; 5–10% → healthy; >10% → tighten. First-time enablement guard: one-time modal showing "last 30 generated tests would have been auto-approved at this threshold — sample these before enabling."
+- **Approvals timeline (per project)** — daily groups: `🤖 12 auto-approved (avg score 0.89)` / `👤 @alice approved 3, rejected 1`. Click a batch → expanded list with per-test score, threshold-at-time, and per-test revoke action. Compliance bar: "who approved this test?" must be one click away six months later.
+
+**Files:** new migration `0NN_test_approval_provenance.sql` · `backend/src/pipeline/testPersistence.js` · new `backend/src/routes/approvalStats.js` (or extend `routes/projects.js`) · `backend/src/routes/tests.js` (revoke endpoint) · `backend/src/middleware/permissions.json` · `frontend/src/api.js` (`getApprovalStats`, `revokeApproval`) · `frontend/src/pages/Tests.jsx` · `frontend/src/pages/ReviewQueue.jsx` · `frontend/src/pages/ProjectDetail.jsx` · `frontend/src/components/layout/Sidebar.jsx` · `frontend/src/pages/RunDetail.jsx` (or `TestDetail.jsx`) · `frontend/src/components/automation/ProjectQualityCard.jsx` (calibration line + first-time-enable modal) · new `frontend/src/pages/ApprovalsTimeline.jsx` · `backend/tests/auto-approval.test.js` (extend) · `frontend/tests/approval-provenance.test.jsx`
+
+**Acceptance criteria:**
+- Every auto-approval writes an `activities` row with `userName: "auto-approver"`, score, and threshold-at-time.
+- The four provenance columns are populated on every approval (auto and human); `approvalThreshold` reflects the value *at decision time*, not the current project setting.
+- `Tests.jsx` visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft in the table without hover.
+- Auto-approved tests with a failed first run surface a ⚠ icon in `Tests.jsx` and the auto-approved filter view.
+- `POST /tests/:id/revoke` returns the test to `draft` for both auto- and human-approved tests, and writes an activity row.
+- Sidebar shows `🤖 N auto today` alongside the draft count when N > 0.
+- First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting the setting.
+
+**Anti-patterns to reject in review:** merging auto + human under one "Approved" badge · provenance only on hover · silent first-enable with no preview · skipping the activity row · shipping without the Revoke button · hiding the auto-count from the sidebar.
+
+### 5 · AUTO-002 — Change detection / diff-aware crawling
 **Effort:** L | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** `ROADMAP.md` Phase 4 (AUTO-002)
 
 Sentri re-crawls the entire site on every run. An autonomous system should detect what changed since the last crawl (new pages, modified DOM, removed elements) and only regenerate tests for affected pages. `backend/src/pipeline/crawlBrowser.js` has no concept of a previous crawl baseline today — this is the difference between "run everything nightly" and "test only what changed," and it's a hard prerequisite for AUTO-004 (test impact analysis from git diff) and the smarter slice of AUTO-001 (risk-based ordering).

@@ -18,21 +18,25 @@
  */
 
 import React, {
-  useState, useCallback, useMemo, useEffect, useRef,
+  useState, useMemo, useEffect, useRef,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  CheckCircle2, XCircle, ChevronRight, ChevronLeft,
+  CheckCircle2, XCircle, ArrowLeft, RotateCcw,
   Search, X, Loader2, ExternalLink, Copy,
-  ThumbsUp, ThumbsDown, AlertCircle, MoreHorizontal,
+  ThumbsUp, ThumbsDown, AlertCircle, Trash2,
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
-import { queryClient, projectDataQueryKeys } from "../queryClient.js";
+import useReviewQueueQuery, { useReviewQueueCounts, invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
 import usePageTitle from "../hooks/usePageTitle.js";
+import { useAuth } from "../context/AuthContext.jsx";
+import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
+import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
+import ModalShell from "../components/shared/ModalShell.jsx";
 import highlightCode from "../utils/highlightCode.js";
 import "../styles/pages/review-queue.css";
 
@@ -44,49 +48,84 @@ const TABS = [
   { id: "approved", label: "Approved", emptyLabel: "No approved tests" },
 ];
 
+// Sort options. `newest` / `oldest` / `quality` / `name` are server-side
+// (mapped to `SORT_BY_CLAUSES` in `backend/src/database/repositories/testRepo.js`)
+// so they apply BEFORE pagination — the chosen order spans all pages, not
+// just the current one. `project` is intentionally omitted: project names
+// live in the `projects` table and require a JOIN; the cross-project list
+// query is hot-path enough to keep simple, and the existing project-filter
+// dropdown (top-right) covers the "narrow to one project" case directly.
 const SORT_OPTIONS = [
-  { id: "newest",  label: "Newest first" },
-  { id: "oldest",  label: "Oldest first" },
-  { id: "quality", label: "Quality score" },
-  { id: "project", label: "Project" },
+  { id: "newest",  label: "Newest first"   },
+  { id: "oldest",  label: "Oldest first"   },
+  { id: "quality", label: "Quality score"  },
+  { id: "name",    label: "Name (A→Z)"     },
 ];
-
-// ── Relative time ─────────────────────────────────────────────────────────────
-const RELATIVE_UNITS = [
-  { max: 60,       divisor: 1,        unit: "second" },
-  { max: 3600,     divisor: 60,       unit: "minute" },
-  { max: 86400,    divisor: 3600,     unit: "hour"   },
-  { max: 2592000,  divisor: 86400,    unit: "day"    },
-  { max: 31536000, divisor: 2592000,  unit: "month"  },
-  { max: Infinity, divisor: 31536000, unit: "year"   },
-];
-
-function relativeTime(dateStr) {
-  if (!dateStr) return "—";
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
-  if (diff < 10) return "just now";
-  for (const { max, divisor, unit } of RELATIVE_UNITS) {
-    if (diff < max) {
-      const val = Math.floor(diff / divisor);
-      return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-val, unit);
-    }
-  }
-  return "—";
-}
 
 // ── Quality score colour helper ───────────────────────────────────────────────
-function qualityClass(score) {
-  if (score == null) return "";
-  if (score >= 75) return "rq-score--high";
-  if (score >= 50) return "rq-score--medium";
-  return "rq-score--low";
-}
-
 function qualityColor(score) {
   if (score == null) return "var(--text3)";
   if (score >= 75) return "var(--green)";
   if (score >= 50) return "var(--amber)";
   return "var(--red)";
+}
+
+// ── Quality score explainer popover ──────────────────────────────────────────
+// "Why was this drafted?" — surfaces the factor breakdown that produced
+// `qualityScore` (e.g. `+20 URL assertion`, `-30 No assertions`) so reviewers
+// don't have to read the test code to grade it. Backed by the `qualityScoreFactors`
+// JSON column populated by `scoreTestWithFactors()` in the pipeline.
+function QualityScoreChip({ score, factors }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function h(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  if (score == null) return null;
+  const hasFactors = Array.isArray(factors) && factors.length > 0;
+
+  return (
+    <div className="rq-quality-chip-wrap" ref={wrapRef}>
+      <button
+        className="rq-quality-chip"
+        onClick={() => hasFactors && setOpen(v => !v)}
+        disabled={!hasFactors}
+        title={hasFactors ? "Why this score?" : "No factor breakdown available"}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        style={{ color: qualityColor(score) }}
+      >
+        Q:{score}{hasFactors ? " ▾" : ""}
+      </button>
+      {open && hasFactors && (
+        <div className="rq-quality-popover" role="dialog" aria-label="Quality score breakdown">
+          <div className="rq-quality-popover__header">
+            Quality {score} / 100
+          </div>
+          <ul className="rq-quality-popover__list">
+            {factors.map(f => (
+              <li key={f.id} className={`rq-quality-popover__item rq-quality-popover__item--${f.kind}`}>
+                <span className="rq-quality-popover__icon" aria-hidden="true">
+                  {f.kind === "reward" ? "✓" : "✗"}
+                </span>
+                <span className="rq-quality-popover__label">{f.label}</span>
+                <span className="rq-quality-popover__delta">
+                  {f.delta > 0 ? `+${f.delta}` : f.delta} pts
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Inline code viewer with copy ──────────────────────────────────────────────
@@ -112,8 +151,7 @@ function CodeView({ code }) {
       <div className="rq-code-toolbar">
         <span className="rq-code-lang">TypeScript</span>
         <button
-          className="btn btn-ghost btn-xs"
-          style={{ gap: 4, fontSize: "0.7rem" }}
+          className="btn btn-ghost btn-xs rq-code-toolbar__copy"
           onClick={handleCopy}
         >
           {copied ? <CheckCircle2 size={10} color="var(--green)" /> : <Copy size={10} />}
@@ -131,7 +169,7 @@ function CodeView({ code }) {
 // ── Detail sidebar ────────────────────────────────────────────────────────────
 function DetailSidebar({
   test, project, tab, listIdx, listLen,
-  actionLoading, onApprove, onReject, onPrev, onNext, navigate,
+  actionLoading, onApprove, onReject, onRestore, onPrev, onNext, navigate,
 }) {
   const score = test.qualityScore;
 
@@ -141,16 +179,29 @@ function DetailSidebar({
       {score != null && (
         <div className="rq-info-row">
           <div className="rq-info-label">Quality score</div>
-          <div className="rq-quality-row" style={{ marginBottom: 0 }}>
+          <div className="rq-quality-row rq-quality-row--flush">
             <span className="rq-quality-score" style={{ color: qualityColor(score) }}>
               {score}
             </span>
-            <div className="rq-quality-bar">
+            <div
+              className="rq-quality-bar"
+              role="progressbar"
+              aria-valuenow={score}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Quality score"
+            >
               <div
                 className="rq-quality-fill"
                 style={{ width: `${score}%`, background: qualityColor(score) }}
               />
             </div>
+          </div>
+          {/* Click-to-expand factor breakdown — same component used in the
+              list pane so reviewers can audit the score without leaving the
+              detail view. */}
+          <div className="rq-quality-explain">
+            <QualityScoreChip score={score} factors={test.qualityScoreFactors} />
           </div>
         </div>
       )}
@@ -196,8 +247,8 @@ function DetailSidebar({
       {/* Generated */}
       <div className="rq-info-row">
         <div className="rq-info-label">Generated</div>
-        <div className="rq-info-val" style={{ fontSize: "0.75rem" }}>
-          {relativeTime(test.createdAt)}
+        <div className="rq-info-val rq-info-val--sm">
+          {fmtRelativeTimeFull(test.createdAt)}
         </div>
       </div>
 
@@ -209,31 +260,34 @@ function DetailSidebar({
             href={test.sourceUrl}
             target="_blank"
             rel="noreferrer"
-            style={{
-              fontSize: "0.7rem",
-              color: "var(--accent)",
-              fontFamily: "var(--font-mono)",
-              wordBreak: "break-all",
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 3,
-            }}
+            className="rq-source-url"
           >
             {test.sourceUrl.replace(/^https?:\/\/[^/]+/, "") || "/"}
-            <ExternalLink size={9} style={{ flexShrink: 0, marginTop: 2 }} />
+            <ExternalLink size={9} className="rq-source-url__icon" />
           </a>
         </div>
       )}
 
       <hr className="rq-sidebar-divider" />
 
-      {/* Quick decision buttons */}
-      <div className="rq-info-label" style={{ marginBottom: 8 }}>Quick decision</div>
+      {/* Quick decision buttons.
+          The three branches are mutually exclusive by construction:
+          - draft     → Approve + Reject (the standard review decision)
+          - rejected  → Restore to Draft only (sends the test back through
+                        the queue for re-review; deliberately *not* a
+                        direct path to approved, since that would skip
+                        the trust contract the queue exists to enforce)
+          - approved  → Reject only (approving an already-approved test
+                        is a no-op; rejecting it is the only state change
+                        a reviewer might want here)
+          Each branch declares its tab explicitly so adding a fourth tab
+          in the future requires a deliberate decision rather than an
+          accidental fall-through. */}
+      <div className="rq-info-label rq-info-label--gap">Quick decision</div>
       <div className="rq-decision-btns">
-        {tab !== "approved" && (
+        {tab === "draft" && (
           <button
-            className="btn-approve"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn-approve btn-block"
             onClick={() => onApprove(test)}
             disabled={!!actionLoading}
           >
@@ -245,8 +299,7 @@ function DetailSidebar({
         )}
         {tab !== "rejected" && (
           <button
-            className="btn-reject"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn-reject btn-block"
             onClick={() => onReject(test)}
             disabled={!!actionLoading}
           >
@@ -257,21 +310,27 @@ function DetailSidebar({
           </button>
         )}
         {tab === "rejected" && (
+          // Sends the test back to `draft` (not `approved`) so it goes
+          // through the review queue again. Re-approving a rejected test
+          // without re-review would skip the trust contract that the
+          // queue exists to enforce — see AUTO-003b in ROADMAP.md for
+          // the equivalent constraint on auto-approval revocation.
+          // Styled with the ghost variant rather than `btn-approve` so
+          // it doesn't read as "approve" — restore is a re-queue, not a
+          // decision.
           <button
-            className="btn-approve"
-            style={{ width: "100%", justifyContent: "center" }}
-            onClick={() => onApprove(test)}
+            className="btn btn-ghost btn-sm btn-block btn-block--gap"
+            onClick={() => onRestore(test)}
             disabled={!!actionLoading}
           >
-            {actionLoading === `approve-${test.id}`
+            {actionLoading === `restore-${test.id}`
               ? <Loader2 size={12} className="spin" />
-              : <CheckCircle2 size={12} />}
-            Restore to Approved
+              : <RotateCcw size={12} />}
+            Restore to Draft
           </button>
         )}
         <button
-          className="btn btn-ghost btn-sm"
-          style={{ width: "100%", justifyContent: "center", gap: 5 }}
+          className="btn btn-ghost btn-sm btn-block btn-block--gap"
           onClick={() => navigate(`/tests/${test.id}`)}
         >
           Open in Test Detail <ExternalLink size={11} />
@@ -303,20 +362,21 @@ function DetailSidebar({
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+// Tests created within this window are highlighted with a "NEW" badge.
+// Mirrors the threshold previously used by `ProjectDetail.jsx`.
+const NEW_TEST_THRESHOLD_MS = 5 * 60 * 1000;
+
 export default function ReviewQueue() {
   usePageTitle("Review Queue");
   const navigate   = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user: authUser } = useAuth();
+  const canEdit = userHasRole(authUser, "qa_lead");
 
-  const { projects, allTests: allTests, loading } = useProjectData({ fetchRuns: false });
-
-  // Optimistically update the shared tests cache (same pattern as Tests.jsx)
-  const updateTestsCache = useCallback((updater) => {
-    queryClient.setQueriesData(
-      { queryKey: projectDataQueryKeys.tests },
-      (prev) => Array.isArray(prev) ? updater(prev) : prev,
-    );
-  }, []);
+  // Projects list only — tests now flow through the server-paginated
+  // `useReviewQueueQuery` hook, so we no longer fetch every test in the
+  // workspace just to render this page.
+  const { projects, loading: projectsLoading } = useProjectData({ fetchTests: false, fetchRuns: false });
 
   // ── URL-driven state ────────────────────────────────────────────────────────
   const tab       = searchParams.get("tab")       || "draft";
@@ -335,7 +395,70 @@ export default function ReviewQueue() {
   const [actionLoading, setActionLoading] = useState(null);
   const [bulkError,     setBulkError]     = useState(null);
   const [showSortMenu,  setShowSortMenu]  = useState(false);
+  const [page,          setPage]          = useState(1);
+  const PAGE_SIZE = 50;
   const sortMenuRef = useRef(null);
+
+  // Styled confirmation dialog state — replaces native `window.confirm` for
+  // the three destructive paths (reject, delete, bulk approve/reject). Same
+  // shape as Tests.jsx's `bulkConfirm` so the two pages share the mental
+  // model. `kind` discriminates the copy; `payload` carries either the
+  // single test or the array of selected ids. `null` = no modal.
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
+  // Debounced search — `searchDraft` mirrors the input field (immediate
+  // feedback so typing feels responsive), and a 300ms idle timer commits
+  // it to the URL `?q` param, which is what drives `useReviewQueueQuery`'s
+  // server fetch. Without this, every keystroke fired a paginated tests
+  // request to the backend (10 chars typed = 10 round-trips).
+  //
+  // Bi-directional sync: external URL writes (clear button, tab switch
+  // dropping `?q`, deep-link nav) reset `searchDraft` to match the new
+  // committed value so the input doesn't display stale text.
+  const [searchDraft, setSearchDraft] = useState(listSearch);
+  useEffect(() => {
+    if (searchDraft === listSearch) return;
+    const t = setTimeout(() => setListSearch(searchDraft), 300);
+    return () => clearTimeout(t);
+    // `setListSearch` is a stable closure that calls `setSearchParams`;
+    // omitting it from deps avoids re-running the effect when its
+    // identity drifts but the URL itself hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDraft]);
+  useEffect(() => {
+    // External URL change (clear button, tab nav) — sync the input back
+    // so the field matches what the server is filtering on.
+    if (listSearch !== searchDraft) setSearchDraft(listSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listSearch]);
+
+  // Reset to page 1 whenever the filter set changes — otherwise a "page 4"
+  // cursor on the Draft tab would still apply when the user switches to
+  // Approved (which may have <4 pages of items).
+  useEffect(() => { setPage(1); }, [tab, projectId, listSearch, catFilter]);
+
+  // ── Server-paginated tests for the current view ─────────────────────────────
+  // `sortBy` is server-side (see SORT_OPTIONS comment + testRepo's
+  // SORT_BY_CLAUSES whitelist). Changing the sort dropdown invalidates the
+  // query key and re-fetches with the new ORDER BY, so the result spans
+  // every page instead of reordering only the current one.
+  const reviewQuery = useReviewQueueQuery({
+    tab, projectId, search: listSearch, category: catFilter, sortBy, page, pageSize: PAGE_SIZE,
+  });
+  const pageTests = reviewQuery.data;
+  const meta      = reviewQuery.meta;
+
+  // Tab counts — single aggregate query against `GET /tests/counts` returns
+  // Draft + Approved + Rejected in one round-trip. Replaces the previous
+  // three `pageSize: 1` paginated probes which produced three concurrent
+  // requests on every filter / page change. `sortBy` is intentionally
+  // omitted (irrelevant for COUNT — keeps the cache key stable across sort
+  // changes so the badges don't flicker on sort).
+  const counts = useReviewQueueCounts({ projectId, search: listSearch, category: catFilter });
+  const tabCounts    = { draft: counts.draft, rejected: counts.rejected, approved: counts.approved };
+  const approvedCount = counts.approved;
+
+  const loading = projectsLoading || reviewQuery.isLoading;
 
   // Close sort menu on outside click
   useEffect(() => {
@@ -353,64 +476,48 @@ export default function ReviewQueue() {
     [projects],
   );
 
-  // ── Tab counts ──────────────────────────────────────────────────────────────
-  const tabCounts = useMemo(() => ({
-    draft:    allTests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length,
-    rejected: allTests.filter(t => t.reviewStatus === "rejected").length,
-    approved: allTests.filter(t => t.reviewStatus === "approved").length,
-  }), [allTests]);
+  // ── "NEW" badge for recently-created tests ──────────────────────────────────
+  // `now` ticks every 60s so the badge auto-expires without requiring a manual
+  // refresh. Mirrors the tick cadence used by `ProjectDetail.jsx`.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const newTestIds = useMemo(() => {
+    const cutoff = now - NEW_TEST_THRESHOLD_MS;
+    const ids = new Set();
+    for (const t of pageTests) {
+      if (t.createdAt && new Date(t.createdAt).getTime() > cutoff) ids.add(t.id);
+    }
+    return ids;
+  }, [pageTests, now]);
 
-  // ── Filtered + sorted list ──────────────────────────────────────────────────
-  const visibleTests = useMemo(() => {
-    let list = allTests.filter(t => {
-      // Tab filter
-      const matchTab =
-        tab === "draft"    ? (!t.reviewStatus || t.reviewStatus === "draft") :
-        tab === "rejected" ? t.reviewStatus === "rejected" :
-        tab === "approved" ? t.reviewStatus === "approved" : true;
-      if (!matchTab) return false;
+  // Sort is applied server-side via `sortBy` on `useReviewQueueQuery` (see
+  // `SORT_BY_CLAUSES` in `testRepo.js`), so `pageTests` already arrives in
+  // the requested order. Re-sorting client-side here would be redundant at
+  // best, and at worst would mask a server-side ordering mismatch by hiding
+  // it behind a JS comparator.
+  const visibleTests = pageTests;
 
-      // Project filter
-      if (projectId !== "all" && t.projectId !== projectId) return false;
+  // Reset to page 1 whenever sort changes — switching from "newest" to
+  // "quality" with a page-3 cursor would otherwise show the third page of
+  // the new ordering, which is rarely what the user wanted.
+  useEffect(() => { setPage(1); }, [sortBy]);
 
-      // Category filter
-      const isApi = t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
-      if (catFilter === "api" && !isApi) return false;
-      if (catFilter === "web" && isApi) return false;
-      if (catFilter === "journey" && !t.isJourneyTest) return false;
-
-      // Search
-      if (listSearch) {
-        const q = listSearch.toLowerCase();
-        const nameMatch = t.name?.toLowerCase().includes(q);
-        const descMatch = t.description?.toLowerCase().includes(q);
-        const projMatch = projMap[t.projectId]?.name?.toLowerCase().includes(q);
-        if (!nameMatch && !descMatch && !projMatch) return false;
-      }
-
-      return true;
-    });
-
-    // Sort
-    list = [...list].sort((a, b) => {
-      if (sortBy === "oldest")  return new Date(a.createdAt) - new Date(b.createdAt);
-      if (sortBy === "quality") return (b.qualityScore ?? -1) - (a.qualityScore ?? -1);
-      if (sortBy === "project") return (projMap[a.projectId]?.name ?? "").localeCompare(projMap[b.projectId]?.name ?? "");
-      // newest (default)
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-
-    return list;
-  }, [allTests, tab, projectId, catFilter, listSearch, sortBy, projMap]);
+  const totalPages = Math.max(1, Math.ceil(meta.total / PAGE_SIZE));
 
   // Auto-select first item when list changes and nothing is selected
   useEffect(() => {
     if (!activeTestId && visibleTests.length > 0) {
       setActiveTestId(visibleTests[0].id);
     } else if (activeTestId && !visibleTests.find(t => t.id === activeTestId)) {
-      // Active test left the list (e.g. was approved while on draft tab) — advance
-      const idx = visibleTests.indexOf(visibleTests.find(t => t.id === activeTestId));
-      setActiveTestId(visibleTests[Math.max(0, idx)]?.id ?? null);
+      // Active test left the list (e.g. was approved while on draft tab).
+      // The handleApprove/handleReject callbacks already attempt to advance to
+      // the next item before the cache update lands; this is the fallback when
+      // those callbacks aren't responsible for the disappearance (filter
+      // change, refetch from another tab, etc.). Reset to the first item.
+      setActiveTestId(visibleTests[0]?.id ?? null);
     }
   }, [visibleTests, activeTestId]);
 
@@ -422,63 +529,122 @@ export default function ReviewQueue() {
   const activeIdx     = useMemo(() => visibleTests.findIndex(t => t.id === activeTestId), [visibleTests, activeTestId]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
+  // With server-side pagination, optimistic edits to the page array would be
+  // invalidated by the next refetch anyway — and they couldn't keep tab counts
+  // honest since those are separate queries. We instead invalidate the
+  // review-queue cache on settle and let the next render show the truth.
   async function handleApprove(test) {
-    const key = `approve-${test.id}`;
-    setActionLoading(key);
-    // Optimistic update
-    updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: "approved" } : t));
+    setActionLoading(`approve-${test.id}`);
     try {
       await api.approveTest(test.projectId, test.id);
-      invalidateProjectDataCache();
-      // Advance to next item
+      // Advance to next item on the current page before refetch lands.
       const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
-      setActiveTestId(next?.id ?? visibleTests.find(t => t.id !== test.id)?.id ?? null);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
     } catch (err) {
-      // Rollback
-      updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: test.reviewStatus } : t));
       console.error("Approve failed:", err);
+      setBulkError(`Approve failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
     }
   }
 
-  async function handleReject(test) {
-    const key = `reject-${test.id}`;
-    setActionLoading(key);
-    updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: "rejected" } : t));
+  // Reject is destructive — a rejected test has to be manually restored
+  // to draft to come back into the queue, and a misclicked `r` keypress
+  // is otherwise silent. Splits into request → execute so the styled
+  // `<ModalShell>` confirmation can sit between user intent and the API
+  // call. (Approve is intentionally confirmation-free — it's the primary
+  // action and adding friction there would slow the page's main flow.)
+  function handleReject(test) {
+    setConfirmDialog({ kind: "reject", payload: test });
+  }
+
+  async function executeReject(test) {
+    setActionLoading(`reject-${test.id}`);
     try {
       await api.rejectTest(test.projectId, test.id);
-      invalidateProjectDataCache();
       const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
-      setActiveTestId(next?.id ?? visibleTests.find(t => t.id !== test.id)?.id ?? null);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
     } catch (err) {
-      updateTestsCache(prev => prev.map(t => t.id === test.id ? { ...t, reviewStatus: test.reviewStatus } : t));
       console.error("Reject failed:", err);
+      setBulkError(`Reject failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
     } finally {
       setActionLoading(null);
     }
   }
 
-  async function handleBulkAction(action) {
+  async function handleRestore(test) {
+    // Sends the test back to `draft` so it re-enters the review queue.
+    // Mirror of `handleApprove`/`handleReject` — uses the same advance-then-
+    // invalidate dance so the active selection moves to the next visible
+    // test before the refetch lands and the current row leaves the list.
+    setActionLoading(`restore-${test.id}`);
+    try {
+      await api.restoreTest(test.projectId, test.id);
+      const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
+    } catch (err) {
+      console.error("Restore failed:", err);
+      setBulkError(`Restore failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Delete (soft) is destructive but recoverable via the recycle bin in
+  // Settings. Same request/execute split as reject so a single
+  // `<ModalShell>` handles both paths.
+  function handleDelete(test) {
+    setConfirmDialog({ kind: "delete", payload: test });
+  }
+
+  async function executeDelete(test) {
+    setActionLoading(`delete-${test.id}`);
+    try {
+      await api.deleteTest(test.projectId, test.id);
+      // Advance to next item, same pattern as approve/reject.
+      const next = visibleTests.find((t, i) => i > activeIdx && t.id !== test.id);
+      setActiveTestId(next?.id ?? null);
+      invalidateReviewQueueCache();
+      invalidateProjectDataCache();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      setBulkError(`Delete failed: ${err.message}`);
+      setTimeout(() => setBulkError(null), 5000);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Always confirm bulk actions — a misclicked "Approve 47" is the worst
+  // available misclick on this page and there's no per-row visual review
+  // step in the bulk flow. Both approve and reject route through the
+  // styled `<ModalShell>` (unlike single-test approve, which is the
+  // primary one-click flow and stays confirmation-free).
+  function handleBulkAction(action) {
     const ids = Array.from(selected);
     if (!ids.length) return;
+    setConfirmDialog({ kind: action === "approve" ? "bulkApprove" : "bulkReject", payload: ids });
+  }
+
+  async function executeBulkAction(action, ids) {
+    if (!ids?.length) return;
     setBulkError(null);
     setActionLoading(`bulk-${action}`);
 
-    // Capture originals for rollback
-    const originals = {};
-    for (const t of allTests) {
-      if (selected.has(t.id)) originals[t.id] = t.reviewStatus;
-    }
-
-    // Optimistic update
-    const newStatus = action === "approve" ? "approved" : "rejected";
-    updateTestsCache(prev => prev.map(t => selected.has(t.id) ? { ...t, reviewStatus: newStatus } : t));
-
-    // Fire one bulk request per project group (matching Tests.jsx pattern)
+    // Group by project from the *current page* — selection only ever spans
+    // tests that are visible, so we don't need a global test list.
     const byProject = {};
     for (const testId of ids) {
-      const t = allTests.find(x => x.id === testId);
+      const t = pageTests.find(x => x.id === testId);
       if (t) {
         if (!byProject[t.projectId]) byProject[t.projectId] = [];
         byProject[t.projectId].push(testId);
@@ -487,28 +653,17 @@ export default function ReviewQueue() {
 
     const results = await Promise.allSettled(
       Object.entries(byProject).map(([pid, testIds]) =>
-        api.bulkTestAction(pid, testIds, action),
+        api.bulkUpdateTests(pid, testIds, action),
       ),
     );
 
     const failedCount = results.filter(r => r.status === "rejected").length;
     if (failedCount > 0) {
-      // Rollback failed groups
-      const failedProjects = new Set(
-        Object.keys(byProject).filter((_, i) => results[i].status === "rejected"),
-      );
-      const failedIds = new Set(
-        Object.entries(byProject)
-          .filter(([pid]) => failedProjects.has(pid))
-          .flatMap(([, tids]) => tids),
-      );
-      updateTestsCache(prev => prev.map(t =>
-        failedIds.has(t.id) ? { ...t, reviewStatus: originals[t.id] } : t,
-      ));
       setBulkError(`${failedCount} project group${failedCount !== 1 ? "s" : ""} failed to ${action}. Others updated.`);
       setTimeout(() => setBulkError(null), 5000);
     }
 
+    invalidateReviewQueueCache();
     invalidateProjectDataCache();
     setSelected(new Set());
     setActionLoading(null);
@@ -528,11 +683,29 @@ export default function ReviewQueue() {
   }
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  // The handler reads `handleApprove` / `handleReject` via refs so the closure
+  // always sees the latest functions without forcing every render to re-bind
+  // the global `keydown` listener. The `actionLoading` guard prevents rapid
+  // `a`/`r` keypresses from firing concurrent requests for the same test.
+  const handleApproveRef = useRef(handleApprove);
+  const handleRejectRef  = useRef(handleReject);
+  handleApproveRef.current = handleApprove;
+  handleRejectRef.current  = handleReject;
+
   useEffect(() => {
     function handler(e) {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest) handleApprove(activeTest);
-      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest) handleReject(activeTest);
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // Tab-gate approve/reject so the keyboard shortcuts mirror the visible
+      // button predicates (see DetailSidebar's Quick-decision group and the
+      // detail-pane header). Without this guard, pressing `a` on the rejected
+      // tab would directly approve the test — bypassing the "restore to draft
+      // first, then re-review" trust contract the queue exists to enforce.
+      if (e.key === "a" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading && tab === "draft") {
+        handleApproveRef.current(activeTest);
+      }
+      if (e.key === "r" && !e.metaKey && !e.ctrlKey && activeTest && !actionLoading && tab !== "rejected") {
+        handleRejectRef.current(activeTest);
+      }
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
         if (activeIdx < visibleTests.length - 1) setActiveTestId(visibleTests[activeIdx + 1].id);
@@ -545,11 +718,21 @@ export default function ReviewQueue() {
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTest, activeIdx, visibleTests]);
+  }, [activeTest, activeIdx, visibleTests, actionLoading, tab]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // `data-mobile-view` toggles which pane is visible on narrow viewports.
+  // Desktop ignores the attribute (both panes always rendered side-by-side);
+  // mobile CSS reads it to show only the list ("list") or only the detail
+  // ("detail"). Picking a row sets it to "detail"; the back-button in the
+  // detail header sets it to "list".
+  const [mobileView, setMobileView] = useState("list");
+  useEffect(() => {
+    if (activeTestId) setMobileView("detail");
+  }, [activeTestId]);
+
   return (
-    <div className="rq-page">
+    <div className="rq-page" data-mobile-view={mobileView}>
 
       {/* ── Header ── */}
       <div className="rq-header">
@@ -564,10 +747,9 @@ export default function ReviewQueue() {
         <div className="rq-header__controls">
           {/* Project filter */}
           <select
-            className="input"
+            className="input rq-header-select"
             value={projectId}
             onChange={e => setProjectId(e.target.value)}
-            style={{ height: 32, fontSize: "0.78rem", padding: "0 28px 0 10px", minWidth: 140 }}
           >
             <option value="all">All projects</option>
             {projects.map(p => (
@@ -577,19 +759,27 @@ export default function ReviewQueue() {
         </div>
       </div>
 
-      {/* ── Tab bar ── */}
-      <div className="rq-tabs">
+      {/* ── Tab bar ──
+          WAI-ARIA authoring practices: tablist + tab + aria-selected +
+          aria-controls. The body panes below carry matching `id` + `role="tabpanel"`
+          so screen readers announce the relationship. */}
+      <div className="rq-tabs" role="tablist" aria-label="Review status">
         {TABS.map(t => (
           <button
             key={t.id}
+            role="tab"
+            id={`rq-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls={`rq-tabpanel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             className={`rq-tab ${tab === t.id ? "rq-tab--active" : ""}`}
             onClick={() => setTab(t.id)}
           >
             {t.label}
-            <span className={`badge ${
+            <span className={`badge rq-tab__badge ${
               t.id === "draft"    ? "badge-amber" :
               t.id === "rejected" ? "badge-red"   : "badge-green"
-            }`} style={{ marginLeft: 2 }}>
+            }`}>
               {tabCounts[t.id]}
             </span>
           </button>
@@ -598,12 +788,17 @@ export default function ReviewQueue() {
 
       {/* ── Body ── */}
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, gap: 10, color: "var(--text3)" }}>
+        <div className="rq-loading">
           <Loader2 size={18} className="spin" />
-          <span style={{ fontSize: "0.88rem" }}>Loading tests…</span>
+          <span className="rq-loading__text">Loading tests…</span>
         </div>
       ) : (
-        <div className="rq-body">
+        <div
+          className="rq-body"
+          role="tabpanel"
+          id={`rq-tabpanel-${tab}`}
+          aria-labelledby={`rq-tab-${tab}`}
+        >
 
           {/* ── Left: list pane ── */}
           <div className="rq-list-pane">
@@ -611,9 +806,12 @@ export default function ReviewQueue() {
             {/* List header with sort */}
             <div className="rq-list-pane__header">
               <span className="rq-list-pane__count">
-                {visibleTests.length} test{visibleTests.length !== 1 ? "s" : ""}
+                {meta.total === 0
+                  ? "0 tests"
+                  : `${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + visibleTests.length} of ${meta.total}`}
+                {reviewQuery.isFetching && !reviewQuery.isLoading && " · refreshing…"}
               </span>
-              <div style={{ position: "relative" }} ref={sortMenuRef}>
+              <div className="rq-sort-menu-wrap" ref={sortMenuRef}>
                 <button
                   className="rq-list-pane__sort"
                   onClick={() => setShowSortMenu(v => !v)}
@@ -621,22 +819,11 @@ export default function ReviewQueue() {
                   {SORT_OPTIONS.find(s => s.id === sortBy)?.label} ▾
                 </button>
                 {showSortMenu && (
-                  <div style={{
-                    position: "absolute", right: 0, top: "100%", zIndex: 30,
-                    background: "var(--surface)", border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)", padding: "4px 0",
-                    boxShadow: "var(--shadow)", minWidth: 130,
-                  }}>
+                  <div className="rq-sort-menu">
                     {SORT_OPTIONS.map(opt => (
                       <button
                         key={opt.id}
-                        style={{
-                          display: "block", width: "100%", padding: "6px 12px",
-                          textAlign: "left", border: "none", background: "none",
-                          fontSize: "0.78rem", cursor: "pointer",
-                          color: sortBy === opt.id ? "var(--accent)" : "var(--text2)",
-                          fontFamily: "var(--font-sans)",
-                        }}
+                        className={`rq-sort-menu__item ${sortBy === opt.id ? "rq-sort-menu__item--active" : ""}`}
                         onClick={() => { setSortBy(opt.id); setShowSortMenu(false); }}
                       >
                         {opt.label}
@@ -653,13 +840,14 @@ export default function ReviewQueue() {
               <input
                 className="rq-list-search__input"
                 placeholder="Search tests…"
-                value={listSearch}
-                onChange={e => setListSearch(e.target.value)}
+                value={searchDraft}
+                onChange={e => setSearchDraft(e.target.value)}
               />
-              {listSearch && (
+              {searchDraft && (
                 <button
-                  style={{ position: "absolute", right: 18, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--text3)", display: "flex" }}
-                  onClick={() => setListSearch("")}
+                  className="rq-list-search__clear"
+                  onClick={() => { setSearchDraft(""); setListSearch(""); }}
+                  aria-label="Clear search"
                 >
                   <X size={11} />
                 </button>
@@ -684,48 +872,94 @@ export default function ReviewQueue() {
               ))}
             </div>
 
-            {/* Select-all when items exist */}
+            {/* Select-all when items exist — real <label> + <input> so the
+                checkbox is in the tab order, screen-reader announced, and
+                togglable via Space per native semantics. */}
             {visibleTests.length > 0 && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 12px", borderBottom: "1px solid var(--border)",
-                background: "var(--bg2)", flexShrink: 0,
-              }}>
-                <div
-                  className={`rq-item__check ${selected.size === visibleTests.length && visibleTests.length > 0 ? "rq-item__check--checked" : ""}`}
-                  onClick={toggleAll}
-                  style={{ cursor: "pointer" }}
-                >
-                  {selected.size === visibleTests.length && visibleTests.length > 0 && (
-                    <CheckCircle2 size={9} color="#fff" />
-                  )}
-                </div>
-                <span style={{ fontSize: "0.7rem", color: "var(--text3)" }}>
+              <label className="rq-select-all">
+                <input
+                  type="checkbox"
+                  className="rq-item__check rq-select-all__check"
+                  checked={selected.size === visibleTests.length && visibleTests.length > 0}
+                  onChange={toggleAll}
+                  aria-label={selected.size === visibleTests.length ? "Deselect all tests" : "Select all tests"}
+                />
+                <span className="rq-select-all__label">
                   {selected.size === visibleTests.length ? "Deselect all" : "Select all"}
                 </span>
-              </div>
+              </label>
             )}
 
             {/* Test rows */}
             <div className="rq-list">
               {visibleTests.length === 0 ? (
-                <div className="rq-empty" style={{ paddingTop: 32 }}>
-                  <div className="rq-empty__icon">✓</div>
-                  <div className="rq-empty__title">
-                    {listSearch || catFilter !== "all" ? "No matches" : TABS.find(t2 => t2.id === tab)?.emptyLabel}
-                  </div>
-                  <div className="rq-empty__desc">
-                    {listSearch
-                      ? `No tests match "${listSearch}"`
-                      : tab === "draft"
-                        ? "All tests have been reviewed — great work!"
+                // Three empty-state branches:
+                //   1. search/filter active → "No matches" (don't coach; the
+                //      user is looking for something specific).
+                //   2. draft tab + nothing pending → inbox-zero coaching:
+                //      surface what to do next (generate more / audit
+                //      approvals) instead of just celebrating.
+                //   3. other tabs (rejected/approved) when empty → minimal
+                //      message, no coaching needed.
+                listSearch || catFilter !== "all" ? (
+                  <div className="rq-empty rq-empty--list">
+                    <div className="rq-empty__icon">✓</div>
+                    <div className="rq-empty__title">No matches</div>
+                    <div className="rq-empty__desc">
+                      {listSearch
+                        ? `No tests match "${listSearch}"`
                         : "No tests in this category."}
+                    </div>
                   </div>
-                </div>
+                ) : tab === "draft" ? (
+                  <div className="rq-empty rq-empty--list rq-empty--coach" role="status">
+                    <CheckCircle2 size={32} color="var(--green)" aria-hidden="true" />
+                    <div className="rq-empty__title">Inbox zero</div>
+                    <div className="rq-empty__desc">
+                      All drafts have been reviewed — nice work.
+                    </div>
+                    {/* Approved-this-week stat is not yet a backend endpoint
+                        (`GET /api/v1/review-queue/stats`); we derive the count
+                        from the approved-tab total query that's already in
+                        flight, which is "all-time" rather than 7-day. The
+                        copy avoids the "this week" framing until we ship the
+                        time-windowed endpoint. */}
+                    {approvedCount > 0 && (
+                      <div className="rq-empty__stats">
+                        {approvedCount} test{approvedCount !== 1 ? "s" : ""} approved in this workspace
+                      </div>
+                    )}
+                    <div className="rq-empty__actions">
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => navigate(projectId !== "all" ? `/projects/${projectId}/test-lab` : "/test-lab")}
+                      >
+                        Generate more tests →
+                      </button>
+                      {approvedCount > 0 && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setTab("approved")}
+                        >
+                          Audit recent approvals
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rq-empty rq-empty--list">
+                    <div className="rq-empty__icon">✓</div>
+                    <div className="rq-empty__title">
+                      {TABS.find(t2 => t2.id === tab)?.emptyLabel}
+                    </div>
+                    <div className="rq-empty__desc">No tests in this category.</div>
+                  </div>
+                )
               ) : (
                 visibleTests.map(t => {
                   const isActive   = t.id === activeTestId;
                   const isSelected = selected.has(t.id);
+                  const isNew      = newTestIds.has(t.id);
                   const proj       = projMap[t.projectId];
                   const score      = t.qualityScore;
                   const isApi      = t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
@@ -733,72 +967,149 @@ export default function ReviewQueue() {
                   return (
                     <div
                       key={t.id}
-                      className={`rq-item ${isActive ? "rq-item--active" : ""}`}
+                      className={`rq-item ${isActive ? "rq-item--active" : ""} ${isNew ? "rq-item--new" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isActive}
+                      aria-label={`${cleanTestName(t.name)}${isActive ? ", currently selected" : ""}`}
                       onClick={() => setActiveTestId(t.id)}
+                      onKeyDown={e => {
+                        // Enter / Space activate the row, matching the native
+                        // <button> contract that `role="button"` inherits.
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveTestId(t.id);
+                        }
+                      }}
                     >
-                      {/* Checkbox */}
-                      <div
-                        className={`rq-item__check ${isSelected ? "rq-item__check--checked" : ""}`}
-                        onClick={e => { e.stopPropagation(); toggleItem(t.id); }}
-                      >
-                        {isSelected && <CheckCircle2 size={9} color="#fff" />}
-                      </div>
+                      {/* Real checkbox — in the tab order so keyboard users
+                          can multi-select independently of row activation.
+                          `onClick` with stopPropagation prevents a click on
+                          the checkbox from also triggering the row-level
+                          `setActiveTestId`. */}
+                      <input
+                        type="checkbox"
+                        className="rq-item__check"
+                        checked={isSelected}
+                        onChange={() => toggleItem(t.id)}
+                        onClick={e => e.stopPropagation()}
+                        aria-label={`Select ${cleanTestName(t.name)}`}
+                      />
 
                       <div className="rq-item__body">
-                        <div className="rq-item__name">{cleanTestName(t.name)}</div>
+                        <div className="rq-item__name">
+                          {cleanTestName(t.name)}
+                          {isNew && <span className="rq-new-badge">NEW</span>}
+                        </div>
                         <div className="rq-item__meta">
                           {isApi
-                            ? <span className="badge badge-blue" style={{ fontSize: "0.62rem" }}>API</span>
+                            ? <span className="badge badge-blue badge--xs">API</span>
                             : t.isJourneyTest
-                              ? <span className="badge badge-amber" style={{ fontSize: "0.62rem" }}>Journey</span>
-                              : <span className="badge badge-gray" style={{ fontSize: "0.62rem" }}>Web</span>}
+                              ? <span className="badge badge-amber badge--xs">Journey</span>
+                              : <span className="badge badge-gray badge--xs">Web</span>}
                           {proj && (
-                            <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>
+                            <span className="rq-item__meta-text">
                               {proj.name}
                             </span>
                           )}
-                          <span style={{ fontSize: "0.68rem", color: "var(--text3)" }}>
+                          <span className="rq-item__meta-text">
                             · {(t.steps ?? []).length} steps
                           </span>
                           {score != null && (
-                            <span className={`rq-item__score ${qualityClass(score)}`}>
-                              Q:{score}
+                            <span
+                              className="rq-item__score"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <QualityScoreChip score={score} factors={t.qualityScoreFactors} />
                             </span>
                           )}
                         </div>
                       </div>
+
+                      {/* Per-row delete (qa_lead+). Soft-deletes — the test
+                          lands in the recycle bin and can be restored from
+                          Settings. Stops propagation so it doesn't also
+                          select the row. */}
+                      {canEdit && (
+                        <button
+                          className="rq-item__delete"
+                          onClick={e => { e.stopPropagation(); handleDelete(t); }}
+                          disabled={actionLoading === `delete-${t.id}`}
+                          title="Delete (move to recycle bin)"
+                          aria-label={`Delete ${cleanTestName(t.name)}`}
+                        >
+                          {actionLoading === `delete-${t.id}`
+                            ? <Loader2 size={11} className="spin" />
+                            : <Trash2 size={11} />}
+                        </button>
+                      )}
                     </div>
                   );
                 })
               )}
             </div>
 
-            {/* Bulk action bar */}
+            {/* Pager — only visible when more than one page exists. */}
+            {totalPages > 1 && (
+              <div className="rq-pager">
+                <button
+                  className="rq-pager__btn"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1 || reviewQuery.isFetching}
+                >
+                  ← Prev
+                </button>
+                <span className="rq-pager__pos">
+                  Page {page} / {totalPages}
+                </span>
+                <button
+                  className="rq-pager__btn"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || reviewQuery.isFetching}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+
+            {/* Bulk action bar — tab-gated to mirror the single-test decision
+                contract (see DetailSidebar's Quick-decision group):
+                  - draft     → Approve + Reject
+                  - approved  → Reject only (re-approving is a no-op)
+                  - rejected  → neither (approving rejected tests directly would
+                                bypass the "restore to draft → re-review" trust
+                                contract the queue exists to enforce; bulk
+                                restore-to-draft isn't wired up, so the bulk
+                                bar on the rejected tab offers only Clear). */}
             {selected.size > 0 && (
               <div className="rq-bulk-bar">
                 <span className="rq-bulk-bar__label">
                   {selected.size} selected
                 </span>
-                <button
-                  className="btn-approve"
-                  disabled={!!actionLoading}
-                  onClick={() => handleBulkAction("approve")}
-                >
-                  {actionLoading === "bulk-approve"
-                    ? <Loader2 size={11} className="spin" />
-                    : <ThumbsUp size={11} />}
-                  Approve {selected.size}
-                </button>
-                <button
-                  className="btn-reject"
-                  disabled={!!actionLoading}
-                  onClick={() => handleBulkAction("reject")}
-                >
-                  {actionLoading === "bulk-reject"
-                    ? <Loader2 size={11} className="spin" />
-                    : <ThumbsDown size={11} />}
-                  Reject {selected.size}
-                </button>
+                {tab === "draft" && (
+                  <button
+                    className="btn-approve"
+                    disabled={!!actionLoading}
+                    onClick={() => handleBulkAction("approve")}
+                  >
+                    {actionLoading === "bulk-approve"
+                      ? <Loader2 size={11} className="spin" />
+                      : <ThumbsUp size={11} />}
+                    Approve {selected.size}
+                  </button>
+                )}
+                {tab !== "rejected" && (
+                  <button
+                    className="btn-reject"
+                    disabled={!!actionLoading}
+                    onClick={() => handleBulkAction("reject")}
+                  >
+                    {actionLoading === "bulk-reject"
+                      ? <Loader2 size={11} className="spin" />
+                      : <ThumbsDown size={11} />}
+                    Reject {selected.size}
+                  </button>
+                )}
                 <button
                   className="btn btn-ghost btn-xs"
                   onClick={() => setSelected(new Set())}
@@ -813,17 +1124,13 @@ export default function ReviewQueue() {
 
             {/* Bulk error feedback */}
             {bulkError && (
-              <div style={{
-                padding: "8px 12px", background: "var(--amber-bg)",
-                borderTop: "1px solid var(--border)",
-                display: "flex", alignItems: "center", gap: 6,
-                fontSize: "0.75rem", color: "var(--amber)", flexShrink: 0,
-              }}>
+              <div className="rq-bulk-error" role="alert">
                 <AlertCircle size={12} />
-                <span style={{ flex: 1 }}>{bulkError}</span>
+                <span className="rq-bulk-error__msg">{bulkError}</span>
                 <button
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--amber)" }}
+                  className="rq-bulk-error__close"
                   onClick={() => setBulkError(null)}
+                  aria-label="Dismiss error"
                 >
                   <X size={11} />
                 </button>
@@ -845,11 +1152,31 @@ export default function ReviewQueue() {
               <>
                 {/* Detail header */}
                 <div className="rq-detail-pane__header">
+                  {/* Mobile-only back-to-list button. The `.rq-back-to-list`
+                      class is `display: none` above 640px and `display: flex`
+                      below, so it never shows on desktop where the list is
+                      always visible. */}
+                  <button
+                    className="rq-back-to-list"
+                    onClick={() => setMobileView("list")}
+                    aria-label="Back to test list"
+                    title="Back to test list"
+                  >
+                    <ArrowLeft size={14} />
+                  </button>
                   <div className="rq-detail-pane__title">
                     {cleanTestName(activeTest.name)}
                   </div>
                   <div className="rq-detail-pane__actions">
-                    {tab !== "approved" && (
+                    {/* Header decision buttons — same tab contract as the
+                        sidebar's Quick-decision group: draft shows
+                        Approve+Reject, rejected shows Restore-to-Draft only,
+                        approved shows Reject only. The earlier `tab !== "approved"`
+                        guard let a rejected test be re-approved without
+                        re-review (skipping the trust contract the queue
+                        exists to enforce); now `tab === "draft"` matches
+                        the sidebar's tightened predicate. */}
+                    {tab === "draft" && (
                       <button
                         className="btn-approve"
                         onClick={() => handleApprove(activeTest)}
@@ -871,6 +1198,18 @@ export default function ReviewQueue() {
                           ? <Loader2 size={12} className="spin" />
                           : <XCircle size={12} />}
                         Reject
+                      </button>
+                    )}
+                    {tab === "rejected" && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handleRestore(activeTest)}
+                        disabled={!!actionLoading}
+                      >
+                        {actionLoading === `restore-${activeTest.id}`
+                          ? <Loader2 size={12} className="spin" />
+                          : <RotateCcw size={12} />}
+                        Restore to Draft
                       </button>
                     )}
                     <button
@@ -899,7 +1238,7 @@ export default function ReviewQueue() {
                     {activeTest.description && (
                       <div>
                         <div className="rq-section-label">Description</div>
-                        <p style={{ fontSize: "0.85rem", color: "var(--text2)", lineHeight: 1.65, margin: 0 }}>
+                        <p className="rq-description">
                           {activeTest.description}
                         </p>
                       </div>
@@ -932,10 +1271,7 @@ export default function ReviewQueue() {
 
                     {/* Empty steps state */}
                     {!activeTest.playwrightCode && (activeTest.steps ?? []).length === 0 && (
-                      <div style={{
-                        padding: "32px 0", textAlign: "center",
-                        color: "var(--text3)", fontSize: "0.85rem",
-                      }}>
+                      <div className="rq-empty-inline">
                         No steps or code available for this test.
                       </div>
                     )}
@@ -951,6 +1287,7 @@ export default function ReviewQueue() {
                     actionLoading={actionLoading}
                     onApprove={handleApprove}
                     onReject={handleReject}
+                    onRestore={handleRestore}
                     onPrev={() => activeIdx > 0 && setActiveTestId(visibleTests[activeIdx - 1].id)}
                     onNext={() => activeIdx < visibleTests.length - 1 && setActiveTestId(visibleTests[activeIdx + 1].id)}
                     navigate={navigate}
@@ -965,10 +1302,8 @@ export default function ReviewQueue() {
                     ["j / ↓", "next"],
                     ["k / ↑", "prev"],
                   ].map(([key, label]) => (
-                    <span key={key} style={{ marginRight: 10 }}>
-                      <kbd style={{ padding: "1px 5px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, fontFamily: "var(--font-mono)", fontSize: "0.65rem" }}>
-                        {key}
-                      </kbd>
+                    <span key={key} className="rq-kbd-hints__group">
+                      <kbd>{key}</kbd>
                       {" "}{label}
                     </span>
                   ))}
@@ -978,6 +1313,67 @@ export default function ReviewQueue() {
           </div>
         </div>
       )}
+
+      {/* Confirmation modal for the three destructive paths (single
+          reject, single delete, bulk approve, bulk reject). Replaces the
+          previous `window.confirm` to match the styled pattern Tests.jsx
+          and the old ProjectDetail review tab used. The `kind` switch
+          carries the per-action copy and styling (danger vs primary). */}
+      {confirmDialog && (() => {
+        const { kind, payload } = confirmDialog;
+        // Per-kind copy + execute handler. Centralised here so the
+        // closing-the-modal-then-firing-the-action dance only happens
+        // in one place — every branch dismisses the modal before kicking
+        // off the async work, so a network failure can't leave the
+        // modal stuck open.
+        const config =
+          kind === "reject" ? {
+            title: "Reject test?",
+            body: <>Reject <strong>{cleanTestName(payload.name)}</strong>? You can restore it to Draft from the Rejected tab.</>,
+            confirmLabel: "Reject test",
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeReject(payload),
+          } :
+          kind === "delete" ? {
+            title: "Delete test?",
+            body: <>Delete <strong>{cleanTestName(payload.name)}</strong>? It will move to the recycle bin and can be restored from Settings.</>,
+            confirmLabel: "Delete test",
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeDelete(payload),
+          } :
+          kind === "bulkApprove" ? {
+            title: `Approve ${payload.length} test${payload.length !== 1 ? "s" : ""}?`,
+            body: <>You're about to approve <strong>{payload.length} test{payload.length !== 1 ? "s" : ""}</strong> across all selected projects. They'll move to the regression suite.</>,
+            confirmLabel: `Approve ${payload.length}`,
+            confirmClass: "btn btn-primary btn-sm",
+            run: () => executeBulkAction("approve", payload),
+          } :
+          kind === "bulkReject" ? {
+            title: `Reject ${payload.length} test${payload.length !== 1 ? "s" : ""}?`,
+            body: <>You're about to reject <strong>{payload.length} test{payload.length !== 1 ? "s" : ""}</strong>. You can restore them to Draft from the Rejected tab.</>,
+            confirmLabel: `Reject ${payload.length}`,
+            confirmClass: "btn btn-danger btn-sm",
+            run: () => executeBulkAction("reject", payload),
+          } : null;
+        if (!config) return null;
+        return (
+          <ModalShell onClose={() => setConfirmDialog(null)} width="min(420px, 95vw)" style={{ padding: "28px 32px" }}>
+            <div className="rq-confirm__title">{config.title}</div>
+            <div className="rq-confirm__body">{config.body}</div>
+            <div className="rq-confirm__actions">
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDialog(null)}>
+                Cancel
+              </button>
+              <button
+                className={config.confirmClass}
+                onClick={() => { setConfirmDialog(null); config.run(); }}
+              >
+                {config.confirmLabel}
+              </button>
+            </div>
+          </ModalShell>
+        );
+      })()}
     </div>
   );
 }

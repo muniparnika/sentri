@@ -588,6 +588,91 @@ test("semantic layer: similar vocabulary, different sourceUrl → both retained"
   assert.equal(unique.length, 2, "Semantically similar tests on different pages should both be retained");
 });
 
+// ── 7. scoreTestWithFactors — rubric breakdown ────────────────────────────────
+//
+// `scoreTestWithFactors` is the source-of-truth scoring function — `scoreTest`
+// is a thin wrapper that returns only the numeric score. These tests lock down
+// (a) the contract between the two functions, (b) the factor-array shape that
+// the API exposes via `qualityScoreFactors`, and (c) the stable factor IDs
+// (since they're persisted per-test and shipped to the frontend).
+
+import { scoreTestWithFactors } from "../src/pipeline/deduplicator.js";
+
+console.log("\n🧾  scoreTestWithFactors — factor breakdown contract");
+
+test("returns { score, factors } shape", () => {
+  const result = scoreTestWithFactors(FULL_TEST);
+  assert.ok(typeof result.score === "number");
+  assert.ok(Array.isArray(result.factors));
+});
+
+test("score matches scoreTest() for the same input", () => {
+  // The two functions share QUALITY_FACTORS — scoreTest() wraps
+  // scoreTestWithFactors(). They must never drift.
+  for (const t of [FULL_TEST, MINIMAL_TEST, { playwrightCode: "", steps: [] }]) {
+    assert.equal(scoreTestWithFactors(t).score, scoreTest(t),
+      `Scores must match for ${JSON.stringify(t).slice(0, 60)}…`);
+  }
+});
+
+test("each factor has stable id, label, delta, kind", () => {
+  const { factors } = scoreTestWithFactors(FULL_TEST);
+  assert.ok(factors.length > 0, "FULL_TEST should hit at least one factor");
+  for (const f of factors) {
+    assert.equal(typeof f.id, "string");
+    assert.equal(typeof f.label, "string");
+    assert.equal(typeof f.delta, "number");
+    assert.ok(f.kind === "reward" || f.kind === "penalty",
+      `kind must be "reward" or "penalty", got ${f.kind}`);
+  }
+});
+
+test("sum of factor deltas equals the raw (un-clamped) score", () => {
+  // Pick a test we know stays inside the 0–100 clamp so the assertion is exact.
+  const t = {
+    name: "Mid-range scoring test fixture",
+    playwrightCode: "await page.goto('/x');\nawait expect(page).toHaveURL('/x');",
+    steps: ["s"],
+    priority: "medium",
+    type: "functional",
+  };
+  const { score, factors } = scoreTestWithFactors(t);
+  const sum = factors.reduce((a, f) => a + f.delta, 0);
+  assert.equal(score, Math.max(0, Math.min(100, sum)));
+});
+
+test("rewards and penalties are partitioned by `kind`", () => {
+  const noAssertions = scoreTestWithFactors({
+    playwrightCode: "await page.goto('/x');", steps: ["s"],
+  });
+  const noneFactor = noAssertions.factors.find(f => f.id === "assert.none");
+  assert.ok(noneFactor, "Missing-assertion test should hit assert.none");
+  assert.equal(noneFactor.kind, "penalty");
+  assert.ok(noneFactor.delta < 0, "Penalty deltas must be negative");
+});
+
+test("factor IDs are stable — known IDs are present in output", () => {
+  // Frontend keys factor rows by `id`, and the column persists historical
+  // breakdowns. If an ID is renamed, old data renders as "Unknown factor".
+  const { factors } = scoreTestWithFactors({
+    name: "Rich test with many signals",
+    playwrightCode: [
+      "await expect(page).toHaveURL('/x');",
+      "await expect(page.getByRole('button')).toBeVisible();",
+      "await page.getByLabel('Email').fill('a@b');",
+    ].join("\n"),
+    steps: ["s"],
+    priority: "high",
+    type: "e2e",
+  });
+  const ids = new Set(factors.map(f => f.id));
+  for (const expected of ["assert.url", "assert.visible", "assert.multiple",
+                          "name.descriptive", "priority.high", "type.high-value",
+                          "selector.semantic"]) {
+    assert.ok(ids.has(expected), `Expected factor id "${expected}" to fire`);
+  }
+});
+
 // ── Results ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${"─".repeat(50)}`);

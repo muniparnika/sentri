@@ -42,8 +42,8 @@ Items are grouped into three **tiers** by fixture cost. Stay within one tier per
 
 ### Tier 2 — seeded fixtures (medium; introduce shared `tests/e2e/utils/fixtures.mjs` first)
 
-9. **Tests review — approve / reject + ReviewModal** (`QA.md` §7 step 13–15) → new `tests/e2e/specs/tests-review-ui.spec.mjs`: seed Draft tests via API, then drive the Tests page filter pills + bulk-approve toolbar via `getByRole('button', { name: /approve/i })`. **UI-only.**
-10. **Tests — bulk approve / reject + keyboard shortcuts** (`QA.md` §🧪 Tests Page · §☑️ Bulk actions) → new `tests/e2e/specs/tests-bulk-ui.spec.mjs`: seed 5 Draft tests → checkbox-select → bulk action toolbar → assert status flips. Cover `/`, `a`, `r`, `Esc` keyboard shortcuts as a second test. **UI-only.**
+9. **Review Queue — approve / reject + restore drafts** (`QA.md` §📥 Review Queue, §7 step 13–15) → new `tests/e2e/specs/review-queue-ui.spec.mjs`: seed Draft tests via API, then drive `/review-queue` Draft tab → row click → Approve button (and `a` shortcut) → assert row leaves the list and tab badge ticks down. Reject shows the styled `<ModalShell>` confirmation; switch to Rejected tab and Restore-to-Draft puts it back. The legacy `ReviewModal` was deleted in PR #7 — drive the dedicated Review Queue page, not the Tests page. **UI-only.**
+10. **Tests page — bulk delete + keyboard shortcuts** (`QA.md` §🧪 Tests Page · §☑️ Bulk actions) → new `tests/e2e/specs/tests-bulk-ui.spec.mjs`: seed 5 Draft tests → checkbox-select → bulk **Delete** action toolbar (Tests page now keeps delete only — bulk approve/reject moved to Review Queue in PR #7) → confirmation modal on ≥ 2 selected → assert row removal. Cover `/` (focus search) and `Esc` (clear selection); `a`/`r` are no-ops on this page (covered in `review-queue-ui.spec.mjs` instead). **UI-only.**
 11. **Permissions — viewer 403 / outsider 403** (`QA.md` §20 steps 50-51) → new `tests/e2e/specs/permissions-ui.spec.mjs`: seed second user as `viewer` → log in → assert role-gated buttons hidden / 403 toast on click. Outsider URL → redirect or 403 page. **UI-only.**
 12. **Recycle Bin — restore + purge** (`QA.md` §18 steps 46-47) → new `tests/e2e/specs/recycle-bin-ui.spec.mjs`: seed soft-deleted project → Settings → Recycle Bin → restore returns it to `/projects`; purge removes permanently. **UI-only.**
 13. **Audit Log — filter by user** (`QA.md` §🧾 Audit Log) → new `tests/e2e/specs/audit-log-ui.spec.mjs`: seed activity rows for two users → Settings → Audit Log → filter by user → assert only that user's rows render. **UI-only.**
@@ -70,11 +70,11 @@ Items are grouped into three **tiers** by fixture cost. Stay within one tier per
 | Sec 1, steps 1-3 | Auth — wrong-password rejection | UI: `ui-smoke.spec.mjs` :: *invalid credentials show an error state* · scaffolding: `api-auth.spec.mjs` :: *login negative path with bad password* | ✅ |
 | Sec 2, step 4 | Workspace — invite collaborator | — | 🟥 (UI: Settings → Members invite form + accept-link incognito flow) |
 | Sec 3, step 5 | Project — create | UI: `project-create-ui.spec.mjs` :: *verified user can create a project via the form and see it in the list* · scaffolding: `full-functional-api.spec.mjs` :: *verify account, login, project+test CRUD happy path* | ✅ |
-| Sec 4, step 6 | Crawl — link mode | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: ProjectDetail → CrawlProjectModal → live progress → completed badge) |
-| Sec 4, step 7 | Crawl — state exploration | — | 🟥 (UI: CrawlProjectModal mode selector + state-explorer progress) |
-| Sec 5, steps 8-9 | Generate — AI test draft creation | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: Tests page → GenerateTestModal → Draft test row appears) |
-| Sec 6, steps 10-12 | Recorder — start/stop session | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: Tests page → RecorderModal → forward canvas events → Stop & Save → Draft test) |
-| Sec 7, steps 13-15 | Review — approve / reject test | UI: — · scaffolding: `functional-areas.spec.mjs` :: *project tests workflow: create, approve/reject/restore, export, run* | 🟥 (UI: Tests page filter pills + bulk approve toolbar + ReviewModal) |
+| Sec 4, step 6 | Crawl — link mode | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: Tests page "Test Lab" quick-action card → `/projects/:id/test-lab?tab=crawl` → Link Crawl mode → Start → live SSE pipeline → completed badge. The legacy `CrawlProjectModal` was deleted in PR #5 — crawl config now lives in the Test Lab page.) |
+| Sec 4, step 7 | Crawl — state exploration | — | 🟥 (UI: Test Lab `?tab=crawl` → State Exploration mode picker → live state-explorer progress in the SSE pipeline view.) |
+| Sec 5, steps 8-9 | Generate — AI test draft creation | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: Tests page "Test Lab" quick-action card → `/projects/:id/test-lab?tab=requirement` → fill requirement → Start → Draft test row appears in `/review-queue` and `/tests`. The legacy `GenerateTestModal` was deleted in PR #5.) |
+| Sec 6, steps 10-12 | Recorder — start/stop session | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: Test Lab topbar red "Record a test" CTA → `RecorderModal` → forward canvas events → Stop & Save → Draft test. Tests page no longer has its own Record button — recorder consolidated into Test Lab in PR #5.) |
+| Sec 7, steps 13-15 | Review — approve / reject test | UI: — · scaffolding: `functional-areas.spec.mjs` :: *project tests workflow: create, approve/reject/restore, export, run* | 🟥 (UI: Tests page "Review Drafts" quick-action card → `/review-queue` → Draft tab → row Approve/Reject + bulk-bar + `a`/`r` keyboard shortcuts. The legacy `ReviewModal` was deleted in PR #7 — review now happens on the dedicated Review Queue page.) |
 | Sec 8, steps 16-19 | Edit — Steps ↔ Source diff/preview | — | 🟥 (UI: TestDetail Steps↔Source toggle + diff modal + accept/discard) |
 | Sec 9, steps 20-22 | Run — execute regression | — | 🟥 (UI: RunRegressionModal → live RunDetail SSE log + per-test status badges) |
 | Sec 10, steps 23-26 | AI Fix — manual flow | UI: — · scaffolding: `functional-areas.spec.mjs` :: *crawl + generate + recorder + ai-fix/chat endpoint contracts* | 🟥 (UI: TestDetail "Fix with AI" → SSE stream renders → Accept → re-approve) |
@@ -101,7 +101,8 @@ Per-feature happy paths that aren't part of the Golden journey. Can ship indepen
 | 🔐 Authentication | Login rate-limit (429 after 5–10/15min) | 🟥 |
 | 👥 Workspaces | Switch workspace | 🟥 |
 | 📁 Projects | Edit project (`PATCH /projects/:id`, ENH-036) | 🟥 (UI: pencil-icon → `/projects/new?edit=<id>` form pre-filled, save round-trip) |
-| 🧪 Tests Page | Bulk approve / reject | 🟥 (UI: Tests page checkbox-select + bulk action toolbar) |
+| 🧪 Tests Page | Bulk delete (approve/reject moved to Review Queue in PR #7) | 🟥 (UI: Tests page checkbox-select + bulk Delete toolbar; ≥ 2 selected triggers confirmation modal) |
+| 📥 Review Queue | Approve / Reject / Restore + bulk + keyboard shortcuts (PR #7) | 🟥 (UI: `/review-queue` Draft/Approved/Rejected tabs, sort/search/category chips, `a`/`r`/`j`/`k` shortcuts, bulk-bar with `<ModalShell>` confirm, factor-breakdown popover) |
 | 🎥 Recorder | Captured action vocabulary (click/dblclick/etc.) | 🟥 |
 | ▶️ Runs | Cross-browser (Firefox/WebKit) — DIF-002 | ✅ (UI-runner — `.github/workflows/cross-browser.yml` launches each engine) |
 | 🪄 AI Fix | SSE stream consumption | 🟥 |
@@ -121,7 +122,7 @@ Per-feature happy paths that aren't part of the Golden journey. Can ship indepen
 | 📑 Reports / PDF | Dashboard PDF export | 🟥 |
 | 🆕 New Project page | SSRF block on private URLs | 🟥 |
 | 📋 Runs list | Filter by status / project | 🟥 |
-| ☑️ Bulk actions | Keyboard shortcuts (`/`, `a`, `r`, `Esc`) | 🟥 (UI-only) |
+| ☑️ Bulk actions | Keyboard shortcuts — Tests page: `/`, `Esc` only (PR #7 removed `a`/`r` here); Review Queue: `a`/`r`/`j`/`k`/`Esc` | 🟥 (UI-only — split across `tests-bulk-ui.spec.mjs` for Tests page and `review-queue-ui.spec.mjs` for Review Queue) |
 | 🪟 Modals | Each modal open / close / submit | 🟥 (UI-only) |
 | 📤 API imports | OpenAPI / HAR / `METHOD /path` | 🟥 |
 | 🚀 Onboarding tour | First-login flow | 🟥 (UI-only) |

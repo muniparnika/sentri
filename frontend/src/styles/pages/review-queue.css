@@ -128,6 +128,39 @@
   padding: 2px 4px;
 }
 
+/* Sort menu — anchored to `.rq-list-pane__sort` via a relative wrapper. */
+.rq-sort-menu-wrap { position: relative; }
+
+.rq-sort-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  min-width: 130px;
+  margin-top: 2px;
+  padding: 4px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.rq-sort-menu__item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+.rq-sort-menu__item:hover { background: var(--bg2); }
+.rq-sort-menu__item--active { color: var(--accent); }
+
 /* Search within list */
 .rq-list-search {
   padding: 7px 10px;
@@ -159,6 +192,22 @@
 }
 
 .rq-list-search__input:focus { border-color: var(--accent); }
+
+/* Clear-search button — appears when the search input has a value. */
+.rq-list-search__clear {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3);
+  padding: 0;
+}
+
+.rq-list-search__clear:hover { color: var(--text); }
 
 /* Category filter chips */
 .rq-filter-chips {
@@ -206,30 +255,79 @@
 .rq-item:last-child { border-bottom: none; }
 .rq-item:hover { background: var(--bg2); }
 
+/* Keyboard focus outline for the row. Rows are `role="button"` + `tabIndex=0`
+   so the native outline would otherwise be suppressed by :focus-visible
+   defaults on non-interactive elements. Uses the accent-bg tint to match
+   the active-row styling below without fully selecting the row on focus. */
+.rq-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .rq-item--active {
   background: var(--accent-bg);
   border-left-color: var(--accent);
 }
 
-/* Checkbox */
-.rq-item__check {
-  width: 15px;
-  height: 15px;
+/* Recently-created test highlight — fades back to the default row background
+   once the 5-minute window expires (the `--new` class is removed). */
+.rq-item--new:not(.rq-item--active) {
+  background: rgba(34, 197, 94, 0.06);
+}
+
+/* "NEW" pill rendered next to the test name in `.rq-item__name`. */
+.rq-new-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
   border-radius: 4px;
-  border: 1px solid var(--border2);
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+
+/* Per-row delete button — only rendered for qa_lead+. Stays hidden until the
+   row is hovered or active so it doesn't compete visually with the test name
+   on idle rows. */
+.rq-item__delete {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  margin-top: 2px;
-  background: var(--surface);
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text3);
   cursor: pointer;
-  transition: all 0.1s;
+  opacity: 0;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
 }
+.rq-item:hover .rq-item__delete,
+.rq-item--active .rq-item__delete,
+.rq-item__delete:focus-visible { opacity: 1; }
+.rq-item__delete:hover:not(:disabled) {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.rq-item__delete:disabled { opacity: 1; cursor: default; }
 
-.rq-item__check--checked {
-  background: var(--accent);
-  border-color: var(--accent);
+/* Checkbox — now a real `<input type="checkbox">` for a11y (keyboard focus,
+   screen-reader announcement, Space toggle). `accent-color` tints the native
+   tick + fill to match the app's accent hue without needing a custom SVG.
+   Supported in every evergreen browser since 2022. Sizing matches the
+   previous custom control so the layout is unchanged. */
+.rq-item__check {
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .rq-item__body { flex: 1; min-width: 0; }
@@ -256,15 +354,140 @@
 }
 
 .rq-item__score {
+  display: inline-flex;
   font-size: 0.68rem;
   font-family: var(--font-mono);
   font-weight: 600;
 }
 
-/* Quality score colour helpers */
-.rq-score--high   { color: var(--green); }
-.rq-score--medium { color: var(--amber); }
-.rq-score--low    { color: var(--red); }
+/* ── Quality score chip + factor-breakdown popover ──────────────────────────── */
+/* Anchors the popover via a relative wrapper so the absolute popover positions
+   relative to the chip rather than escaping into the parent flex row. */
+.rq-quality-chip-wrap { position: relative; display: inline-flex; }
+
+/* The clickable chip itself — colour comes from `qualityColor()` inline so
+   the value-driven hue stays out of CSS. */
+.rq-quality-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.rq-quality-chip:hover:not(:disabled) { background: var(--bg2); }
+.rq-quality-chip:disabled { cursor: default; }
+
+/* Popover anchored to the chip; pinned width so a long factor list doesn't
+   stretch the row above. z-index sits above the list pane so it can overflow
+   the rq-item border. */
+.rq-quality-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: 280px;
+  padding: 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--font-sans);
+}
+
+.rq-quality-popover__header {
+  padding: 0 12px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.rq-quality-popover__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.rq-quality-popover__item {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 0.74rem;
+}
+
+.rq-quality-popover__icon {
+  font-weight: 700;
+  text-align: center;
+}
+
+.rq-quality-popover__item--reward .rq-quality-popover__icon  { color: var(--green); }
+.rq-quality-popover__item--penalty .rq-quality-popover__icon { color: var(--red); }
+
+.rq-quality-popover__label {
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-quality-popover__delta {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+.rq-quality-popover__item--reward .rq-quality-popover__delta  { color: var(--green); }
+.rq-quality-popover__item--penalty .rq-quality-popover__delta { color: var(--red); }
+
+/* Right-pane explainer slot — sits below the quality bar in DetailSidebar. */
+.rq-quality-explain {
+  margin-top: 6px;
+}
+
+/* ── Pager (server-side pagination footer) ──────────────────────────────────── */
+.rq-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+
+.rq-pager__btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--text2);
+  font-family: var(--font-sans);
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.rq-pager__btn:hover:not(:disabled) { color: var(--accent); background: var(--surface); }
+.rq-pager__btn:disabled { opacity: 0.35; cursor: default; }
+
+.rq-pager__pos {
+  font-size: 0.7rem;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
 
 /* ── Bulk action bar (bottom of list pane) ────────────────────────────────────── */
 .rq-bulk-bar {
@@ -547,6 +770,34 @@
 .rq-empty__title { font-weight: 700; font-size: 0.95rem; color: var(--text2); margin-bottom: 6px; }
 .rq-empty__desc { font-size: 0.82rem; line-height: 1.6; max-width: 300px; }
 
+/* Inbox-zero coaching variant (Draft tab only). Renders an icon (not the
+   default `__icon` glyph), a title, a description, an optional stats line,
+   and a primary/secondary action pair. */
+.rq-empty--coach .rq-empty__title {
+  margin-top: 14px;          /* space below the lucide icon */
+  color: var(--text);        /* stronger than the default `--text2` */
+  font-size: 1rem;
+}
+
+.rq-empty__stats {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-empty__actions {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 220px;
+}
+
 /* ── Approve / Reject action buttons ─────────────────────────────────────────── */
 .btn-approve {
   display: inline-flex;
@@ -595,15 +846,216 @@
   flex-shrink: 0;
 }
 
+.rq-kbd-hints__group { margin-right: 10px; }
+
+/* ── Misc utilities used by ReviewQueue.jsx — kept here so the page stays
+   class-driven per AGENT.md ("do not write equivalent inline styles"). ── */
+
+/* Header project filter — undersized variant of `.input` to fit the
+   compact header row alongside `.rq-header__title`. */
+.rq-header-select {
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
+  min-width: 140px;
+}
+
+/* Tab badge spacing — the count chip after each tab label. */
+.rq-tab__badge { margin-left: 2px; }
+
+/* Page-level loading state, shown while `useProjectData` resolves. */
+.rq-loading {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+}
+.rq-loading__text { font-size: 0.88rem; }
+
+/* Code-toolbar Copy button override (compact gap + smaller text). */
+.rq-code-toolbar__copy {
+  gap: 4px;
+  font-size: 0.7rem;
+}
+
+/* Select-all row above the test list. */
+.rq-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+.rq-select-all__check { cursor: pointer; }
+.rq-select-all__label {
+  font-size: 0.7rem;
+  color: var(--text3);
+}
+
+/* Empty list state — overrides the default `.rq-empty` top padding when
+   the empty state is shown inside the scrolling list pane. */
+.rq-empty--list { padding-top: 32px; }
+
+/* Compact tag inside `.rq-item__meta`. */
+.badge--xs { font-size: 0.62rem; }
+
+/* Project / steps text in `.rq-item__meta`. */
+.rq-item__meta-text {
+  font-size: 0.68rem;
+  color: var(--text3);
+}
+
+/* Bulk error banner pinned above the bulk-action bar. */
+.rq-bulk-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--amber-bg);
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+.rq-bulk-error__msg { flex: 1; }
+.rq-bulk-error__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--amber);
+  padding: 0;
+  display: flex;
+}
+
+/* Description paragraph in the detail pane. */
+.rq-description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text2);
+  line-height: 1.65;
+}
+
+/* Inline empty state for tests with no steps or code. */
+.rq-empty-inline {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text3);
+  font-size: 0.85rem;
+}
+
+/* Styled confirmation modal — used by `<ModalShell>`-wrapped reject/
+   delete/bulk-approve/bulk-reject prompts. Layout mirrors the inline
+   styles Tests.jsx uses on the same `<ModalShell>` so the two pages
+   look identical when prompting the user. */
+.rq-confirm__title {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.rq-confirm__body {
+  font-size: 0.875rem;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.rq-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* DetailSidebar overrides — sibling-modifier classes for `.rq-info-row`
+   children when extra top padding / smaller font is required. */
+.rq-quality-row--flush { margin-bottom: 0; }
+.rq-info-val--sm { font-size: 0.75rem; }
+.rq-info-label--gap { margin-bottom: 8px; }
+
+/* Source URL anchor in DetailSidebar. */
+.rq-source-url {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--accent);
+  word-break: break-all;
+}
+.rq-source-url__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Full-width decision buttons in the detail sidebar. */
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+.btn-block--gap { gap: 5px; }
+
+
+.rq-kbd-hints kbd {
+  padding: 1px 5px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+/* ── Mobile-only back-to-list button (desktop hides it) ─────────────────────── */
+/* Hidden on desktop where the list pane is always visible; shown below 640px
+   so the user can return from the detail view to the list without using the
+   browser back button (which would also lose the active selection). */
+.rq-back-to-list {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.rq-back-to-list:hover { background: var(--bg2); color: var(--text); }
+
 /* ── Responsive ───────────────────────────────────────────────────────────────── */
+/* 900–640px: keep both panes in view but drop the right-rail metadata sidebar
+   so the main detail (steps, code) gets the full width. */
 @media (max-width: 900px) {
   .rq-body { grid-template-columns: 260px 1fr; }
   .rq-detail-inner { grid-template-columns: 1fr; }
   .rq-detail-sidebar { display: none; }
 }
 
+/* < 640px: single-pane mobile layout. Instead of hiding the list pane and
+   leaving the user stranded on the detail view, both panes render but the
+   `.rq-page[data-mobile-view]` attribute decides which one is visible.
+   `.rq-back-to-list` flips the attribute back to "list". */
 @media (max-width: 640px) {
   .rq-body { grid-template-columns: 1fr; }
-  .rq-list-pane { display: none; }
-  .rq-list-pane--mobile-open { display: flex; position: absolute; z-index: 50; width: 280px; height: 100%; box-shadow: var(--shadow); }
+
+  /* Hide both by default; the attribute selectors below show one. */
+  .rq-page[data-mobile-view="list"] .rq-detail-pane,
+  .rq-page[data-mobile-view="detail"] .rq-list-pane {
+    display: none;
+  }
+  .rq-page[data-mobile-view="list"] .rq-list-pane,
+  .rq-page[data-mobile-view="detail"] .rq-detail-pane {
+    display: flex;
+  }
+
+  /* Reveal the back button when the detail pane is the active mobile view. */
+  .rq-page[data-mobile-view="detail"] .rq-back-to-list {
+    display: inline-flex;
+  }
 }
