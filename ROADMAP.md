@@ -642,11 +642,11 @@ The following items have been verified complete against the codebase and are **n
 
 **Fix:** Add a "Record a test" mode that opens the target URL in a Playwright browser served via CDP screencast (the live view infrastructure already exists). Capture user interactions (clicks, fills, navigations) as raw Playwright actions. On stop, run the captured actions through the existing assertion enhancement pipeline (Stage 6) and self-healing transform (`applyHealingTransforms`). Save as a draft test with the recorded code.
 
-**Files to change:**
-- New `backend/src/runner/recorder.js` — Playwright `page.on('action')` capture + CDP session management
-- `backend/src/routes/runs.js` — `POST /api/projects/:id/record` endpoint to start/stop recording
-- `frontend/src/components/run/RecorderModal.jsx` — live browser view with record/stop controls
-- `frontend/src/pages/Tests.jsx` — "Record a test" button alongside existing Crawl and Generate
+**Files changed (historical scope as shipped):**
+- `backend/src/runner/recorder.js` — Playwright capture + CDP session management
+- `backend/src/routes/tests.js` — `POST /api/v1/projects/:id/record` start, `/stop`, `/input`, `/assertion` endpoints (note: recorder routes live on `tests.js`, not `runs.js` — earlier roadmap text predates that move)
+- `frontend/src/components/run/RecorderModal.jsx` — live browser view with record/stop controls (still the active modal — consumed by `frontend/src/pages/TestLab.jsx`'s topbar Record CTA after PR #5 consolidated the recorder launch into Test Lab)
+- ~~`frontend/src/pages/Tests.jsx` — "Record a test" button~~ — superseded by Test Lab. PR #5 removed the Tests-page Record button; PR #7 added the Test Lab quick-action card on Tests so the entry point now flows Tests → Test Lab → topbar Record CTA → RecorderModal.
 
 **Dependencies:** None (reuses existing CDP screencast and self-healing transform infrastructure)
 
