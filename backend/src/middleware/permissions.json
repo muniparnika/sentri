@@ -213,8 +213,7 @@
     "GET /api/v1/recycle-bin",
     "GET /api/v1/auth/export",
     "DELETE /api/v1/auth/account",
-    "POST /api/v1/chat",
-    "GET /api/v1/healing/summary"
+    "POST /api/v1/chat"
   ],
   "outOfScope": {
     "$comment": "Endpoints / flows present in code but not yet shipped end-to-end. Do NOT manually QA \u2014 file enhancement requests instead.",

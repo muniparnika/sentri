@@ -73,6 +73,8 @@ const files = [
   "tests/quality-gates.test.js",
   "tests/trace-viewer-static.test.js",
   "tests/run-compare.test.js",
+  "tests/metric-samples.test.js",
+  "tests/healing-summary.test.js",
 ];
 
 let passed = 0;
