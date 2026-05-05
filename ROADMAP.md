@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `CAP-004 + MET-001 + PROC-002` (bundled) — self-healing telemetry dashboard + shared time-series metrics + sprint-tracker hand-off automation (promoted per `NEXT.md` rotation after `CAP-003` shipped in PR #12) · **Blockers:** none remaining (`INF-006` ✅ shipped in PR #1 — hosted-deploy persistence blueprint + ephemeral-storage warning) · **Remaining:** 24 items (CAP-003 ✅ shipped in PR #12 — secret scanner gate on AI-generated Playwright tests; UI-REFACTOR-001 ✅ shipped in PR #6 — `ConfigurablePanel` abstraction + Automation page tabs + status-chip cache; combined recorder PR `DIF-015b Gap 3` + `DIF-015c Gap 1` ✅ shipped in PR #11 — iframe `frameLocator` emission, shadow-DOM via Playwright's InjectedScript, paste-as-single-`fill`, opt-in `shortcutCaptureBudget`; AUTO-019 ✅ shipped in PR #10; DIF-005 ✅ shipped in PR #9; AUTO-017 ✅ shipped in PR #8; DIF-015b Gap 2 ✅ shipped in PR #4; AUTO-012 ✅ shipped in PR #2; INF-006 ✅ shipped in PR #1; ENH-036 + ENH-036b ✅ shipped in PR #127; AUTO-016b ✅ shipped in PR #127; DIF-007 ✅ shipped in PR #123; MNT-006 ✅ shipped in PR #122)
+> **Current sprint:** `AUTO-017.3 + PROC-001 + PROC-003` (bundled) — Web Vitals trend chart + no-orphan-routes CI guard + ROADMAP auto-prune on promotion (promoted per `NEXT.md` rotation after `CAP-004 + MET-001 + PROC-002` shipped in PR #8) · **Blockers:** none remaining · **Remaining:** ~35 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: CAP-004 + MET-001 + PROC-002 ✅ PR #8 (self-healing dashboard + time-series metric primitive + sprint-tracker hand-off script); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8; DIF-015b Gap 2 ✅ PR #4.
 
 ---
 
@@ -122,13 +122,18 @@ The following items have been verified complete against the codebase and are **n
 | Phase | Scope | Status                                                                                                                                                                                | Est. Duration |
 |-------|-------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|
 | Phase 1 — Production Hardening | Security, reliability, data integrity | ✅ Complete                                                                                                                                                                            | — |
-| Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | 🔄 In progress — `INF-006` ✅ shipped in PR #1 (Render blueprint + ephemeral-storage warning); `ENH-036` ✅ shipped in PR #127 (project credential edit + auto-login in ENH-036b); `SEC-004` deferred     | 8–10 weeks |
+| Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | ✅ Mostly complete — SEC-001/002/003, INF-001/002/003/004/005/006, ACL-001/002, FEA-001/002/003, ENH-036 + ENH-036b all ✅; only SEC-004 (MFA) + SEC-005 (SSO) remain, both deferred until enterprise demand | 8–10 weeks |
 | Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔄 In progress — most differentiators shipped (DIF-001/002/002b/003/004/005/006/007/011/013/014/015/016 ✅ — DIF-005 embedded trace viewer shipped in PR #9); remaining: DIF-008–010, DIF-012, DIF-015b/c sub-items, INT-002 | 10–12 weeks |
-| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/017/019 ✅ (AUTO-016b UI shipped in PR #1; AUTO-012 full backend + UI + CI consumer docs shipped in PR #2; AUTO-017 Web Vitals budgets shipped in PR #8; AUTO-019 per-test run diffing shipped in PR #10); remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018, CAP-001 (data-driven testing), CAP-002 (test sharding)                                | 14–18 weeks |
+| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/016b/017/019 ✅; remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018, AUTO-020/021 · Capabilities row (CAP-001 data-driven, CAP-002 sharding) tracked separately in Summary | 14–18 weeks |
 | Ongoing — Maintenance & Platform Health | Healing AI, DX, exports, accessibility | 🔄 Continuous                                                                                                                                                                         | — |
 
 ---
 
+## Phase 2 — Team & Enterprise Foundation
+
+*Goal: Multi-user, secure, and durable enough for team deployment (5–50 users). Phase 2 is largely complete — only the two deferred enterprise-auth items remain.*
+
+---
 
 ### SEC-004 — MFA (TOTP / passkey) support 🔵 Medium
 
@@ -464,6 +469,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 - `frontend/src/components/run/StepResultsView.jsx` — per-iteration sub-table
 
 **Dependencies:** None. Plays well with DIF-010 (multi-auth profiles) — a fixture row can override `credentials` so one test runs as `admin` then as `viewer` in successive iterations.
+**See also:** MNT-004 (fixtures) — fixtures handle environment setup/teardown before a test; CAP-001 handles repeated execution with varying inputs. They are complementary. This item supersedes the earlier `AUTO-022 — Data-driven test parameterisation` entry (removed in the PR #8 cleanup pass; the CAP-001 schema is more concrete).
 
 ---
 
@@ -745,26 +751,6 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 ---
 
-### AUTO-022 — Data-driven test parameterisation 🔵 Medium
-
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Competitive (BearQ, Mabl)
-
-**Problem:** There is no way to run the same test with multiple input data sets. Testing login with 10 different user/password combinations, or a search with 20 different queries, requires creating 10 or 20 separate tests. BearQ and Mabl both support data-driven parameterisation natively. MNT-004 (fixtures) covers setup/teardown but not repeated execution with varying inputs.
-
-**Fix:** Add an optional `testData: [{ key: value, … }, …]` array on tests. When present, `testRunner.js` executes the test once per data row, injecting the row's values as variables accessible via `testData.key` in the Playwright code. Report per-row pass/fail in the run results. Add a "Test Data" tab in `TestDetail.jsx` for managing rows.
-
-**Files to change:**
-- `backend/src/testRunner.js` — iterate over `testData` rows per test
-- `backend/src/runner/codeExecutor.js` — inject `testData` variables into execution context
-- `backend/src/database/migrations/` — add `testData` JSON column to `tests`
-- `frontend/src/pages/TestDetail.jsx` — Test Data tab with row editor
-- `frontend/src/pages/RunDetail.jsx` — per-row result breakdown
-
-**Dependencies:** None
-**See also:** MNT-004 (fixtures) — fixtures handle environment setup/teardown; parameterisation handles input variation. They are complementary.
-
----
-
 ## Ongoing Maintenance & Platform Health
 
 *These items are not phase-bounded. Address them incrementally alongside feature work, prioritising MNT-006 (object storage) before any cloud deployment.*
@@ -901,9 +887,9 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 **Sentri's unique strengths:** Self-hosted + AI generation + human review queue + multi-provider LLM + standalone Playwright export (✅ DIF-006). No competitor offers all five together. BearQ narrows the AI generation gap but remains SaaS-only with no self-hosted option or LLM provider choice.
 
-**Critical gaps to close next:** AUTO-001 (risk-based test selection) · AUTO-019 (per-test run diffing) · DIF-015b Gap 3 + DIF-015c Gap 1 (recorder iframe/shadow-DOM traversal + paste + opt-in keyboard shortcuts)
+**Critical gaps to close next:** AUTO-017.3 (Web Vitals trend chart — current PR) · AUTO-001 (risk-based test selection) · AUTO-002 (change detection) · AUTO-003 + AUTO-003b (auto-approval + provenance) · INT-002 (GitHub PR check comments)
 
-> **Previous priorities ✅ shipped:** DIF-001 (visual regression, PR #94) · DIF-002 (cross-browser, PR #94) · DIF-015 (recorder, PR #94) · DIF-006 (Playwright export, PR #1) · AUTO-005 (test retry, PR #2) · AUTO-016 backend (axe-core scan + persistence, PR #121).
+> **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · PROC-002 · UI-REFACTOR-001.
 
 ---
 
@@ -915,24 +901,22 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 | Infrastructure | 6 | 6 | 0 | 0 | — |
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 4 | 4 | 0 | 0 | — |
-| Differentiators | 20 | 9 | 0 | 11 | DIF-002c, 005, 006, 007, 008, 009, 010, 012, 013, 015b, 015c |
-| Autonomous Intelligence | 22 | 6 | 0 | 16 | AUTO-001–004, 008–011, 014, 015, 016b, 017–022 |
-| Maintenance | 11 | 4 | 0 | 7 | MNT-001–006, 008 |
-| **Totals** | **70** | **34** | **0** | **36** | |
+| Differentiators | 22 | 15 | 1 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6); AUTO-017.3 + INT-002 in-flight |
+| Autonomous Intelligence | 26 | 9 | 0 | 17 | AUTO-001/002/003/003b/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
+| Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
+| Process automation | 3 | 1 | 2 | 0 | PROC-001 + PROC-003 in current PR |
+| Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
+| **Totals** | **83** | **47** | **3** | **33** | |
 
-**Total tracked items:** 70 across 7 categories — **34 complete** (49%), **0 in progress**, **36 remaining**
+**Total tracked items:** 83 across 9 categories — **47 complete** (57%), **3 in current PR** (AUTO-017.3 + PROC-001 + PROC-003), **33 remaining**
 
-**Blockers (must ship before team deployment):**
+**Blockers (must ship before team deployment):** All resolved. ✅
 
-**All blockers resolved.** ✅
+**Recommended PR order (next after current bundle ships):**
+`AUTO-003` + `AUTO-003b` (auto-approval mechanism + trust contract — they're the last missing piece of the "autonomous" positioning) → `AUTO-002` (change-detection; hard prerequisite for AUTO-001 and AUTO-004) → `AUTO-001` (risk-based test selection — the narrative capstone for Phase 4).
 
-**Recommended PR order (next):**
-`DIF-006` ✅ (Playwright export — biggest lock-in objection handler) → `AUTO-005` ✅ (test retry with flake isolation — complements DIF-004 flaky detection) → `AUTO-016` ✅ backend (accessibility via axe-core, PR #121; UI tracked as `AUTO-016b`) → `MNT-006` (S3 object storage — production prerequisite)
-
-**Lowest effort / highest immediate value (next):**
-AUTO-017 (M — Web Vitals performance budgets) · DIF-005 (M — embedded Playwright trace viewer) · AUTO-019 (M — per-test run diffing) · DIF-015b Gap 3 (M — recorder iframe + shadow-DOM traversal)
-
-> **Previously shipped from this list:** ~~MNT-011 (S)~~ ✅ · ~~AUTO-007 (S)~~ ✅ · ~~DIF-006 (M)~~ ✅ (PR #1) · ~~AUTO-005 (M)~~ ✅ (PR #2) · ~~DIF-013 (S — telemetry)~~ ✅ (PR #3)
+**Lowest effort / highest immediate value after the current bundle:**
+`INT-002` (M — GitHub PR check comments) · `DIF-012` (L — multi-environment, high enterprise-demand) · `MNT-004` (L — fixtures, complements CAP-001).
 
 ---
 
