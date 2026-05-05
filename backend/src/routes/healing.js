@@ -11,10 +11,11 @@ router.get("/healing/summary", requireRole("viewer"), (req, res) => {
   const projectIds = projectRepo.getAll(req.workspaceId).map((p) => p.id);
   const tests = testRepo.getAllByProjectIds(projectIds);
   const testIds = tests.map((t) => t.id);
-  const all = healingRepo.getAllAsDict();
-  const rows = Object.values(all).filter((r) =>
-    testIds.some((id) => String(r.key).startsWith(`${id}::`) || String(r.key).startsWith(`${id}@v`))
-  );
+  // Workspace-scoped at the SQL layer — `getByTestIds` filters via `key LIKE`
+  // patterns so we never pull other workspaces' healing rows into memory.
+  // Replaces the old `getAllAsDict()` + JS filter, which scaled with total
+  // system data rather than the requesting workspace's data.
+  const rows = healingRepo.getByTestIds(testIds);
 
   const byStrategy = new Map();
   const selectorAgg = new Map(); // selector → { selector, healCount, totalCount }

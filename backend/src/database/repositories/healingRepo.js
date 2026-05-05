@@ -112,6 +112,33 @@ export function getByTestId(testId) {
 }
 
 /**
+ * Get all healing entries scoped to a list of test IDs.
+ *
+ * Filters at the SQL layer using `key LIKE` patterns so we never load other
+ * workspaces' rows into Node memory — the workspace-scoped replacement for
+ * `getAllAsDict()` when the caller already knows which test IDs belong to
+ * the current workspace. Matches both `<testId>::%` (raw) and `<testId>@v%::%`
+ * (versioned scope) prefixes, mirroring `countByTestIds` / `deleteByTestIds`.
+ *
+ * @param {string[]} testIds
+ * @returns {Object[]} Raw healing_history rows (key, strategyIndex, succeededAt, failCount, …).
+ */
+export function getByTestIds(testIds) {
+  if (!testIds || testIds.length === 0) return [];
+  const db = getDatabase();
+  ensureStrategyVersionColumn(db);
+  const clauses = [];
+  const params = [];
+  for (const tid of testIds) {
+    clauses.push("key LIKE ?", "key LIKE ?");
+    params.push(`${tid}::%`, `${tid}@v%::%`);
+  }
+  return db.prepare(
+    `SELECT * FROM healing_history WHERE ${clauses.join(" OR ")}`
+  ).all(...params);
+}
+
+/**
  * Delete healing entries for a list of test IDs.
  * @param {string[]} testIds
  */
