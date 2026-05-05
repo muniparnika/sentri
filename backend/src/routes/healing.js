@@ -1,3 +1,22 @@
+/**
+ * @module routes/healing
+ * @description Self-healing telemetry routes (CAP-004). Mounted at `/api/v1`
+ * behind `requireAuth` + `workspaceScope`, so every handler runs with
+ * `req.workspaceId` already populated.
+ *
+ * ### Endpoints
+ * | Method | Path                        | Description                                                  |
+ * |--------|-----------------------------|--------------------------------------------------------------|
+ * | `GET`  | `/api/v1/healing/summary`   | Workspace-wide self-healing summary for the `/healing` page. |
+ *
+ * The summary endpoint aggregates `healingRepo` rows scoped to the requesting
+ * workspace via `getByTestIds()` (SQL-level `key LIKE` filter — never loads
+ * other workspaces' rows into memory) and merges the `healing.savings`
+ * `metric_samples` series across all of the workspace's projects by
+ * timestamp so the `<TrendChart>` reflects whole-workspace savings, not a
+ * single project.
+ */
+
 import { Router } from "express";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as projectRepo from "../database/repositories/projectRepo.js";
@@ -7,6 +26,25 @@ import { requireRole } from "../middleware/requireRole.js";
 
 const router = Router();
 
+/**
+ * GET /api/v1/healing/summary
+ *
+ * Returns a workspace-scoped self-healing summary used by the `/healing`
+ * dashboard (`frontend/src/pages/HealingDashboard.jsx`).
+ *
+ * Response shape:
+ *   {
+ *     strategies:    [{ strategyIndex, total, successes, successRate }],
+ *     topSelectors:  [{ selector, healCount, totalCount }],   // sorted DESC by healCount, capped at 10
+ *     estimates:     { testsThatWouldHaveFailed: number },    // count of rows with strategyIndex > 0
+ *     savingsTrend:  [{ ts, value }]                          // merged across all workspace projects by timestamp
+ *   }
+ *
+ * Healing keys are formatted `<testId>::<action>::<label>` (see
+ * `selfHealing.js:48`); selector aggregation preserves both `action` and
+ * `label` so e.g. `click::Save` and `fill::Save` stay distinct in the
+ * "top healed selectors" list.
+ */
 router.get("/healing/summary", requireRole("viewer"), (req, res) => {
   const projectIds = projectRepo.getAll(req.workspaceId).map((p) => p.id);
   const tests = testRepo.getAllByProjectIds(projectIds);
