@@ -309,7 +309,14 @@ export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}
   // injection vector even though SQLite doesn't bind ORDER BY values.
   // `qualityScore IS NULL` ordering puts un-scored tests last when sorting
   // by quality desc — without it NULLs would float to the top in SQLite.
-  const orderBy = SORT_BY_CLAUSES[filters.sortBy] || SORT_BY_CLAUSES.newest;
+  // Guard against inherited prototype keys (`__proto__`, `constructor`,
+  // `toString`, …) — a plain `SORT_BY_CLAUSES[key] || …` lookup would return
+  // truthy values from `Object.prototype` for those keys and bypass the
+  // fallback, producing invalid SQL like `ORDER BY [object Object]`.
+  // `Object.hasOwn` keeps the whitelist limited to declared own keys.
+  const orderBy = Object.hasOwn(SORT_BY_CLAUSES, filters.sortBy)
+    ? SORT_BY_CLAUSES[filters.sortBy]
+    : SORT_BY_CLAUSES.newest;
   const total = db.prepare(
     `SELECT COUNT(*) as cnt FROM tests WHERE ${where}`
   ).get(...params).cnt;
