@@ -694,7 +694,7 @@ export default function ReviewQueue() {
 
   useEffect(() => {
     function handler(e) {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       // Tab-gate approve/reject so the keyboard shortcuts mirror the visible
       // button predicates (see DetailSidebar's Quick-decision group and the
       // detail-pane header). Without this guard, pressing `a` on the rejected
@@ -1072,32 +1072,44 @@ export default function ReviewQueue() {
               </div>
             )}
 
-            {/* Bulk action bar */}
+            {/* Bulk action bar — tab-gated to mirror the single-test decision
+                contract (see DetailSidebar's Quick-decision group):
+                  - draft     → Approve + Reject
+                  - approved  → Reject only (re-approving is a no-op)
+                  - rejected  → neither (approving rejected tests directly would
+                                bypass the "restore to draft → re-review" trust
+                                contract the queue exists to enforce; bulk
+                                restore-to-draft isn't wired up, so the bulk
+                                bar on the rejected tab offers only Clear). */}
             {selected.size > 0 && (
               <div className="rq-bulk-bar">
                 <span className="rq-bulk-bar__label">
                   {selected.size} selected
                 </span>
-                <button
-                  className="btn-approve"
-                  disabled={!!actionLoading}
-                  onClick={() => handleBulkAction("approve")}
-                >
-                  {actionLoading === "bulk-approve"
-                    ? <Loader2 size={11} className="spin" />
-                    : <ThumbsUp size={11} />}
-                  Approve {selected.size}
-                </button>
-                <button
-                  className="btn-reject"
-                  disabled={!!actionLoading}
-                  onClick={() => handleBulkAction("reject")}
-                >
-                  {actionLoading === "bulk-reject"
-                    ? <Loader2 size={11} className="spin" />
-                    : <ThumbsDown size={11} />}
-                  Reject {selected.size}
-                </button>
+                {tab === "draft" && (
+                  <button
+                    className="btn-approve"
+                    disabled={!!actionLoading}
+                    onClick={() => handleBulkAction("approve")}
+                  >
+                    {actionLoading === "bulk-approve"
+                      ? <Loader2 size={11} className="spin" />
+                      : <ThumbsUp size={11} />}
+                    Approve {selected.size}
+                  </button>
+                )}
+                {tab !== "rejected" && (
+                  <button
+                    className="btn-reject"
+                    disabled={!!actionLoading}
+                    onClick={() => handleBulkAction("reject")}
+                  >
+                    {actionLoading === "bulk-reject"
+                      ? <Loader2 size={11} className="spin" />
+                      : <ThumbsDown size={11} />}
+                    Reject {selected.size}
+                  </button>
+                )}
                 <button
                   className="btn btn-ghost btn-xs"
                   onClick={() => setSelected(new Set())}
