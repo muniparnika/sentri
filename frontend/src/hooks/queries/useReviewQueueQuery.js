@@ -28,6 +28,11 @@ const REVIEW_TAB_TO_REVIEW_STATUS = {
  *                                       `api` / `ui` / `journey`); `web` maps
  *                                       to the backend's `ui`. `all` is a
  *                                       sentinel for "no filter".
+ * @param {string}  [params.sortBy]   - "newest" | "oldest" | "quality" | "name".
+ *                                       Forwarded to the backend so the ORDER BY
+ *                                       happens before LIMIT/OFFSET — required
+ *                                       for the sort to span pages instead of
+ *                                       only reordering the current page.
  * @param {number}  params.page
  * @param {number}  [params.pageSize=50]
  * @returns {{
@@ -37,7 +42,7 @@ const REVIEW_TAB_TO_REVIEW_STATUS = {
  *   isFetching: boolean,
  * }}
  */
-export default function useReviewQueueQuery({ tab, projectId, search, category, page, pageSize = 50 }) {
+export default function useReviewQueueQuery({ tab, projectId, search, category, sortBy, page, pageSize = 50 }) {
   // Map UI category → backend `category` filter. Backend understands
   // `api` / `ui` / `journey`; the UI's `web` chip maps to `ui` for backwards
   // compatibility with the original copy. `all` (or anything unrecognised)
@@ -52,10 +57,11 @@ export default function useReviewQueueQuery({ tab, projectId, search, category, 
     projectId:    projectId !== "all" ? projectId : undefined,
     search:       search || undefined,
     category:     backendCategory,
+    sortBy:       sortBy || undefined,
   };
 
   const query = useQuery({
-    queryKey: reviewQueueQueryKeys.list({ tab, projectId, search, category: backendCategory, page, pageSize }),
+    queryKey: reviewQueueQueryKeys.list({ tab, projectId, search, category: backendCategory, sortBy: sortBy || "newest", page, pageSize }),
     queryFn:  () => api.getAllTestsPaged(page, pageSize, filters),
     placeholderData: keepPreviousData,
   });
@@ -65,6 +71,51 @@ export default function useReviewQueueQuery({ tab, projectId, search, category, 
     meta: query.data?.meta ?? { total: 0, page, pageSize, hasMore: false },
     isLoading: query.isLoading,
     isFetching: query.isFetching,
+  };
+}
+
+/**
+ * Workspace-wide tab counts for the Review Queue (Draft / Approved /
+ * Rejected). One round-trip via `GET /tests/counts` — replaces the
+ * previous three `pageSize: 1` paginated probes that fired in parallel
+ * on every filter change.
+ *
+ * Lives under the same `reviewQueueQueryKeys.root` prefix as the list
+ * queries so `invalidateReviewQueueCache()` busts it automatically after
+ * approve / reject / delete.
+ *
+ * @param {Object} params
+ * @param {string} params.projectId  - "all" or a workspace project id
+ * @param {string} params.search
+ * @param {string} params.category   - "all" | "web" | "api" | "journey"
+ * @returns {{ draft: number, approved: number, rejected: number, total: number, isLoading: boolean }}
+ */
+export function useReviewQueueCounts({ projectId, search, category }) {
+  // Same UI→backend category mapping as the list query so the counts
+  // partition the same set the list paginates over.
+  const backendCategory =
+    category === "api"     ? "api"     :
+    category === "web"     ? "ui"      :
+    category === "journey" ? "journey" : undefined;
+
+  const filters = {
+    projectId: projectId !== "all" ? projectId : undefined,
+    search:    search || undefined,
+    category:  backendCategory,
+  };
+
+  const query = useQuery({
+    queryKey: reviewQueueQueryKeys.counts({ projectId, search, category: backendCategory }),
+    queryFn:  () => api.getReviewQueueCounts(filters),
+    placeholderData: keepPreviousData,
+  });
+
+  return {
+    draft:    query.data?.draft    ?? 0,
+    approved: query.data?.approved ?? 0,
+    rejected: query.data?.rejected ?? 0,
+    total:    query.data?.total    ?? 0,
+    isLoading: query.isLoading,
   };
 }
 

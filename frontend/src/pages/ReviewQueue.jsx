@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
-import useReviewQueueQuery, { invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
+import useReviewQueueQuery, { useReviewQueueCounts, invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { userHasRole } from "../utils/roles.js";
@@ -48,11 +48,18 @@ const TABS = [
   { id: "approved", label: "Approved", emptyLabel: "No approved tests" },
 ];
 
+// Sort options. `newest` / `oldest` / `quality` / `name` are server-side
+// (mapped to `SORT_BY_CLAUSES` in `backend/src/database/repositories/testRepo.js`)
+// so they apply BEFORE pagination — the chosen order spans all pages, not
+// just the current one. `project` is intentionally omitted: project names
+// live in the `projects` table and require a JOIN; the cross-project list
+// query is hot-path enough to keep simple, and the existing project-filter
+// dropdown (top-right) covers the "narrow to one project" case directly.
 const SORT_OPTIONS = [
-  { id: "newest",  label: "Newest first" },
-  { id: "oldest",  label: "Oldest first" },
-  { id: "quality", label: "Quality score" },
-  { id: "project", label: "Project" },
+  { id: "newest",  label: "Newest first"   },
+  { id: "oldest",  label: "Oldest first"   },
+  { id: "quality", label: "Quality score"  },
+  { id: "name",    label: "Name (A→Z)"     },
 ];
 
 // ── Quality score colour helper ───────────────────────────────────────────────
@@ -431,19 +438,25 @@ export default function ReviewQueue() {
   useEffect(() => { setPage(1); }, [tab, projectId, listSearch, catFilter]);
 
   // ── Server-paginated tests for the current view ─────────────────────────────
+  // `sortBy` is server-side (see SORT_OPTIONS comment + testRepo's
+  // SORT_BY_CLAUSES whitelist). Changing the sort dropdown invalidates the
+  // query key and re-fetches with the new ORDER BY, so the result spans
+  // every page instead of reordering only the current one.
   const reviewQuery = useReviewQueueQuery({
-    tab, projectId, search: listSearch, category: catFilter, page, pageSize: PAGE_SIZE,
+    tab, projectId, search: listSearch, category: catFilter, sortBy, page, pageSize: PAGE_SIZE,
   });
   const pageTests = reviewQuery.data;
   const meta      = reviewQuery.meta;
 
-  // Tab counts — three lightweight queries that ask the backend for `total`
-  // only (pageSize: 1) per status. Keeps the badges accurate without
-  // re-fetching the whole list.
-  const draftCount    = useReviewQueueQuery({ tab: "draft",    projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
-  const rejectedCount = useReviewQueueQuery({ tab: "rejected", projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
-  const approvedCount = useReviewQueueQuery({ tab: "approved", projectId, search: listSearch, category: catFilter, page: 1, pageSize: 1 }).meta.total;
-  const tabCounts = { draft: draftCount, rejected: rejectedCount, approved: approvedCount };
+  // Tab counts — single aggregate query against `GET /tests/counts` returns
+  // Draft + Approved + Rejected in one round-trip. Replaces the previous
+  // three `pageSize: 1` paginated probes which produced three concurrent
+  // requests on every filter / page change. `sortBy` is intentionally
+  // omitted (irrelevant for COUNT — keeps the cache key stable across sort
+  // changes so the badges don't flicker on sort).
+  const counts = useReviewQueueCounts({ projectId, search: listSearch, category: catFilter });
+  const tabCounts    = { draft: counts.draft, rejected: counts.rejected, approved: counts.approved };
+  const approvedCount = counts.approved;
 
   const loading = projectsLoading || reviewQuery.isLoading;
 
@@ -480,23 +493,17 @@ export default function ReviewQueue() {
     return ids;
   }, [pageTests, now]);
 
-  // ── Page-local sort ─────────────────────────────────────────────────────────
-  // Every filter (tab, projectId, search, api/web/journey category) is now
-  // server-side; the only thing we apply locally is the sort, since the
-  // backend always returns by `createdAt DESC` and the UI lets the user pick
-  // alternate orderings. Sorting in-place is intentional — re-fetching on
-  // sort change would burn a round-trip for a purely visual reorder of the
-  // tests already on the current page.
-  const visibleTests = useMemo(() => {
-    const list = [...pageTests].sort((a, b) => {
-      if (sortBy === "oldest")  return new Date(a.createdAt) - new Date(b.createdAt);
-      if (sortBy === "quality") return (b.qualityScore ?? -1) - (a.qualityScore ?? -1);
-      if (sortBy === "project") return (projMap[a.projectId]?.name ?? "").localeCompare(projMap[b.projectId]?.name ?? "");
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
+  // Sort is applied server-side via `sortBy` on `useReviewQueueQuery` (see
+  // `SORT_BY_CLAUSES` in `testRepo.js`), so `pageTests` already arrives in
+  // the requested order. Re-sorting client-side here would be redundant at
+  // best, and at worst would mask a server-side ordering mismatch by hiding
+  // it behind a JS comparator.
+  const visibleTests = pageTests;
 
-    return list;
-  }, [pageTests, sortBy, projMap]);
+  // Reset to page 1 whenever sort changes — switching from "newest" to
+  // "quality" with a page-3 cursor would otherwise show the third page of
+  // the new ordering, which is rarely what the user wanted.
+  useEffect(() => { setPage(1); }, [sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(meta.total / PAGE_SIZE));
 

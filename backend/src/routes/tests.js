@@ -119,7 +119,7 @@ router.get("/tests", (req, res) => {
   const wsProjects = projectRepo.getAll(req.workspaceId);
   const projectIds = wsProjects.map(p => p.id);
 
-  const { page, pageSize, reviewStatus, category, search, stale, projectId } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, projectId, sortBy } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const filters = {};
     if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
@@ -129,9 +129,40 @@ router.get("/tests", (req, res) => {
     // `projectId` is honoured by the repo only if it falls inside the
     // workspace-scoped set, so a malicious client cannot use it to escape ACL.
     if (projectId && projectId !== "all") filters.projectId = projectId;
+    // `sortBy` is whitelisted in the repo (SORT_BY_CLAUSES); unknown values
+    // fall back to "newest" — we still pass it through unchanged so the
+    // frontend's UI sort dropdown drives the SQL ORDER BY directly.
+    if (sortBy) filters.sortBy = sortBy;
     return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize, filters));
   }
   res.json(testRepo.getAllByProjectIds(projectIds));
+});
+
+// GET /api/v1/tests/counts — workspace-wide review-queue tab counts.
+//
+// Powers the Review Queue's Draft/Approved/Rejected badges in a single
+// round-trip. Previously the page fired three `pageSize: 1` paginated
+// requests (one per status) on every filter / page change; this aggregate
+// returns all three in one query.
+//
+// Accepts the same filter params as `GET /tests` minus `reviewStatus`
+// (which is what we're partitioning) and `sortBy` (irrelevant for COUNT).
+// `projectId` is ACL-narrowed inside the repo.
+//
+// Declared BEFORE `/tests/:testId` so the literal "counts" path doesn't
+// get captured by the wildcard.
+router.get("/tests/counts", (req, res) => {
+  const wsProjects = projectRepo.getAll(req.workspaceId);
+  const projectIds = wsProjects.map(p => p.id);
+
+  const { category, search, stale, projectId } = req.query;
+  const filters = {};
+  if (category && category !== "all") filters.category = category;
+  if (search) filters.search = search;
+  if (stale === "true") filters.stale = true;
+  if (projectId && projectId !== "all") filters.projectId = projectId;
+
+  res.json(testRepo.countReviewQueueByProjectIds(projectIds, filters));
 });
 
 router.get("/tests/:testId", (req, res) => {

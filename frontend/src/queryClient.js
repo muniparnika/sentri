@@ -71,6 +71,16 @@ export const reviewQueueQueryKeys = {
    * @returns {Array}
    */
   sidebarDraftCount: (workspaceId) => ["reviewQueue", "sidebarDraftCount", workspaceId],
+  /**
+   * Tab-count badges (Draft/Approved/Rejected) for the Review Queue,
+   * keyed by the same filter shape that drives the list query (minus
+   * `reviewStatus` since the counts partition on it). Lives under the
+   * same root prefix so `invalidateReviewQueueCache()` busts it too.
+   *
+   * @param {Object} params - { projectId, search, category }
+   * @returns {Array}
+   */
+  counts: (params) => ["reviewQueue", "counts", params],
 };
 
 export const automationStatusQueryKeys = {
