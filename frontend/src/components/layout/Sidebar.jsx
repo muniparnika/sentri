@@ -2,16 +2,18 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
-    Atom, Inbox,
+    Atom,
 } from "lucide-react";
-import { useMemo } from "react";
 import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
-import { useQuery } from "@tanstack/react-query";
-import { reviewQueueQueryKeys } from "../../queryClient.js";
 
+// Review Queue intentionally has no sidebar entry — it's reached via the
+// "Review Drafts" quick-action card on the Tests page (`Tests.jsx`), which
+// carries the live draft count and project-scoped deep-link. Adding a
+// sidebar entry here would duplicate that surface; the `/review-queue`
+// route itself remains registered in `App.jsx` for the card's navigate().
 const NAV_GROUPS = [
   {
     label: "Core",
@@ -20,7 +22,6 @@ const NAV_GROUPS = [
       { to: "/projects",      icon: FolderKanban,  label: "Projects",      tour: "tour-projects"  },
       { to: "/tests",         icon: SquareCheckBig,label: "Tests",         tour: "tour-tests"     },
       { to: "/test-lab",      icon: Atom,          label: "Test Lab"                              },
-      { to: "/review-queue",  icon: Inbox,         label: "Review Queue",  badgeKey: "draft"      },
     ],
   },
   {
@@ -76,24 +77,6 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   const [switching, setSwitching] = useState(false);
   const hasMultipleWorkspaces = user?.workspaces?.length > 1;
 
-  // Live draft count for the Review Queue badge.
-  // Uses the paginated cross-project tests endpoint with `pageSize: 1` so the
-  // backend only returns one row + the total count — avoiding the previous
-  // `getAllTests()` round-trip that shipped every test in the workspace just
-  // to compute a number. Workspace-keyed so the badge resets when a user
-  // switches workspaces (otherwise the 60 s stale window serves the old
-  // workspace's count).
-  const { data: draftData } = useQuery({
-    queryKey: reviewQueueQueryKeys.sidebarDraftCount(user?.workspaceId),
-    queryFn: () => api.getAllTestsPaged(1, 1, { reviewStatus: "draft" }).then(r => r.meta?.total ?? 0),
-    staleTime: 60_000,
-    refetchOnWindowFocus: true,
-    enabled: !!user,
-  });
-  const draftCount = draftData ?? 0;
-
-  // Badge values keyed by badgeKey in NAV_GROUPS
-  const navBadges = useMemo(() => ({ draft: draftCount > 0 ? draftCount : null }), [draftCount]);
   // Force-expand the dropdown closed when the sidebar collapses to a rail —
   // the dropdown is anchored to the wide-mode workspace switcher and would
   // float into the main content area otherwise.
@@ -146,29 +129,19 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
 
         {/* Nav icons */}
         <nav className="sidebar-rail__nav">
-          {NAV_GROUPS.flatMap(group => group.items).map(item => {
-            const badge = item.badgeKey ? navBadges[item.badgeKey] : null;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className="nav-link sidebar-rail__nav-item"
-                data-tour={item.tour || undefined}
-                title={item.label}
-              >
-                {({ isActive }) => (
-                  <>
-                    <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
-                    {badge != null && (
-                      <span className="sidebar-badge sidebar-badge--rail">
-                        {badge > 99 ? "99+" : badge}
-                      </span>
-                    )}
-                  </>
-                )}
-              </NavLink>
-            );
-          })}
+          {NAV_GROUPS.flatMap(group => group.items).map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className="nav-link sidebar-rail__nav-item"
+              data-tour={item.tour || undefined}
+              title={item.label}
+            >
+              {({ isActive }) => (
+                <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
+              )}
+            </NavLink>
+          ))}
         </nav>
 
         {/* Footer: settings (admin only) — expand toggle lives at the top
@@ -265,40 +238,32 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
           <div key={group.label}>
             <div className="sidebar-nav__group-label">{group.label}</div>
             <div className="sidebar-nav__group-items">
-              {group.items.map(item => {
-                const badge = item.badgeKey ? navBadges[item.badgeKey] : null;
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className="nav-link sidebar-nav__item"
-                    data-tour={item.tour || undefined}
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <item.icon
-                          size={16}
-                          className="sidebar-nav__item-icon"
-                          strokeWidth={isActive ? 2.4 : 1.6}
+              {group.items.map(item => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className="nav-link sidebar-nav__item"
+                  data-tour={item.tour || undefined}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <item.icon
+                        size={16}
+                        className="sidebar-nav__item-icon"
+                        strokeWidth={isActive ? 2.4 : 1.6}
+                      />
+                      <span>{item.label}</span>
+                      {isActive && (
+                        <ChevronRight
+                          size={12}
+                          className="sidebar-nav__item-chevron"
+                          color="var(--accent)"
                         />
-                        <span>{item.label}</span>
-                        {badge != null && (
-                          <span className="sidebar-badge sidebar-badge--wide">
-                            {badge > 99 ? "99+" : badge}
-                          </span>
-                        )}
-                        {isActive && !badge && (
-                          <ChevronRight
-                            size={12}
-                            className="sidebar-nav__item-chevron"
-                            color="var(--accent)"
-                          />
-                        )}
-                      </>
-                    )}
-                  </NavLink>
-                );
-              })}
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              ))}
             </div>
           </div>
         ))}

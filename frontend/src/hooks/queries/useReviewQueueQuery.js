@@ -126,8 +126,7 @@ export function useReviewQueueCounts({ projectId, search, category }) {
  * Because the matcher is the `reviewQueueQueryKeys.root` prefix
  * (`["reviewQueue"]`), this also invalidates:
  *   - every paginated list (`reviewQueueQueryKeys.list(...)`)
- *   - the sidebar draft-count badge (`reviewQueueQueryKeys.sidebarDraftCount(...)`)
- *   - the per-tab count probes (which are list queries with `pageSize: 1`)
+ *   - the tab-count badges (`reviewQueueQueryKeys.counts(...)`)
  *
  * Adding new mutation sites? Calling this single helper is enough — do not
  * also reach into the sidebar's query key directly.

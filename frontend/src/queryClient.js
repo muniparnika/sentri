@@ -62,16 +62,6 @@ export const reviewQueueQueryKeys = {
    */
   list: (params) => ["reviewQueue", "list", params],
   /**
-   * Sidebar draft-count badge — keyed by workspace so switching workspaces
-   * doesn't serve the previous workspace's count from cache. Lives under
-   * `reviewQueueQueryKeys` so `invalidateReviewQueueCache()` covers it
-   * automatically — ReviewQueue mutations only need to call one helper.
-   *
-   * @param {string} workspaceId
-   * @returns {Array}
-   */
-  sidebarDraftCount: (workspaceId) => ["reviewQueue", "sidebarDraftCount", workspaceId],
-  /**
    * Tab-count badges (Draft/Approved/Rejected) for the Review Queue,
    * keyed by the same filter shape that drives the list query (minus
    * `reviewStatus` since the counts partition on it). Lives under the
