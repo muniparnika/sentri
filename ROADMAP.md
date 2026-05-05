@@ -123,8 +123,8 @@ The following items have been verified complete against the codebase and are **n
 |-------|-------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|
 | Phase 1 — Production Hardening | Security, reliability, data integrity | ✅ Complete                                                                                                                                                                            | — |
 | Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | 🔄 In progress — `INF-006` ✅ shipped in PR #1 (Render blueprint + ephemeral-storage warning); `ENH-036` ✅ shipped in PR #127 (project credential edit + auto-login in ENH-036b); `SEC-004` deferred     | 8–10 weeks |
-| Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔄 In progress — most differentiators shipped (DIF-001/002/002b/003/004/005/006/007/011/013/014/015/016 ✅ — DIF-005 embedded trace viewer shipped in PR #9); remaining: DIF-008–010, DIF-012, DIF-015b/c sub-items | 10–12 weeks |
-| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/017/019 ✅ (AUTO-016b UI shipped in PR #1; AUTO-012 full backend + UI + CI consumer docs shipped in PR #2; AUTO-017 Web Vitals budgets shipped in PR #8; AUTO-019 per-test run diffing shipped in PR #10); remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018                                | 14–18 weeks |
+| Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔄 In progress — most differentiators shipped (DIF-001/002/002b/003/004/005/006/007/011/013/014/015/016 ✅ — DIF-005 embedded trace viewer shipped in PR #9); remaining: DIF-008–010, DIF-012, DIF-015b/c sub-items, INT-002 | 10–12 weeks |
+| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/017/019 ✅ (AUTO-016b UI shipped in PR #1; AUTO-012 full backend + UI + CI consumer docs shipped in PR #2; AUTO-017 Web Vitals budgets shipped in PR #8; AUTO-019 per-test run diffing shipped in PR #10); remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018, CAP-001 (data-driven testing), CAP-002 (test sharding)                                | 14–18 weeks |
 | Ongoing — Maintenance & Platform Health | Healing AI, DX, exports, accessibility | 🔄 Continuous                                                                                                                                                                         | — |
 
 ---
@@ -878,6 +878,24 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ---
 
+### INT-002 — GitHub PR check comments 🟢 Differentiator
+
+**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § INT-002)
+
+**Problem:** Every modern QA tool posts a GitHub Check Run on the PR with a deep-link to the run. Today Sentri only sends a webhook callback (ENH-011) — the PR author never sees the result without leaving GitHub. This is a discoverability gap for the most common CI integration target.
+
+**Fix:** GitHub App-based Check Run posting, parameterised by the project's trigger token. Status transitions: `queued` → `in_progress` → `success` / `failure` with summary markdown rendered from the run result (passed / failed counts, gate violations, failing test names, deep-link to Run Detail). Reuses the FEA-001 notification dispatcher pattern. Integrations tab in Settings (shared with DIF-008) holds the GitHub App credentials.
+
+**Files to change:**
+- New `backend/src/utils/integrations/github.js` — Check Run API client + webhook signature verification
+- `backend/src/routes/trigger.js` — emit `queued`/`in_progress`/`completed` Check Runs alongside the existing webhook callback
+- `backend/src/routes/settings.js` — GitHub App config endpoint
+- `frontend/src/pages/Settings.jsx` — extend Integrations tab from DIF-008
+
+**Dependencies:** ENH-011 ✅ (trigger token infrastructure), FEA-001 ✅ (notification dispatcher pattern). Coordinate with DIF-008 — both items extend the Integrations tab and share the OAuth-credential storage shape.
+
+---
+
 ### DIF-009 — Autonomous monitoring mode (always-on QA agent) 🟢 Differentiator
 
 **Status:** 🔲 Planned | **Effort:** M | **Source:** Competitive
@@ -1026,6 +1044,48 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 - `backend/src/routes/runs.js` — expose `changedPages` in run response
 
 **Dependencies:** None
+
+---
+
+### CAP-001 — Data-driven testing (parameterized iterations) 🟢 Differentiator
+
+**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § CAP-001) · Competitive (Cypress / Playwright / Mabl)
+
+**Problem:** Generated tests are single-shot — one assertion path, one input set. Industry-standard practice (Cypress, Playwright `test.describe.serial` + fixtures, Mabl iterations) is to run the same test against N data rows from a CSV / JSON fixture, with one Run row per iteration so failures are attributable to a specific row. Sentri has no fixture concept today, so testing edge-case data combinations means hand-authoring N near-identical tests.
+
+**Fix:** Add per-test fixture upload (CSV / JSON) stored as a `test_fixtures` table row. Extend the runner to iterate over fixture rows when present, substituting placeholders in `playwrightCode` (e.g. `{{email}}` → row value). Surface per-iteration results in `RunDetail.jsx` as a sub-table under the test row. Bound the iteration count via a per-project setting (default 10, max 100) so a 10k-row CSV can't exhaust the worker pool.
+
+**Files to change:**
+- New migration — `test_fixtures` table keyed on `(testId, version)` with `format` (`"csv"` | `"json"`), `rows` (TEXT JSON), `createdAt`
+- New `backend/src/database/repositories/testFixtureRepo.js`
+- `backend/src/runner/executeTest.js` — iterate over fixture rows when present, emit per-iteration `result` rows with `iterationIndex` field
+- `backend/src/routes/tests.js` — `POST /api/v1/tests/:testId/fixtures` (upload), `GET /api/v1/tests/:testId/fixtures` (list)
+- `backend/src/middleware/permissions.json` — register the new endpoints (qa_lead+)
+- `frontend/src/pages/TestDetail.jsx` — fixture upload + preview panel
+- `frontend/src/components/run/StepResultsView.jsx` — per-iteration sub-table
+
+**Dependencies:** None. Plays well with DIF-010 (multi-auth profiles) — a fixture row can override `credentials` so one test runs as `admin` then as `viewer` in successive iterations.
+
+---
+
+### CAP-002 — Distributed test sharding across runners 🟢 Differentiator
+
+**Status:** 🔲 Planned | **Effort:** L | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § CAP-002) · Competitive (Cypress Cloud / Playwright shard mode)
+
+**Problem:** Single-host parallelism caps suite size at the local worker count (typically 1–10 contexts on a developer machine, 4–8 on a Render box). Industry tools split a single run across N runners — Cypress Cloud's `--record --parallel`, Playwright's `--shard=1/4`. Sentri's BullMQ infrastructure (INF-003 ✅) already gives us the worker pool primitive, but `runTests()` allocates the entire test list to a single worker, so adding nodes doesn't reduce wall-clock time on a large suite.
+
+**Fix:** Split `runTests()` into a coordinator + N shard workers. Coordinator partitions the approved-test list across `runConfig.shards` BullMQ jobs, each scoped to `(runId, shardIndex, shardCount)`. Workers pick their slice, execute, and write per-test results to the shared `runs` row keyed on `runId`. The run is `completed` when all shards report; `failed` if any shard's worker crashes. Re-uses INF-003's abort path — aborting the parent job propagates a cancel signal to all shard jobs via a Redis pub/sub channel.
+
+**Files to change:**
+- `backend/src/testRunner.js` — coordinator splits the test queue into shards, enqueues N BullMQ jobs
+- `backend/src/workers/runWorker.js` — accept `shardIndex` / `shardCount`, run only the assigned slice
+- `backend/src/routes/runs.js` — accept optional `shards: number` (default 1, max bounded by `MAX_WORKERS`)
+- `backend/src/database/migrations/` — add `shardCount`, `shardsCompleted` columns to `runs`
+- `backend/src/utils/redisClient.js` — pub/sub channel for shard coordination + abort propagation
+- `frontend/src/components/run/RunRegressionModal.jsx` — `shards` selector (1-N)
+- `frontend/src/pages/RunDetail.jsx` — show "shard 2/4 in progress" status
+
+**Dependencies:** INF-002 ✅ (Redis pub/sub for coordinator → shard cancel signal), INF-003 ✅ (BullMQ worker pool primitive). Bounded by available worker slots — sharding 1 run across 4 workers means a co-running shard-less run waits longer for its single slot.
 
 ---
 
