@@ -28,8 +28,14 @@ router.get("/healing/summary", requireRole("viewer"), (req, res) => {
     byStrategy.set(key, prev);
     if (r.strategyIndex > 0) wouldFail += 1;
 
+    // Healing keys are formatted "<testId>::<action>::<label>" (see
+    // selfHealing.js:48). The selector aggregation should preserve both
+    // `action` and `label` so different actions on identically-labelled
+    // elements (e.g. `click::Save` vs `fill::Save`) stay distinct in the
+    // dashboard's "top healed selectors" list. Using `slice(1)` keeps the
+    // last two segments; `slice(2)` would drop the action and merge them.
     const parts = String(r.key).split("::");
-    const selector = parts.slice(2).join("::") || "unknown";
+    const selector = parts.slice(1).join("::") || "unknown";
     const agg = selectorAgg.get(selector) || { selector, healCount: 0, totalCount: 0 };
     agg.totalCount += 1;
     if (r.strategyIndex > 0 && r.succeededAt) agg.healCount += 1;

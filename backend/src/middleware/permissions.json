@@ -24,6 +24,10 @@
       "role": "viewer",
       "source": "backend/src/routes/projects.js"
     },
+    "GET /api/v1/healing/summary": {
+      "role": "viewer",
+      "source": "backend/src/routes/healing.js:10"
+    },
     "PATCH /api/v1/projects/:id/quality-gates": {
       "role": "qa_lead",
       "source": "backend/src/routes/projects.js"
