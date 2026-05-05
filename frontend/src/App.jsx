@@ -25,6 +25,7 @@ const ForgotPassword = lazy(() => import("./pages/ForgotPassword.jsx"));
 const ChatHistory = lazy(() => import("./pages/ChatHistory.jsx"));
 const TestLab       = lazy(() => import("./pages/TestLab.jsx"));
 const ReviewQueue   = lazy(() => import("./pages/ReviewQueue.jsx"));
+const HealingDashboard = lazy(() => import("./pages/HealingDashboard.jsx"));
 
 const NotFound = () => (
   <div style={{ padding: "80px 0", textAlign: "center", color: "var(--text2)" }}>
@@ -73,6 +74,7 @@ export default function App() {
                 <Route path="/chat" element={<ChatHistory />} />
                 <Route path="/test-lab" element={<TestLab />} />
                 <Route path="/review-queue" element={<ReviewQueue />} />
+                <Route path="/healing" element={<HealingDashboard />} />
                 <Route path="/projects/:id/test-lab" element={<TestLab />} />
                 <Route path="*" element={<NotFound />} />
               </Route>

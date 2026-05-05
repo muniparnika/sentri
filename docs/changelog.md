@@ -457,3 +457,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - `CodeEditorModal.jsx` — deprecated component with no imports, deleted
+
+- Added healing dashboard, metric samples primitives, and sprint promotion script scaffolding.
+
+<!-- promoted by script for PR #999; next=AUTO-017.3 -->
