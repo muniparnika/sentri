@@ -41,7 +41,7 @@ export function insertSample({ projectId, metricKey, ts = Date.now(), value, tag
  * @param {Object} [opts]
  * @param {number} [opts.since=0] - Lower-bound timestamp (epoch ms, inclusive). Default `0` returns all samples.
  * @param {number} [opts.limit=200] - Row cap; oldest-first within the window.
- * @returns {Array<{ts:number, value:number, tags:Object|null}>}
+ * @returns {Array<{ts: number, value: number, tags: (Object|null)}>}
  */
 export function getSeries(projectId, metricKey, { since = 0, limit = 200 } = {}) {
   const db = getDatabase();
