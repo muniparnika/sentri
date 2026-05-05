@@ -49,8 +49,9 @@ async function main() {
     projectRepo.create({ id: "PRJ-HEAL-2", workspaceId: wsId, name: "P2", url: "https://b.test",
       createdAt: new Date().toISOString(), status: "idle" });
 
-    testRepo.create({ id: "TC-HEAL-1", projectId: "PRJ-HEAL-1", name: "t1", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId });
-    testRepo.create({ id: "TC-HEAL-2", projectId: "PRJ-HEAL-2", name: "t2", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId });
+    const nowIso = new Date().toISOString();
+    testRepo.create({ id: "TC-HEAL-1", projectId: "PRJ-HEAL-1", name: "t1", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId, createdAt: nowIso });
+    testRepo.create({ id: "TC-HEAL-2", projectId: "PRJ-HEAL-2", name: "t2", playwrightCode: null, reviewStatus: "approved", workspaceId: wsId, createdAt: nowIso });
 
     healingRepo.set("TC-HEAL-1::click::Login", { strategyIndex: 0, succeededAt: new Date().toISOString(), failCount: 0 });
     healingRepo.set("TC-HEAL-1::click::Save",  { strategyIndex: 2, succeededAt: new Date().toISOString(), failCount: 1 });
