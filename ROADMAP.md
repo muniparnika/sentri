@@ -334,7 +334,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ### INT-002 — GitHub PR check comments 🟢 Differentiator
 
-**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § INT-002)
+**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (migrated from `docs/roadmap-gaps-pr8.md` before its deletion)
 
 **Problem:** Every modern QA tool posts a GitHub Check Run on the PR with a deep-link to the run. Today Sentri only sends a webhook callback (ENH-011) — the PR author never sees the result without leaving GitHub. This is a discoverability gap for the most common CI integration target.
 
@@ -453,7 +453,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ### CAP-001 — Data-driven testing (parameterized iterations) 🟢 Differentiator
 
-**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § CAP-001) · Competitive (Cypress / Playwright / Mabl)
+**Status:** 🔲 Planned | **Effort:** M | **Source:** PR #8 review (migrated from `docs/roadmap-gaps-pr8.md` before its deletion) · Competitive (Cypress / Playwright / Mabl)
 
 **Problem:** Generated tests are single-shot — one assertion path, one input set. Industry-standard practice (Cypress, Playwright `test.describe.serial` + fixtures, Mabl iterations) is to run the same test against N data rows from a CSV / JSON fixture, with one Run row per iteration so failures are attributable to a specific row. Sentri has no fixture concept today, so testing edge-case data combinations means hand-authoring N near-identical tests.
 
@@ -475,7 +475,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ### CAP-002 — Distributed test sharding across runners 🟢 Differentiator
 
-**Status:** 🔲 Planned | **Effort:** L | **Source:** PR #8 review (`docs/roadmap-gaps-pr8.md` § CAP-002) · Competitive (Cypress Cloud / Playwright shard mode)
+**Status:** 🔲 Planned | **Effort:** L | **Source:** PR #8 review (migrated from `docs/roadmap-gaps-pr8.md` before its deletion) · Competitive (Cypress Cloud / Playwright shard mode)
 
 **Problem:** Single-host parallelism caps suite size at the local worker count (typically 1–10 contexts on a developer machine, 4–8 on a Render box). Industry tools split a single run across N runners — Cypress Cloud's `--record --parallel`, Playwright's `--shard=1/4`. Sentri's BullMQ infrastructure (INF-003 ✅) already gives us the worker pool primitive, but `runTests()` allocates the entire test list to a single worker, so adding nodes doesn't reduce wall-clock time on a large suite.
 
