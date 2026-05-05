@@ -16,6 +16,7 @@
 import { recordHealing, recordHealingFailure } from "../selfHealing.js";
 import { trackTelemetry } from "../utils/telemetry.js";
 import { recordMetric } from "../utils/recordMetric.js";
+import { formatLogLine } from "../utils/logFormatter.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 
 /**
@@ -80,7 +81,10 @@ export function persistHealingEvents(testId, events) {
   // has real data. "Savings" = number of healing events that succeeded with a
   // non-primary strategy (index > 0) — i.e. tests that would have failed
   // without self-healing. Best-effort: testId may be a versioned scope
-  // ("TC-1@v2") and the test row may have been deleted; skip silently.
+  // ("TC-1@v2") and the test row may have been deleted. We never rethrow —
+  // telemetry must not flip a passing run — but we DO log a warning so
+  // schema/migration issues (e.g. `metric_samples` table missing) are
+  // diagnosable instead of silently swallowed.
   try {
     const nonPrimaryHeals = Object.entries(strategyHistogram)
       .filter(([idx]) => Number(idx) > 0)
@@ -92,5 +96,7 @@ export function persistHealingEvents(testId, events) {
         recordMetric(test.projectId, "healing.savings", nonPrimaryHeals, { testId: baseTestId });
       }
     }
-  } catch { /* best-effort — never flip a passing run */ }
+  } catch (err) {
+    console.warn(formatLogLine("warn", null, `[healing] failed to record savings metric for ${testId}: ${err.message}`));
+  }
 }
