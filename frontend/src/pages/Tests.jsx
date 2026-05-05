@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, X, CheckCircle2, XCircle, Clock,
-  ChevronRight, Loader2, Play,
+  Loader2, Play,
   AlertCircle, ArrowUpDown, Trash2, Inbox, Atom,
 } from "lucide-react";
 import { api } from "../api.js";
@@ -402,21 +402,9 @@ export default function Tests() {
             <h1 className="page-title">Tests</h1>
             <p className="page-subtitle">Manage, run, and review test cases across all projects</p>
           </div>
-          {draftCount > 0 && (
-            <button
-              className="btn btn-ghost btn-sm"
-              style={{ gap: 6, background: "var(--amber-bg)", border: "1px solid rgba(217,119,6,0.3)", color: "var(--amber)" }}
-              onClick={() => navigate(
-                selectedProjectId !== "all"
-                  ? `/review-queue?projectId=${selectedProjectId}`
-                  : "/review-queue",
-              )}
-            >
-              <Inbox size={13} />
-              {draftCount} draft{draftCount !== 1 ? "s" : ""} — Review Queue
-              <ChevronRight size={12} />
-            </button>
-          )}
+          {/* The "drafts → Review Queue" entry-point lives in the
+              "Review Drafts" quick-action card below — no need for a
+              duplicate header button. */}
           <div style={{ flex: 1 }} />
           {/* Project dropdown — mirrors the Review Queue's project filter.
               Scopes the export button to a single project so users with 3+
