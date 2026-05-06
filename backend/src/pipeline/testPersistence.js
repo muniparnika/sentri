@@ -16,6 +16,18 @@ import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
 
 /**
+ * Pseudo-user attributed to machine-made approvals in `tests.approvedBy` and
+ * `activities.userName`. The literal `"auto-approver"` is pinned by the
+ * audit-trail contract in ROADMAP.md (AUTO-003b) and NEXT.md, so consumers
+ * (UI badges, activity log filters, route handlers) should reference this
+ * constant rather than re-typing the string.
+ */
+export const AUTO_APPROVER_USER = "auto-approver";
+
+/** `tests.approvalSource` values. */
+export const APPROVAL_SOURCE_AUTO = "auto";
+
+/**
  * Write validated test objects into SQLite and update the run record.
  *
  * @param {object[]} validatedTests — tests that passed validation
@@ -65,10 +77,10 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       // All generated tests start as draft — humans must approve before regression
       reviewStatus: autoApproved ? "approved" : "draft",
       reviewedAt,
-      approvalSource: autoApproved ? "auto" : null,
+      approvalSource: autoApproved ? APPROVAL_SOURCE_AUTO : null,
       approvalThreshold: autoApproved ? threshold : null,
       approvedAt,
-      approvedBy: autoApproved ? "auto-approver" : null,
+      approvedBy: autoApproved ? AUTO_APPROVER_USER : null,
       // Traceability — which prompt version and AI model produced this test
       promptVersion: PROMPT_VERSION,
       modelUsed: getProviderName(),
@@ -90,7 +102,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
         testId,
         testName: test.name,
         detail: `Auto-approved at confidence ${confidenceScore.toFixed(2)} (threshold ${threshold.toFixed(2)})`,
-        userName: "auto-approver",
+        userName: AUTO_APPROVER_USER,
         workspaceId: project.workspaceId || null,
       });
     }
