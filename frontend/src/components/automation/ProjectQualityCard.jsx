@@ -18,7 +18,7 @@ import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
 import TrendChart from "../shared/TrendChart.jsx";
 import { useAutomationStatusQuery } from "../../hooks/queries/useAutomationStatusQueries.js";
 import { useProjectMetricQuery } from "../../hooks/queries/useProjectMetricQuery.js";
-import api from "../../api.js";
+import { api } from "../../api.js";
 
 // AUTO-017.3: the four Web Vital metrics we render trend charts for. Each
 // entry's `key` is the `metric_samples.metricKey` written by `recordMetric()`
