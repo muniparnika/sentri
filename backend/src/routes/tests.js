@@ -720,7 +720,7 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
 // Returns approval-decision counts (human / auto / draft) plus a 7-day
 // revert rate, used by the project-settings calibration line under the
 // `autoApproveThreshold` input.
-router.get("/projects/:id/approval-stats", (req, res) => {
+router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
   const tests = testRepo.getByProjectId(project.id);
