@@ -112,6 +112,28 @@ export default function TestDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
 
+  // AUTO-003b: two-step revoke confirmation. Revoking is consequential
+  // (test drops out of scheduled runs until re-approved) but the spec
+  // requires a one-click affordance — this pattern threads the needle:
+  // the first click arms a danger-styled "Click again to confirm" state
+  // for 4s; a second click within that window fires `api.revokeApproval`.
+  // The auto-disarm avoids a stuck danger state if the user clicks once
+  // and walks away. Same shape as Settings → Account's two-click delete
+  // (`docs/changelog.md` SEC-003).
+  const [revokeArmed, setRevokeArmed] = useState(false);
+  const revokeArmTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(revokeArmTimerRef.current), []);
+  function handleRevokeClick() {
+    if (!revokeArmed) {
+      setRevokeArmed(true);
+      revokeArmTimerRef.current = setTimeout(() => setRevokeArmed(false), 4000);
+      return;
+    }
+    clearTimeout(revokeArmTimerRef.current);
+    setRevokeArmed(false);
+    api.revokeApproval(testId).then(load);
+  }
+
   useEffect(() => {
     if (!moreOpen) return;
     function handleClick(e) {
@@ -891,15 +913,19 @@ export default function TestDetail() {
             )}
             {test.reviewStatus === "approved" && (
               <button
-                className="btn btn-ghost btn-sm td-draft-btn"
+                className={`btn btn-sm td-draft-btn${revokeArmed ? " td-draft-btn--armed" : " btn-ghost"}`}
                 title={
-                  test.approvalSource === "auto"
-                    ? `Auto-approved at confidence ${test.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${test.approvalThreshold?.toFixed?.(2) ?? "?"}) — revoking returns to draft`
-                    : "Revoke approval and return to draft"
+                  revokeArmed
+                    ? "Click again to confirm — test will return to draft and drop out of scheduled runs"
+                    : test.approvalSource === "auto"
+                      ? `Auto-approved at confidence ${test.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${test.approvalThreshold?.toFixed?.(2) ?? "?"}) — revoking returns to draft`
+                      : "Revoke approval and return to draft"
                 }
-                onClick={() => api.revokeApproval(testId).then(load)}
+                onClick={handleRevokeClick}
+                aria-pressed={revokeArmed}
               >
-                <RotateCcw size={13} /> Revoke approval
+                <RotateCcw size={13} />
+                {revokeArmed ? "Click again to confirm" : "Revoke approval"}
               </button>
             )}
             <button className="btn btn-primary btn-sm td-run-sidebar-btn" onClick={handleRunTest} disabled={running}>
