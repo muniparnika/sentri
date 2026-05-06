@@ -135,6 +135,7 @@ docs/                      VitePress site + REST API reference
 - **Do not match stylistic conventions from memory — match the sibling file.** Before writing a new repo, route, page, or hook, open one existing sibling file and mirror its structure. "What the codebase does" beats "what I think is idiomatic."
 - **Do not import directly from `@playwright/test` in E2E specs.** Use `tests/e2e/utils/playwright.mjs` so the import surface stays single-source. If you need a new export, add it there.
 - **Do not write custom auth or CSRF logic in E2E specs.** Use `loginWithRetry()` and `SessionClient` from `tests/e2e/utils/`. New auth-related helpers belong in `auth.mjs` or `session.mjs`, not inline in a spec.
+- **Do not ship a backend route without its frontend consumer in the same PR (PROC-001).** Every new `router.<method>(…)` call in `backend/src/routes/*.js` must land alongside a helper in `frontend/src/api.js` **and** a callsite in `frontend/src/pages/*.jsx` or `frontend/src/components/**/*.jsx`. API-only PRs lose the invariant that "if it's on the server, a user can reach it" and accumulate dead endpoints. The only exception is genuinely UI-less endpoints (internal admin, healthchecks, machine-only triggers); opt out by adding the `[no-ui]` token to the PR title. The `.github/workflows/no-orphan-routes.yml` workflow enforces this — silently adding a route without its consumer fails CI.
 
 ---
 

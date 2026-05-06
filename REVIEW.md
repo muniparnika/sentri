@@ -22,6 +22,7 @@
 - [ ] For user-visible changes: walked the affected section(s) of [QA.md](./QA.md). For changes that touch any flow in the Golden E2E Happy Path (auth → project → crawl → generate → approve → run → AI fix → visual → reports → automation → notifications → GDPR → permissions), rerun the full Golden E2E on Chrome plus one other browser.
 - [ ] `QA.md` updated when the PR adds, removes, or materially changes a user-facing flow (new page/modal/endpoint, new role gate, changed happy-path steps, shipped/unshipped feature moving in or out of the "Out of scope" list).
 - [ ] [`backend/src/middleware/permissions.json`](./backend/src/middleware/permissions.json) updated when the PR adds / removes / changes a `requireRole(...)` gate or adds a new role-gated endpoint. The JSON is the canonical machine-readable RBAC source for agents and reviewers.
+- [ ] **No orphan backend routes (PROC-001)** — every new `router.<method>(…)` call in `backend/src/routes/*.js` must ship its frontend consumer in the same PR (a helper added to `frontend/src/api.js` plus a callsite in `frontend/src/pages/*.jsx` or `frontend/src/components/**/*.jsx`). API-without-UI PRs are closed. The opt-out for genuinely UI-less endpoints (internal admin, healthchecks, machine-only triggers) is to add the `[no-ui]` token to the PR title; the `.github/workflows/no-orphan-routes.yml` workflow enforces this gate, so silently shipping a route without its consumer fails CI.
 
 ---
 

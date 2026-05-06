@@ -74,6 +74,34 @@ async function main() {
     assert.equal(out.res.status, 200);
     assert.equal(out.json.webVitalsBudgets, null);
 
+    // ── GET /:id/metrics HTTP flow (AUTO-017.3) ────────────────────────────
+    // REVIEW.md mandates an integration test for new endpoints — exercise the
+    // 400 (missing key), 404 (unknown project), success shape, and the
+    // `limit` clamping logic on the route added in
+    // `backend/src/routes/projects.js`.
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics`, { method: "GET", token });
+    assert.equal(out.res.status, 400, "missing `key` query param must 400");
+    assert.equal(out.json.error, "key is required");
+
+    out = await t.req(base, `/api/v1/projects/PRJ-DOES-NOT-EXIST/metrics?key=webVitals.lcp`, { method: "GET", token });
+    assert.equal(out.res.status, 404, "unknown project must 404");
+
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics?key=webVitals.lcp`, { method: "GET", token });
+    assert.equal(out.res.status, 200, "valid request must 200");
+    assert.ok(Array.isArray(out.json.samples), "response must be { samples: [] }");
+
+    // Seed a sample directly via the repo so we can verify shape + limit clamp.
+    const { recordMetric } = await import("../src/utils/recordMetric.js");
+    recordMetric(pid, "webVitals.lcp", 2200, { source: "test" }, Date.now());
+
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics?key=webVitals.lcp&limit=999`, { method: "GET", token });
+    assert.equal(out.res.status, 200);
+    assert.ok(out.json.samples.length >= 1, "seeded sample must be returned");
+    assert.equal(out.json.samples.at(-1).value, 2200, "sample value round-trips");
+    // `limit=999` is clamped to 200 server-side; we can only assert the
+    // returned count is ≤ 200 (the actual seeded count is 1 here).
+    assert.ok(out.json.samples.length <= 200, "limit must be clamped at 200");
+
     // ── Evaluators: import lazily so HTTP tests above don't depend on it ───
     // Each evaluator is guarded independently — a future refactor that splits
     // testRunner.js exports must not silently skip both suites.

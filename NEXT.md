@@ -24,60 +24,20 @@
 
 ---
 
-## ▶ Current PR — AUTO-017.3 + PROC-001 + PROC-003 (bundled)
+## ▶ Current PR — AUTO-003 + AUTO-003b (bundled)
 
-**Title:** Web Vitals trend chart + no-orphan-routes CI guard + ROADMAP auto-prune on promotion
-**Branch:** `feat/auto-017.3-proc-001-proc-003`
-**Effort:** S (S + XS + S) | **Priority:** 🔵 Medium
-**All dependencies:** AUTO-017.3 needs MET-001 (✅ shipped in PR #8 — `<TrendChart>` + `recordMetric()` available); PROC-001 + PROC-003 have none
+**Title:** Confidence scoring & auto-approval of low-risk tests + provenance / audit trail
+**Branch:** `feat/auto-003-auto-003b`
+**Effort:** L (M + M) | **Priority:** 🟢 Differentiator
+**All dependencies:** none — both scopes are net-new on top of the existing approval flow; AUTO-003b builds on AUTO-003's `confidenceScore` + `autoApproveThreshold` columns and ships in the same PR.
 
-> CAP-004 + MET-001 + PROC-002 ✅ shipped in PR #8 (self-healing telemetry dashboard + shared time-series metrics primitive + sprint-tracker hand-off script). **Three queue items are bundled into this PR** because each is tiny on its own and they share a "tooling polish" theme — bundling saves two hand-off cycles versus shipping them separately. The PROC-002 script was used to generate this Current PR block (dogfooding the script's first real promotion after its self-promotion in PR #8).
+> AUTO-017.3 + PROC-001 + PROC-003 ✅ shipped in PR #9 (Web Vitals trend charts on `ProjectQualityCard` + no-orphan-routes CI guard + sprint-promotion auto-prune extending `scripts/promote-sprint-item.mjs`). **Two queue items are bundled into this PR** because AUTO-003 ships the *mechanism* (auto-approve above threshold) and AUTO-003b ships the *trust contract* (provenance, revoke, audit surfaces) — splitting them risks the agent stopping at "auto-approval works" and skipping the UX that makes it safe. The first bad auto-approval without AUTO-003b would collapse trust in the whole feature.
 
-> **Bundling rationale (per the bundling-guidance note above):** AUTO-017.3 is the first **non-healing** consumer of MET-001's `<TrendChart>` and validates the abstraction works for a second metric source — that's the integration test for MET-001's reusability. PROC-001 and PROC-003 are both process-tooling improvements that pay back on every subsequent PR (no-orphan-routes catches API-without-UI drift; ROADMAP auto-prune keeps `ROADMAP.md` from regrowing past the cleanup threshold). All three scopes touch **disjoint files** (frontend `ProjectQualityCard` + `testRunner.js` for AUTO-017.3 · CI workflow + docs for PROC-001 · `scripts/promote-sprint-item.mjs` + `ROADMAP.md` for PROC-003) so the diff stays reviewable.
+> **Bundling rationale (per the bundling-guidance note above):** AUTO-003b extends the same `tests` migration, the same `testPersistence.js` auto-approval path, and the same `Tests.jsx` surface that AUTO-003 introduces — reviewing them together avoids a second migration churn and keeps the approval-badge visual language consistent. Effort sits at L (M + M); this is at the upper bundling bound but justified because the two scopes are inseparable as a trust contract.
 
-**Do not split this PR.** Codex agents tend to ship the minimum viable slice; this prompt is the explicit instruction to ship all three together.
+**Do not split this PR.** Codex agents tend to ship the minimum viable slice; this prompt is the explicit instruction to ship both scopes together.
 
-### Scope 1 — AUTO-017.3: Web Vitals trend chart
-
-**UI landing surface (post-PR #6 layout — UI-REFACTOR-001):** Quality Gates / Web Vitals Budgets config no longer lives in `ProjectDetail → Settings` — it was moved exclusively to the Automation page (`/automation`) under the **Quality Gates** top-level tab → per-project accordion → `ProjectQualityCard` → **Web Vitals** inner tab. `QualityGatesPanel` and `WebVitalsBudgetsPanel` both share the new `ConfigurablePanel` abstraction. The trend chart belongs next to the Web Vitals budget-config form inside `ProjectQualityCard`'s Web Vitals tab — do **not** add it to `ProjectDetail.jsx` (no budget config there anymore) or to RunDetail (that's per-run, not per-project trend).
-
-With MET-001 landed in PR #8, add a `<TrendChart metricKey="webVitals.lcp" />` (and one each for CLS / INP / TTFB) inside the Web Vitals tab of `ProjectQualityCard`, backfilled from existing per-run `webVitalsResult`. Threshold lines come from the project's `webVitalsBudgets` so users see violations in context. Pure consumer of MET-001 — no new backend schema beyond a `recordMetric()` callsite in `backend/src/testRunner.js` after `evaluateWebVitalsBudgets()`. Also update the **status chip** logic in `frontend/src/utils/automationStatus.js` (shipped with PR #6) if chip copy needs to reflect trend-chart availability.
-
-**Files:** `backend/src/testRunner.js` (call `recordMetric()` for each Web Vital after the existing `evaluateWebVitalsBudgets()`) · `frontend/src/components/automation/ProjectQualityCard.jsx` (embed `<TrendChart>` inside the Web Vitals inner tab) · `frontend/src/utils/automationStatus.js` + `frontend/tests/automation-status.test.js` (if chip contract changes) · `backend/tests/web-vitals-trend.test.js` (metric-sample ingestion + retrieval)
-
-**Verify before starting:** the component paths above reflect PR #6's changelog. Run `grep -r "WebVitalsBudgetsPanel\|ProjectQualityCard" frontend/src` against the PR's HEAD to confirm the files exist exactly as named before wiring.
-
-### Scope 2 — PROC-001: Require backend PRs to ship UI in the same PR
-
-Docs-only convention change: every new backend route must have its frontend consumer in the same PR (no API-orphan PRs). Update `REVIEW.md`, `AGENT.md`, and the PR template checklist; add a CI check that fails when a PR adds a route to `backend/src/routes/*.js` without touching `frontend/src/api.js` or any `frontend/src/pages/*.jsx`.
-
-**Files:** `REVIEW.md` (new checklist row) · `AGENT.md` (convention section) · `.github/PULL_REQUEST_TEMPLATE.md` (checkbox) · new `.github/workflows/no-orphan-routes.yml` (or extend an existing workflow) · short doc note in `CONTRIBUTING.md`
-
-### Scope 3 — PROC-003: ROADMAP auto-prune on promotion
-
-PR #8 shipped `scripts/promote-sprint-item.mjs` (PROC-002) which rewrites the Current PR heading and Recently completed table in `NEXT.md`, plus the fast-path `Current sprint` line in `ROADMAP.md`. It does **not** yet move shipped items into the Completed Work Summary table or decrement the Remaining count — both still require manual edits and are the most-frequently-missed steps in REVIEW.md § Sprint Tracker Hand-off. Extend the script to: (1) append a row to ROADMAP.md's Completed Work Summary table for the shipped item, (2) decrement the Remaining count in the fast-path section, and (3) prune the now-redundant detailed roadmap entry for the shipped item (keeping only the Summary table row as the canonical record).
-
-**Files:** `scripts/promote-sprint-item.mjs` (extend with `updateCompletedWorkSummary()` + `decrementRemainingCount()` + `pruneShippedRoadmapEntry()` transforms) · `scripts/promote-sprint-item.test.mjs` (extend sandbox fixtures to cover the new transforms) · `ROADMAP.md` (no manual edit — the script's first real run on this PR validates the full hand-off)
-
-### PR checklist
-
-- [ ] **All three scopes shipped in one PR — do not split**
-- [ ] AUTO-017.3: `<TrendChart>` from MET-001 is rendered for LCP / CLS / INP / TTFB inside `ProjectQualityCard`'s Web Vitals inner tab
-- [ ] AUTO-017.3: `backend/src/testRunner.js` calls `recordMetric()` for each Web Vital after `evaluateWebVitalsBudgets()` so the trend chart has real data
-- [ ] AUTO-017.3: Threshold lines are sourced from the project's `webVitalsBudgets` (not hardcoded) so users see violations in context
-- [ ] PROC-001: `.github/workflows/no-orphan-routes.yml` fails when a PR adds a `backend/src/routes/*.js` route without touching `frontend/src/api.js` or `frontend/src/pages/*.jsx`
-- [ ] PROC-001: `REVIEW.md` + `AGENT.md` + PR template are updated to document the convention
-- [ ] PROC-003: `scripts/promote-sprint-item.mjs` updates the Completed Work Summary table, decrements the Remaining count, and prunes the shipped detailed entry from `ROADMAP.md`
-- [ ] PROC-003: this PR's own NEXT.md / ROADMAP.md / changelog hand-off is performed by the extended `scripts/promote-sprint-item.mjs`, not by hand
-- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]` (one entry per scope, grouped under appropriate Keep-a-Changelog sections)
-- [ ] `backend/src/middleware/permissions.json` updated for any new role-gated routes (per REVIEW.md) — none expected in this bundle
-
----
-
-## ⏭ Queue (next 4 PRs after current)
-
-### 2 · AUTO-003 — Confidence scoring and auto-approval of low-risk tests
-**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** `ROADMAP.md` Phase 4 (AUTO-003)
+### Scope 1 — AUTO-003 — Confidence scoring and auto-approval of low-risk tests
 
 Every generated test currently requires manual approval (`reviewStatus: 'draft'`). For truly autonomous operation, the system should auto-approve tests above a confidence threshold. A quality score already exists in `backend/src/pipeline/deduplicator.js:226-272` but is never used for approval decisions — expose it as `tests.confidenceScore`, add a per-project `autoApproveThreshold` setting (default: disabled / off), and on generation auto-approve tests above the threshold. Log auto-approvals in the activity trail (`userName: "auto-approver"` so the audit history is honest about how the test got approved). Add a "review auto-approved tests" filter in the Tests page so reviewers can spot-check a sample.
 
@@ -88,10 +48,10 @@ Every generated test currently requires manual approval (`reviewStatus: 'draft'`
 - With a threshold set, tests above the score are persisted as `approved` and an activity-log entry is written attributing the approval to the auto-approver pseudo-user.
 - The Tests page exposes a "Auto-approved" filter so reviewers can audit the bypass path without trawling activities.
 
-### 3 · AUTO-003b — Auto-approval provenance & audit trail
-**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-003 (item 2 — adds `confidenceScore` + `autoApproveThreshold`) | **Source:** ROADMAP.md Phase 4 follow-up to AUTO-003
 
-> **Why this is a separate PR from AUTO-003:** AUTO-003 ships the *mechanism* (auto-approve above threshold). This item ships the *trust contract* — provenance, revoke, and audit surfaces. Bundling them risks the agent stopping at "auto-approval works" and skipping the UX that makes it safe to ship. Without this PR, the first bad auto-approval collapses trust in the whole system.
+### Scope 2 — AUTO-003b — Auto-approval provenance & audit trail
+
+> **Why this scope ships in the same PR as AUTO-003:** AUTO-003 ships the *mechanism* (auto-approve above threshold). This scope ships the *trust contract* — provenance, revoke, and audit surfaces. Splitting them risks the agent stopping at "auto-approval works" and skipping the UX that makes it safe to ship. Without this scope, the first bad auto-approval collapses trust in the whole system.
 
 Every approved test must answer three questions at a glance: **who** approved it (human vs `auto-approver`), **why** (reviewer judgment vs score X above threshold Y), and **can I revoke it** (one-click back to draft). All three must be scannable at table density — never hover-only.
 
@@ -139,7 +99,28 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 **Anti-patterns to reject in review:** merging auto + human under one "Approved" badge · provenance only on hover · silent first-enable with no preview · skipping the activity row · shipping without the Revoke button · hiding the auto-count from the sidebar.
 
-### 4 · AUTO-002 — Change detection / diff-aware crawling
+
+### PR checklist
+
+- [ ] **Both scopes shipped in one PR — do not split**
+- [ ] AUTO-003: `tests.confidenceScore` column populated from the existing `deduplicator.js` quality score; new `projects.autoApproveThreshold` column (nullable, default `null`)
+- [ ] AUTO-003: With `autoApproveThreshold: null` (default), all tests are still persisted as `draft` — zero behaviour change for existing projects
+- [ ] AUTO-003: Tests above the threshold are persisted as `approved`, and an `activities` row is written with `userName: "auto-approver"`
+- [ ] AUTO-003: `Tests.jsx` exposes an "Auto-approved" filter pill so reviewers can audit the bypass path
+- [ ] AUTO-003b: Migration adds `approvalSource` / `approvalThreshold` / `approvedAt` / `approvedBy` columns to `tests`; `approvalThreshold` is captured *at decision time*, not the current project setting
+- [ ] AUTO-003b: `Tests.jsx` table visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft without hover (two-tone badge column)
+- [ ] AUTO-003b: Test header surfaces full provenance line + **Revoke to draft** button on every approved test (auto and human)
+- [ ] AUTO-003b: New `POST /api/v1/tests/:id/revoke` and `GET /api/v1/projects/:id/approval-stats` routes registered in `backend/src/middleware/permissions.json`
+- [ ] AUTO-003b: Sidebar shows `🤖 N auto today` alongside the draft count when N > 0
+- [ ] AUTO-003b: First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting
+- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]` (one entry per scope, grouped under appropriate Keep-a-Changelog sections)
+- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)
+
+---
+
+## ⏭ Queue (next 4 PRs after current)
+
+### 1 · AUTO-002 — Change detection / diff-aware crawling
 **Effort:** L | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** `ROADMAP.md` Phase 4 (AUTO-002)
 
 Sentri re-crawls the entire site on every run. An autonomous system should detect what changed since the last crawl (new pages, modified DOM, removed elements) and only regenerate tests for affected pages. `backend/src/pipeline/crawlBrowser.js` has no concept of a previous crawl baseline today — this is the difference between "run everything nightly" and "test only what changed," and it's a hard prerequisite for AUTO-004 (test impact analysis from git diff) and the smarter slice of AUTO-001 (risk-based ordering).
@@ -154,7 +135,7 @@ After each crawl, store a `crawl_baseline` snapshot per project (page URL → DO
 - Second crawl with a modified page regenerates tests only for that URL; untouched pages' approved tests survive unchanged.
 - Pages removed from the site are surfaced in the run response so reviewers can decide whether to soft-delete their tests.
 
-### 5 · AI-001 — Generic OpenAI-compatible provider adapter (BYO endpoint)
+### 2 · AI-001 — Generic OpenAI-compatible provider adapter (BYO endpoint)
 **Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** Operator feedback — "support DeepSeek / Groq / Together / Fireworks / OpenRouter / Mistral / Azure OpenAI / xAI Grok / vLLM / LM Studio / LocalAI without hard-coding an SDK per vendor"
 
 Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`, (2) a new branch in `callProvider()` at `backend/src/aiProvider.js:813`, and (3) wiring through `CLOUD_KEY_MAP` / `CLOUD_DEFAULT_MODELS` / `PROVIDER_DOCS`. This blocks every "support DeepSeek" / "support Groq" / "support OpenRouter" request behind a code change. The industry has converged on the **OpenAI Chat Completions wire format** — DeepSeek, Groq, Together, Fireworks, OpenRouter, Mistral, xAI, Azure OpenAI, vLLM, LM Studio, and LocalAI all expose `/v1/chat/completions` with the OpenAI request/response schema. Reuse the existing `openai` SDK with `new OpenAI({ apiKey, baseURL })` (the SDK's own supported pattern) and we get every one of them with **zero new dependencies**.
@@ -177,12 +158,38 @@ Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`
 
 **Anti-patterns to reject in review:** adding a new SDK per vendor (defeats the point) · hand-rolling raw `fetch()` (loses streaming + retry semantics for nothing) · skipping SSRF validation on user-supplied baseUrl (Sentri runs server-side, this is a real security boundary) · letting compat slots bypass the FEA-003 circuit breaker (one bad endpoint shouldn't be exempt from rate-limit accounting) · merging compat into the existing `"openai"` branch instead of a separate type (makes "is this our OpenAI key or a compat slot" indistinguishable in logs/metrics).
 
+### 3 · AUTO-001 — Risk-based test selection / ordering
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-002 (item 1) provides the changed-pages signal that makes risk scoring meaningful | **Source:** `ROADMAP.md` Phase 4 (AUTO-001)
+
+Sentri runs every approved test on every trigger. An autonomous system should *order* tests by risk so the most likely-to-fail tests run first (fail-fast feedback) and budget-bounded runs cover the highest-signal slice. Risk inputs already present in the database: per-test historical pass rate (`runs.results[]`), recency of last edit (`tests.updatedAt`), self-heal frequency (CAP-004 telemetry), and — once AUTO-002 lands — whether the test's page changed since the last crawl. Compute a `riskScore` per test at run-planning time, sort the run queue by descending risk, and expose a `--budget=<minutes>` flag that truncates the queue when wall-clock exceeds budget (always-run smoke tests are pinned to the front regardless of score).
+
+**Files:** new `backend/src/pipeline/riskScorer.js` (pure function: test record + history → score) · `backend/src/testRunner.js` (sort `runQueue` by risk before dispatch; honour `--budget`) · `backend/src/routes/trigger.js` + `backend/src/routes/runs.js` (accept `budgetMinutes` param) · `frontend/src/pages/Runs.jsx` (per-test `riskScore` chip in the run-detail table) · `backend/tests/risk-scorer.test.js` (flaky-test ranking, recently-edited boost, smoke-test pin, budget truncation)
+
+**Acceptance criteria:**
+- Tests with a recent failure rank higher than tests that have been green for weeks.
+- `budgetMinutes=10` truncates the queue at the 10-minute mark; pinned smoke tests still run even when truncated.
+- Default behaviour with no budget is identical to today (full queue, just reordered) — zero regression for existing schedules.
+
+### 4 · INT-002 — GitHub PR check comments
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none (uses existing GitHub App connection from CAP-003 / FEA secrets path) | **Source:** `ROADMAP.md` Phase 3 (INT-002)
+
+When a Sentri run triggered by a GitHub webhook completes, post a check-run comment on the PR summarising pass/fail counts, regressed tests (with diff vs the previous run on `main`), and Web Vitals budget violations. Today the run results live only in the Sentri UI — operators have to context-switch to see them. A native PR check makes Sentri feel like a first-class CI gate and unlocks the "block merge until tests pass" workflow that matters for AUTO-003 trust.
+
+**Files:** new `backend/src/integrations/githubChecks.js` (Checks API client — create / update / conclude) · `backend/src/routes/webhooks.js` (subscribe `pull_request` + `push` events; map to a Sentri run) · `backend/src/testRunner.js` (post check-run on completion, including regressed-test diff vs the base SHA's last green run) · `backend/src/middleware/permissions.json` · `frontend/src/pages/Settings.jsx` (per-project "Post PR checks" toggle) · `backend/tests/github-checks.test.js` (mock Octokit; assert payload shape, regression-diff logic, failure-mode posting)
+
+**Acceptance criteria:**
+- Opening / pushing to a PR on a Sentri-connected repo creates a `pending` check-run, then transitions to `success` / `failure` / `neutral` on completion.
+- Failure summary includes regressed tests (failing now, green on the base SHA's last run) — not the full failing list, which would be noisy on red branches.
+- Web Vitals budget violations appear as a separate bullet so they don't get lost in the test-failure list.
+- The integration is opt-in per project; existing projects see no behaviour change until the toggle is flipped.
+
 ---
 
 ## ✅ Recently completed
 
 | ID | Title | PR |
 |----|-------|----|
+| AUTO-017.3 + PROC-001 + PROC-003 | Web Vitals trend charts on `ProjectQualityCard` (LCP / CLS / INP / TTFB) backed by per-run averages from `recordMetric()` in `backend/src/testRunner.js` via new `GET /api/v1/projects/:id/metrics` route + `useProjectMetricQuery` hook (fail-soft — transient API errors render an empty trend, not a banner); threshold lines sourced from `project.webVitalsBudgets`. **PROC-001:** new `.github/workflows/no-orphan-routes.yml` fails PRs that add a `router.<method>(…)` in `backend/src/routes/*.js` without touching `frontend/src/api.js` / pages / components; `[no-ui]` PR-title opt-out for genuinely UI-less endpoints. Convention documented in `REVIEW.md`, `AGENT.md`, `CONTRIBUTING.md`, and the PR template. **PROC-003:** `scripts/promote-sprint-item.mjs` extended with three idempotent transforms — `appendCompletedWorkSummary()`, `decrementRemainingCounts()` (with `inferCategory()` prefix routing + Totals-row recompute), `pruneShippedRoadmapEntry()` — folding REVIEW.md § Sprint Tracker Hand-off manual steps into the script. New `backend/tests/web-vitals-trend.test.js` locks down that the recorded sample is the per-run average (not the budget); `backend/tests/quality-gates.test.js` extended with HTTP-level coverage for the new metrics route (400 / 404 / 200 + `limit` clamp). | #9 |
 | CAP-003 | Secret scanner gate on AI-generated Playwright tests. New `backend/src/pipeline/secretScanner.js` runs a `gitleaks`-style scan inside the validate stage (`backend/src/pipeline/testValidator.js`); built-in detectors (AWS access key IDs, JWTs, `Bearer` tokens) plus best-effort `.github/.gitleaks.toml` reuse. Matched tests are rejected, annotated with a redacted finding list (first/last 4 chars only — never plaintext), and the run is flagged via `run.secretScanBlocked = true` in `pipelineOrchestrator.js` so CI consumers can fail the build on regression. Positive + negative fixtures (AWS keys / JWTs / `Bearer` tokens / clean code) in `backend/tests/secret-scanner.test.js`, registered in `backend/tests/run-tests.js`. | #12 |
 | UI-REFACTOR-001 | Extract `ConfigurablePanel` abstraction from `QualityGatesPanel` (AUTO-012) + `WebVitalsBudgetsPanel` (AUTO-017) — ~95% structural overlap eliminated. Shipped alongside an Automation page redesign: four top-level WAI-ARIA tabs (**Triggers & Schedules**, **Quality Gates**, **Integrations**, **Snippets**), per-project accordions inside each tab with live status chips (`N tokens` / `Scheduled`, `Gates configured` / `Budgets set`), and a new `frontend/src/utils/automationStatus.js` parser + cache + invalidation bus pinning the backend response shapes (`data.schedule.enabled`, `data.qualityGates`, `data.webVitalsBudgets`) with regression coverage in `frontend/tests/automation-status.test.js`. The legacy ProjectDetail → Settings tab is removed; Quality Gates / Web Vitals Budgets now live exclusively at `/automation`. Frontend-only — no backend, schema, route, or `permissions.json` changes. | #6 |
 | UI-REFACTOR-002 | Dedicated **Test Lab** page (`/test-lab`, `/projects/:id/test-lab`) for AI test generation. Three-pane layout (project sidebar | configuration | launch panel) with three tabs: **Crawl & Generate**, **Generate from Requirement**, and **Queue** (cross-project active + recent runs). SSE-driven 8-stage live pipeline with `sessionStorage`-backed persistence so navigating away and back resumes the live view. Tests page "Crawl" / "Generate" quick-action cards now navigate to Test Lab; the legacy `CrawlProjectModal` / `GenerateTestModal` / `TestDials` / `ExploreModePicker` / `CrawlDialsPanel` components are deleted. Sidebar gets a new **Test Lab** entry (`Atom` icon); `Tests` icon swapped to `SquareCheckBig` across sidebar, Dashboard, Projects, Reports, Runs (`TypeBadge`), and the command palette so the test-suite concept reads consistently. `Runs.jsx` `TypeBadge` + type-filter strip now also handle `type: "record"` (recorder sessions previously rendered as plain text via the fallback). New `frontend/src/components/test/TestConfig.jsx` consolidates the dials surface into a sub-tabbed component (Coverage / Discovery / Quality / Advanced) with profile-switch resets that match the legacy `TestDials.applyProfile` semantics. Scoped stylesheet `frontend/src/styles/pages/test-lab.css`. Pure frontend migration — no backend, schema, route, or `permissions.json` changes. | #5 |

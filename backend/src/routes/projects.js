@@ -36,6 +36,7 @@ import { sanitiseProjectForClient } from "../utils/projectSanitiser.js";
 import { reloadSchedule, stopSchedule, getNextRunAt } from "../scheduler.js";
 import { requireRole } from "../middleware/requireRole.js";
 import * as notificationSettingsRepo from "../database/repositories/notificationSettingsRepo.js";
+import * as metricSamplesRepo from "../database/repositories/metricSamplesRepo.js";
 import { generateNotificationSettingId } from "../utils/idGenerator.js";
 import { validateUrl } from "../utils/ssrfGuard.js";
 import cron from "node-cron";
@@ -317,6 +318,31 @@ router.delete("/:id/web-vitals-budgets", requireRole("qa_lead"), (req, res) => {
   if (!project) return res.status(404).json({ error: "not found" });
   projectRepo.update(req.params.id, { webVitalsBudgets: null });
   res.json({ ok: true, webVitalsBudgets: null });
+});
+
+
+/**
+ * GET /api/v1/projects/:id/metrics?key=<metricKey>&since=<ms>&limit=<n>
+ *
+ * Read a project's time-series samples for a single metric (MET-001 +
+ * AUTO-017.3). Powers the `<TrendChart>` instances in
+ * `ProjectQualityCard`'s Web Vitals tab. Workspace-scoped — falls through
+ * to the same 404 as every other project route when the caller isn't a
+ * member.
+ */
+router.get("/:id/metrics", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const key = typeof req.query.key === "string" ? req.query.key : "";
+  if (!key) return res.status(400).json({ error: "key is required" });
+  const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+  const rawLimit = Number(req.query.limit);
+  // Cap at 200 to match `getSeries`'s default ceiling — keeps the
+  // `<TrendChart>` last-30 window cheap and prevents callers from
+  // pulling the whole table.
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 200;
+  const samples = metricSamplesRepo.getSeries(req.params.id, key, { since, limit });
+  res.json({ samples });
 });
 
 // ─── Schedule endpoints ───────────────────────────────────────────────────────

@@ -440,6 +440,27 @@ export const api = {
    */
   deleteWebVitalsBudgets: (projectId) => req("DELETE", `/projects/${projectId}/web-vitals-budgets`),
 
+  // ── Project metric samples (MET-001 / AUTO-017.3) ───────────────────────────
+  /**
+   * Read a project's time-series samples for a single `metricKey`. Powers
+   * the `<TrendChart>` instances in `ProjectQualityCard`'s Web Vitals tab
+   * (`webVitals.lcp` / `.cls` / `.inp` / `.ttfb`) and any future per-project
+   * trend surface. Server caps `limit` at 200; the chart slices to 30.
+   *
+   * @param {string} projectId
+   * @param {string} metricKey - e.g. `"webVitals.lcp"`.
+   * @param {Object} [opts]
+   * @param {number} [opts.since=0] - Lower-bound timestamp (epoch ms).
+   * @param {number} [opts.limit=200]
+   * @returns {Promise<{samples: Array<{ts: number, value: number, tags: Object|null}>}>}
+   */
+  getProjectMetric: (projectId, metricKey, { since = 0, limit = 200 } = {}) => {
+    const params = new URLSearchParams({ key: metricKey });
+    if (since) params.set("since", String(since));
+    if (limit !== 200) params.set("limit", String(limit));
+    return req("GET", `/projects/${projectId}/metrics?${params}`);
+  },
+
   // ── Notifications (FEA-001) ──────────────────────────────────────────────────
   /**
    * Get the notification settings for a project, or null if none exist.

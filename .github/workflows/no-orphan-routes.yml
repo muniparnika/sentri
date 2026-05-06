@@ -1,0 +1,86 @@
+name: PROC-001 no-orphan-routes
+
+# PROC-001 — Fail when a PR adds a backend route without a frontend consumer
+# in the same PR. Convention is documented in REVIEW.md and AGENT.md; this
+# workflow is the enforcement layer so the rule isn't review-discretion only.
+#
+# Detection signal:
+#   route count = total `router.<method>(…)` calls across `backend/src/routes/*.js`
+#   delta       = head_count − base_count
+#   if delta > 0 AND PR doesn't touch frontend/src/api.js or
+#      frontend/src/pages/*.jsx or frontend/src/components/**/*.jsx
+#   AND PR title doesn't contain the `[no-ui]` opt-out token → fail.
+#
+# Counting deltas (rather than greping the diff for `+router.…`) avoids
+# false positives when context lines shift around an unchanged route.
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "backend/src/routes/**"
+      - "frontend/src/api.js"
+      - "frontend/src/pages/**"
+      - "frontend/src/components/**"
+      - ".github/workflows/no-orphan-routes.yml"
+
+jobs:
+  check:
+    name: no-orphan-routes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect orphan routes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # ── Opt-out: API-only PRs (admin endpoints, healthchecks, etc.) ───
+          if [[ "$PR_TITLE" == *"[no-ui]"* ]]; then
+            echo "PR title contains [no-ui]; skipping orphan-route check."
+            exit 0
+          fi
+
+          # ── Count `router.<method>(` literals at base vs head ─────────────
+          # NB: `git ls-tree` does NOT expand shell-style globs in pathspecs —
+          # `'backend/src/routes/*.js'` matches zero files. We list the
+          # directory and filter to `*.js` with grep so the count is real.
+          count_routes() {
+            local sha="$1"
+            git ls-tree -r --name-only "$sha" -- backend/src/routes/ \
+              | grep -E '\.js$' \
+              | xargs -r -I{} git show "$sha:{}" \
+              | grep -cE '^[[:space:]]*router\.(get|post|patch|put|delete|use)\(' \
+              || true
+          }
+
+          BASE_COUNT=$(count_routes "$BASE_SHA")
+          HEAD_COUNT=$(count_routes "$HEAD_SHA")
+          DELTA=$(( HEAD_COUNT - BASE_COUNT ))
+
+          echo "Base route count:  $BASE_COUNT"
+          echo "Head route count:  $HEAD_COUNT"
+          echo "Delta:             $DELTA"
+
+          if (( DELTA <= 0 )); then
+            echo "No new routes added; skipping."
+            exit 0
+          fi
+
+          # ── Frontend-touch check ──────────────────────────────────────────
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          if echo "$CHANGED" | grep -qE '^frontend/src/(api\.js|pages/.*\.jsx|components/.*\.jsx)$'; then
+            echo "Frontend consumer touched in this PR — orphan check satisfied."
+            exit 0
+          fi
+
+          echo "::error::PROC-001 violation: PR adds $DELTA backend route(s) but does not touch frontend/src/api.js, frontend/src/pages/*.jsx, or frontend/src/components/**/*.jsx."
+          echo "::error::Either ship the frontend consumer in the same PR, or add [no-ui] to the PR title for API-only changes (e.g. internal admin endpoints, healthchecks)."
+          exit 1

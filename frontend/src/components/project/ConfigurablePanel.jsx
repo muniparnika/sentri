@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Save, Trash2, RefreshCw } from "lucide-react";
 import { invalidateAutomationStatus } from "../../utils/automationStatus.js";
+import { invalidateProjectDataCache } from "../../hooks/useProjectData.js";
 
 /** Map ConfigurablePanel resultKey → automation status cache kind. */
 const RESULT_KEY_TO_STATUS_KIND = {
@@ -82,9 +83,16 @@ export default function ConfigurablePanel({
   projectId,
 }) {
   // Notify the Automation status-chip cache after any successful save/clear.
+  // Also bust the shared project-data cache so any consumer reading
+  // `project.webVitalsBudgets` / `project.qualityGates` off the project list
+  // (e.g. `<ProjectQualityCard>`'s threshold prop on the AUTO-017.3
+  // `<TrendChart>` instances) refreshes immediately rather than waiting for
+  // the next route navigation. Without this, editing a budget here leaves
+  // the trend chart's threshold line drawn at the old value.
   const notifyStatus = () => {
     const kind = RESULT_KEY_TO_STATUS_KIND[resultKey];
     if (projectId && kind) invalidateAutomationStatus(projectId, kind);
+    invalidateProjectDataCache();
   };
   const blankForm = Object.fromEntries(fields.map((f) => [f.key, ""]));
 

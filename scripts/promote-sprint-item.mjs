@@ -148,6 +148,176 @@ function updateCurrentSprintLine(roadmapMd, newId) {
   );
 }
 
+/**
+ * PROC-003 — split a possibly-bundled item id (e.g. `"AUTO-017.3 + PROC-001 + PROC-003"`)
+ * into its constituent ids. Single-id strings round-trip unchanged.
+ */
+function splitBundledIds(id) {
+  return String(id || "")
+    .split(/\s*\+\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * PROC-003 — infer the Summary table category for an ID. Falls through to
+ * `null` for orphan prefixes (`MET-*`, `UI-REFACTOR-*`) so the caller can
+ * skip the Summary-row decrement rather than guess wrong.
+ */
+function inferCategory(id) {
+  if (id.startsWith("SEC-"))               return "Security & Compliance";
+  if (id.startsWith("INF-"))               return "Infrastructure";
+  if (id.startsWith("ACL-"))               return "Access Control";
+  if (id.startsWith("FEA-"))               return "Platform Features";
+  if (id.startsWith("DIF-") || id.startsWith("INT-")) return "Differentiators";
+  if (id.startsWith("AUTO-"))              return "Autonomous Intelligence";
+  if (id.startsWith("CAP-"))               return "Capabilities";
+  if (id.startsWith("PROC-"))              return "Process automation";
+  if (id.startsWith("MNT-") || id.startsWith("MAINT-")) return "Maintenance";
+  return null;
+}
+
+/**
+ * PROC-003 — append a row to ROADMAP.md's `## Completed Work Summary` table
+ * for each shipped id. The shipped record's title is shared across bundle
+ * members (the heading prose was authored once) so per-id rows reuse the
+ * same title — this matches how `MET-001 + CAP-004 + PROC-002` ought to
+ * have been recorded after PR #8 (each as its own row).
+ *
+ * Idempotent: skips rows whose `| ID |` cell already exists in the table
+ * so re-running the script doesn't double-write.
+ */
+function appendCompletedWorkSummary(roadmapMd, shipped, prNum) {
+  const marker = "## Completed Work Summary";
+  const start = roadmapMd.indexOf(marker);
+  if (start < 0) return roadmapMd;
+
+  // Locate the table by walking forward from the marker until we find the
+  // header row, then walk past existing data rows until the first non-`|`
+  // line (the table's blank-line terminator). Insert above that boundary.
+  const tail = roadmapMd.slice(start);
+  const lines = tail.split("\n");
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\|\s*ID\s*\|\s*Title\s*\|/.test(lines[i])) { headerIdx = i; break; }
+  }
+  if (headerIdx < 0) return roadmapMd;
+
+  let insertAt = headerIdx + 2; // skip header + separator
+  while (insertAt < lines.length && /^\|/.test(lines[insertAt])) insertAt++;
+
+  const ids = splitBundledIds(shipped.id);
+  const existing = lines.slice(headerIdx + 2, insertAt).join("\n");
+  const newRows = ids
+    .filter((id) => !new RegExp(`^\\|\\s*${id.replace(/[-/.]/g, "\\$&")}\\s*\\|`, "m").test(existing))
+    .map((id) => `| ${id} | ${shipped.title} | PR #${prNum} |`);
+
+  if (newRows.length === 0) return roadmapMd;
+
+  const rebuilt = [
+    ...lines.slice(0, insertAt),
+    ...newRows,
+    ...lines.slice(insertAt),
+  ].join("\n");
+  return roadmapMd.slice(0, start) + rebuilt;
+}
+
+/**
+ * PROC-003 — for each shipped id, decrement its category's `Remaining`
+ * count and bump `✅ Done` in the bottom-of-file `## Summary` table, then
+ * recompute the `**Totals**` row. Best-effort — orphan prefixes (no
+ * matching category) are skipped silently so the script never blows up
+ * on `MET-*` / `UI-REFACTOR-*` style items.
+ *
+ * The table shape is:
+ *   | Category | Total | ✅ Done | 🔄 In Progress | 🔲 Pending | Remaining |
+ * We only mutate the `✅ Done` and `🔲 Pending` columns (Done +1, Pending
+ * -1) per shipped id; `Total` is invariant. The `Remaining` column is a
+ * free-text annotation — left unchanged because the script can't safely
+ * rewrite prose without losing context.
+ */
+function decrementRemainingCounts(roadmapMd, shipped) {
+  const ids = splitBundledIds(shipped.id);
+  let out = roadmapMd;
+
+  // Per-category row update.
+  for (const id of ids) {
+    const category = inferCategory(id);
+    if (!category) {
+      console.warn(`[promote] skipped Summary decrement for ${id} (orphan prefix)`);
+      continue;
+    }
+    const rowRe = new RegExp(
+      `^(\\|\\s*${category.replace(/[-&/.]/g, "\\$&")}\\s*\\|\\s*)(\\d+)(\\s*\\|\\s*)(\\d+)(\\s*\\|\\s*)(\\d+)(\\s*\\|\\s*)(\\d+)(\\s*\\|)`,
+      "m"
+    );
+    out = out.replace(rowRe, (_m, p1, total, p3, done, p5, inProg, p7, pending, p9) => {
+      const newDone    = String(Number(done) + 1);
+      const newPending = String(Math.max(0, Number(pending) - 1));
+      return `${p1}${total}${p3}${newDone}${p5}${inProg}${p7}${newPending}${p9}`;
+    });
+  }
+
+  // Totals row recompute by summing every non-Totals data row above it.
+  const summaryStart = out.indexOf("## Summary");
+  if (summaryStart < 0) return out;
+  const tail = out.slice(summaryStart);
+  const lines = tail.split("\n");
+  const dataRows = [];
+  let totalsIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\|\s*\*\*Totals\*\*/.test(lines[i])) { totalsIdx = i; break; }
+    if (/^\|/.test(lines[i]) && !/^\|\s*-+/.test(lines[i]) && !/^\|\s*Category\s*\|/.test(lines[i])) {
+      dataRows.push(lines[i]);
+    }
+  }
+  if (totalsIdx < 0) return out;
+
+  let total = 0, done = 0, inProg = 0, pending = 0;
+  for (const row of dataRows) {
+    const m = row.match(/^\|[^|]+\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
+    if (!m) continue;
+    total   += Number(m[1]);
+    done    += Number(m[2]);
+    inProg  += Number(m[3]);
+    pending += Number(m[4]);
+  }
+  lines[totalsIdx] = lines[totalsIdx].replace(
+    /^(\|\s*\*\*Totals\*\*\s*\|\s*\*\*)(\d+)(\*\*\s*\|\s*\*\*)(\d+)(\*\*\s*\|\s*\*\*)(\d+)(\*\*\s*\|\s*\*\*)(\d+)(\*\*\s*\|)/,
+    (_m, p1, _t, p3, _d, p5, _i, p7, _p, p9) =>
+      `${p1}${total}${p3}${done}${p5}${inProg}${p7}${pending}${p9}`
+  );
+  return out.slice(0, summaryStart) + lines.join("\n");
+}
+
+/**
+ * PROC-003 — for each shipped id, delete its detailed `### <ID> — …` entry
+ * (heading through the next `### ` or `## `), keeping only the row in the
+ * Completed Work Summary table as the canonical record. Best-effort: items
+ * without a detailed entry (like `PROC-*` items, which are spec'd in
+ * NEXT.md and never fully detailed in ROADMAP.md) are skipped silently.
+ *
+ * Trailing `---` separators left orphaned by the prune are collapsed to
+ * a single separator so the file's section structure stays clean.
+ */
+function pruneShippedRoadmapEntry(roadmapMd, shipped) {
+  let out = roadmapMd;
+  for (const id of splitBundledIds(shipped.id)) {
+    const escaped = id.replace(/[-/.]/g, "\\$&");
+    // Match `### <ID> — <title>` through to the next `### ` or `## ` heading.
+    // The lookahead leaves the next heading in place so successive prunes
+    // work against the post-prune buffer.
+    const re = new RegExp(
+      `\\n### ${escaped}\\s+—[\\s\\S]*?(?=\\n##(?:#)? )`,
+      ""
+    );
+    out = out.replace(re, "\n");
+  }
+  // Collapse any `---\n\n---` runs the prune may have produced.
+  out = out.replace(/\n---\s*\n+---\s*\n/g, "\n---\n");
+  return out;
+}
+
 // ── Apply all three transforms ──────────────────────────────────────────────
 let shipped = { id: "unknown", title: "(title not found)" };
 
@@ -162,6 +332,13 @@ if (fs.existsSync(NEXT_PATH)) {
 if (fs.existsSync(ROADMAP_PATH)) {
   let roadmap = fs.readFileSync(ROADMAP_PATH, "utf8");
   roadmap = updateCurrentSprintLine(roadmap, nextItemId);
+  // PROC-003 — three new transforms that fold the manual "Sprint Tracker
+  // Hand-off" steps from REVIEW.md into the script. Each is best-effort and
+  // idempotent: missing sections, orphan ID prefixes, and absent detailed
+  // entries are skipped silently so the script never blows up the hand-off.
+  roadmap = appendCompletedWorkSummary(roadmap, shipped, prNumber);
+  roadmap = decrementRemainingCounts(roadmap, shipped);
+  roadmap = pruneShippedRoadmapEntry(roadmap, shipped);
   fs.writeFileSync(ROADMAP_PATH, roadmap);
 }
 

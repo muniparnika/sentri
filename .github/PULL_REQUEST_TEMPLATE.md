@@ -62,6 +62,7 @@ Closes #<!-- issue number — PRs without a linked issue for non-trivial changes
 - [ ] `docs/changelog.md` updated under `## [Unreleased]` (user-visible changes only)
 - [ ] `QA.md` walked for affected flows; Golden E2E re-run if core flow was touched
 - [ ] `permissions.json` updated if a `requireRole()` gate was added/changed
+- [ ] No orphan backend routes (PROC-001): every new `router.<method>(…)` in `backend/src/routes/*.js` has a matching frontend consumer in this PR — `frontend/src/api.js` helper or a `frontend/src/pages/*.jsx` / `frontend/src/components/**/*.jsx` callsite. API-only PRs require a `[no-ui]` token in the PR title.
 - [ ] ROADMAP.md + NEXT.md updated if this closes a roadmap item (see REVIEW.md)
 - [ ] UI changes meet accessibility requirements (keyboard nav, ARIA roles, color contrast)
 - [ ] No secrets, API keys, or credentials in the diff
