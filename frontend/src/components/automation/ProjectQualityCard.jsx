@@ -15,7 +15,33 @@ import { useState } from "react";
 import { ChevronDown, Globe, ShieldCheck, Gauge } from "lucide-react";
 import QualityGatesPanel from "../project/QualityGatesPanel.jsx";
 import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
+import TrendChart from "../shared/TrendChart.jsx";
 import { useAutomationStatusQuery } from "../../hooks/queries/useAutomationStatusQueries.js";
+import { useProjectMetricQuery } from "../../hooks/queries/useProjectMetricQuery.js";
+
+// AUTO-017.3: the four Web Vital metrics we render trend charts for. Each
+// entry's `key` is the `metric_samples.metricKey` written by `recordMetric()`
+// in `backend/src/testRunner.js`; `budgetKey` is the matching field on
+// `project.webVitalsBudgets` so threshold lines come from project config
+// (NEXT.md AUTO-017.3 — "Threshold lines come from the project's
+// `webVitalsBudgets` so users see violations in context").
+const WEB_VITAL_METRICS = [
+  { key: "webVitals.lcp",  budgetKey: "lcp",  title: "LCP (ms)"   },
+  { key: "webVitals.cls",  budgetKey: "cls",  title: "CLS"        },
+  { key: "webVitals.inp",  budgetKey: "inp",  title: "INP (ms)"   },
+  { key: "webVitals.ttfb", budgetKey: "ttfb", title: "TTFB (ms)"  },
+];
+
+function WebVitalTrend({ projectId, metricKey, title, threshold }) {
+  const { data: samples } = useProjectMetricQuery(projectId, metricKey);
+  return (
+    <TrendChart
+      title={title}
+      samples={samples}
+      threshold={Number.isFinite(Number(threshold)) ? Number(threshold) : null}
+    />
+  );
+}
 
 const INNER_TABS = [
   { id: "gates",     label: "Quality Gates",   icon: ShieldCheck },
@@ -105,11 +131,34 @@ export default function ProjectQualityCard({
               />
             )}
             {innerTab === "webvitals" && (
-              <WebVitalsBudgetsPanel
-                projectId={project.id}
-                canEdit={canEdit}
-                onToast={onToast}
-              />
+              <>
+                <WebVitalsBudgetsPanel
+                  projectId={project.id}
+                  canEdit={canEdit}
+                  onToast={onToast}
+                />
+                {/* AUTO-017.3: per-metric trend charts. Threshold lines are
+                    sourced from the project's `webVitalsBudgets` so users see
+                    violations in context (PR checklist NEXT.md:67). */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                    gap: 12,
+                    marginTop: 16,
+                  }}
+                >
+                  {WEB_VITAL_METRICS.map((m) => (
+                    <WebVitalTrend
+                      key={m.key}
+                      projectId={project.id}
+                      metricKey={m.key}
+                      title={m.title}
+                      threshold={project.webVitalsBudgets?.[m.budgetKey]}
+                    />
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
