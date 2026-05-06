@@ -158,6 +158,31 @@ Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`
 
 **Anti-patterns to reject in review:** adding a new SDK per vendor (defeats the point) · hand-rolling raw `fetch()` (loses streaming + retry semantics for nothing) · skipping SSRF validation on user-supplied baseUrl (Sentri runs server-side, this is a real security boundary) · letting compat slots bypass the FEA-003 circuit breaker (one bad endpoint shouldn't be exempt from rate-limit accounting) · merging compat into the existing `"openai"` branch instead of a separate type (makes "is this our OpenAI key or a compat slot" indistinguishable in logs/metrics).
 
+### 3 · AUTO-001 — Risk-based test selection / ordering
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-002 (item 1) provides the changed-pages signal that makes risk scoring meaningful | **Source:** `ROADMAP.md` Phase 4 (AUTO-001)
+
+Sentri runs every approved test on every trigger. An autonomous system should *order* tests by risk so the most likely-to-fail tests run first (fail-fast feedback) and budget-bounded runs cover the highest-signal slice. Risk inputs already present in the database: per-test historical pass rate (`runs.results[]`), recency of last edit (`tests.updatedAt`), self-heal frequency (CAP-004 telemetry), and — once AUTO-002 lands — whether the test's page changed since the last crawl. Compute a `riskScore` per test at run-planning time, sort the run queue by descending risk, and expose a `--budget=<minutes>` flag that truncates the queue when wall-clock exceeds budget (always-run smoke tests are pinned to the front regardless of score).
+
+**Files:** new `backend/src/pipeline/riskScorer.js` (pure function: test record + history → score) · `backend/src/testRunner.js` (sort `runQueue` by risk before dispatch; honour `--budget`) · `backend/src/routes/trigger.js` + `backend/src/routes/runs.js` (accept `budgetMinutes` param) · `frontend/src/pages/Runs.jsx` (per-test `riskScore` chip in the run-detail table) · `backend/tests/risk-scorer.test.js` (flaky-test ranking, recently-edited boost, smoke-test pin, budget truncation)
+
+**Acceptance criteria:**
+- Tests with a recent failure rank higher than tests that have been green for weeks.
+- `budgetMinutes=10` truncates the queue at the 10-minute mark; pinned smoke tests still run even when truncated.
+- Default behaviour with no budget is identical to today (full queue, just reordered) — zero regression for existing schedules.
+
+### 4 · INT-002 — GitHub PR check comments
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none (uses existing GitHub App connection from CAP-003 / FEA secrets path) | **Source:** `ROADMAP.md` Phase 3 (INT-002)
+
+When a Sentri run triggered by a GitHub webhook completes, post a check-run comment on the PR summarising pass/fail counts, regressed tests (with diff vs the previous run on `main`), and Web Vitals budget violations. Today the run results live only in the Sentri UI — operators have to context-switch to see them. A native PR check makes Sentri feel like a first-class CI gate and unlocks the "block merge until tests pass" workflow that matters for AUTO-003 trust.
+
+**Files:** new `backend/src/integrations/githubChecks.js` (Checks API client — create / update / conclude) · `backend/src/routes/webhooks.js` (subscribe `pull_request` + `push` events; map to a Sentri run) · `backend/src/testRunner.js` (post check-run on completion, including regressed-test diff vs the base SHA's last green run) · `backend/src/middleware/permissions.json` · `frontend/src/pages/Settings.jsx` (per-project "Post PR checks" toggle) · `backend/tests/github-checks.test.js` (mock Octokit; assert payload shape, regression-diff logic, failure-mode posting)
+
+**Acceptance criteria:**
+- Opening / pushing to a PR on a Sentri-connected repo creates a `pending` check-run, then transitions to `success` / `failure` / `neutral` on completion.
+- Failure summary includes regressed tests (failing now, green on the base SHA's last run) — not the full failing list, which would be noisy on red branches.
+- Web Vitals budget violations appear as a separate bullet so they don't get lost in the test-failure list.
+- The integration is opt-in per project; existing projects see no behaviour change until the toggle is flipped.
+
 ---
 
 ## ✅ Recently completed
