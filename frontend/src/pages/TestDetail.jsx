@@ -868,7 +868,7 @@ export default function TestDetail() {
              * 017), so we hand it to `fmtRelativeTimeFull` as an ISO string.
              */}
             {test.reviewStatus === "approved" && (
-              <div className="td-approval-provenance" style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 4 }}>
+              <div className="td-approval-provenance">
                 {test.approvalSource === "auto" ? (
                   <>
                     🤖 Auto-approved

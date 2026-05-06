@@ -801,6 +801,15 @@
   justify-content: center;
 }
 
+/* AUTO-003b: visible approval provenance line above the Revoke button.
+   NEXT.md:83 calls out hover-only provenance as an anti-pattern, so this
+   stays inline above the button at table density. */
+.td-approval-provenance {
+  font-size: 0.75rem;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+
 .td-draft-btn {
   width: 100%;
   justify-content: center;

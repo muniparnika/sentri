@@ -80,8 +80,7 @@ export default function ProjectHeader({
             <a href={project.url} target="_blank" rel="noreferrer" className="text-xs text-muted text-mono">{project.url}</a>
             {approvalStats && approvalStats.total > 0 && (
               <div
-                className="text-xs text-muted"
-                style={{ marginTop: 4 }}
+                className="text-xs text-muted pd-approval-aggregate"
                 title="Approval breakdown for this project (AUTO-003b)"
               >
                 {approvalStats.total} tests · {approvalStats.human} human · {approvalStats.auto} auto 🤖 · {approvalStats.draft} drafts

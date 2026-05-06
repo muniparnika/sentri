@@ -881,15 +881,12 @@ export default function Tests() {
                             📝 Draft · 0.62 (amber). Provenance must be
                             visible at table density — never hover-only
                             (NEXT.md anti-pattern). */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                        <div className="tests-review-cell">
                           {(!t.reviewStatus || t.reviewStatus === "draft") && (
-                            <span
-                              className="badge badge-amber"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                            >
+                            <span className="badge badge-amber tests-review-badge">
                               📝 Draft
                               {Number.isFinite(t.confidenceScore) && (
-                                <span style={{ opacity: 0.85, fontVariantNumeric: "tabular-nums" }}>
+                                <span className="tests-review-badge__score">
                                   · {t.confidenceScore.toFixed(2)}
                                 </span>
                               )}
@@ -897,25 +894,17 @@ export default function Tests() {
                           )}
                           {t.reviewStatus === "approved" && t.approvalSource === "auto" && (
                             <span
-                              className="badge"
-                              style={{
-                                display: "inline-flex", alignItems: "center", gap: 4,
-                                background: "rgba(124,58,237,0.12)", color: "#7c3aed",
-                                fontVariantNumeric: "tabular-nums",
-                              }}
+                              className="badge tests-review-badge tests-review-badge--auto"
                               aria-label={`Auto-approved at confidence ${t.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${t.approvalThreshold?.toFixed?.(2) ?? "?"})`}
                             >
                               🤖 Auto
                               {Number.isFinite(t.confidenceScore) && (
-                                <span style={{ opacity: 0.85 }}>· {t.confidenceScore.toFixed(2)}</span>
+                                <span className="tests-review-badge__score">· {t.confidenceScore.toFixed(2)}</span>
                               )}
                             </span>
                           )}
                           {t.reviewStatus === "approved" && t.approvalSource !== "auto" && (
-                            <span
-                              className="badge badge-green"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                            >
+                            <span className="badge badge-green tests-review-badge">
                               👤 Human
                             </span>
                           )}
