@@ -49,9 +49,13 @@ jobs:
           fi
 
           # ── Count `router.<method>(` literals at base vs head ─────────────
+          # NB: `git ls-tree` does NOT expand shell-style globs in pathspecs —
+          # `'backend/src/routes/*.js'` matches zero files. We list the
+          # directory and filter to `*.js` with grep so the count is real.
           count_routes() {
             local sha="$1"
-            git ls-tree -r --name-only "$sha" -- 'backend/src/routes/*.js' \
+            git ls-tree -r --name-only "$sha" -- backend/src/routes/ \
+              | grep -E '\.js$' \
               | xargs -r -I{} git show "$sha:{}" \
               | grep -cE '^[[:space:]]*router\.(get|post|patch|put|delete|use)\(' \
               || true
