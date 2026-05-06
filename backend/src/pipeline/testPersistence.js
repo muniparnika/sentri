@@ -31,7 +31,12 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
     const testId = generateTestId();
     const confidenceScore = Number.isFinite(t?.confidenceScore) ? t.confidenceScore : (t._quality || 0);
     const autoApproved = threshold !== null && confidenceScore >= threshold;
-    const approvedAt = autoApproved ? new Date().toISOString() : null;
+    // approvedAt is epoch ms (INTEGER per migration 017 + NEXT.md spec) so the
+    // approvals timeline can do straight arithmetic ranges; reviewedAt stays
+    // ISO-string to match the rest of the codebase's review timestamp convention.
+    const now = new Date();
+    const approvedAt = autoApproved ? now.getTime() : null;
+    const reviewedAt = autoApproved ? now.toISOString() : null;
     const test = {
       // Spread AI-generated fields first so our critical fields below always win.
       // This prevents the AI from accidentally overriding id, projectId, reviewStatus, etc.
@@ -59,7 +64,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       assertionEnhanced: t._assertionEnhanced || false,
       // All generated tests start as draft — humans must approve before regression
       reviewStatus: autoApproved ? "approved" : "draft",
-      reviewedAt: approvedAt,
+      reviewedAt,
       approvalSource: autoApproved ? "auto" : null,
       approvalThreshold: autoApproved ? threshold : null,
       approvedAt,
