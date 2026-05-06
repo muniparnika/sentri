@@ -102,7 +102,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             type="number"
-            min="0"
+            min="0.05"
             max="1"
             step="0.05"
             value={value}
