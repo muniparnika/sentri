@@ -72,8 +72,8 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
   const save = async () => {
     const trimmed = value.trim();
     const threshold = trimmed === "" ? null : Number(trimmed);
-    if (threshold !== null && (!Number.isFinite(threshold) || threshold < 0 || threshold > 1)) {
-      onToast?.({ type: "error", message: "Threshold must be empty or a number between 0 and 1." });
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1)) {
+      onToast?.({ type: "error", message: "Threshold must be empty or a number greater than 0 and at most 1." });
       return;
     }
     setSaving(true);

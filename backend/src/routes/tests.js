@@ -723,9 +723,10 @@ router.get("/projects/:id/approval-stats", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
   const tests = testRepo.getByProjectId(project.id);
-  let human = 0, auto = 0, draft = 0;
+  let human = 0, auto = 0, draft = 0, rejected = 0;
   for (const t of tests) {
     if (t.reviewStatus === "draft") draft++;
+    else if (t.reviewStatus === "rejected") rejected++;
     else if (t.reviewStatus === "approved" && t.approvalSource === "auto") auto++;
     else if (t.reviewStatus === "approved") human++;
   }
@@ -750,6 +751,7 @@ router.get("/projects/:id/approval-stats", (req, res) => {
     human,
     auto,
     draft,
+    rejected,
     total: tests.length,
     revertRate7d,
     autoApprovals7d: recentAuto.length,

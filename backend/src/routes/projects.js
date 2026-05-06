@@ -148,8 +148,11 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   const fields = { name, url };
   if (Object.hasOwn(req.body, "autoApproveThreshold")) {
     const threshold = req.body.autoApproveThreshold;
-    if (threshold !== null && (!Number.isFinite(threshold) || threshold < 0 || threshold > 1)) {
-      return res.status(400).json({ error: "autoApproveThreshold must be null or a number between 0 and 1." });
+    // Disallow 0 to prevent a footgun: with `confidenceScore >= 0` always
+    // true, threshold=0 would auto-approve every generated test (including
+    // zero-quality ones). Use `null` to disable auto-approval.
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1)) {
+      return res.status(400).json({ error: "autoApproveThreshold must be null or a number greater than 0 and at most 1." });
     }
     fields.autoApproveThreshold = threshold;
   }
