@@ -53,6 +53,21 @@ export default function ProjectHeader({
       .catch(() => {});
   }, [projectId]);
 
+  // AUTO-003b: header aggregate (N tests · N human · N auto · N drafts).
+  // Lives at the project level — per-run rows are intentionally untouched
+  // so the per-run UI stays focused on execution status, not approval
+  // provenance (per NEXT.md:84). Failures are non-fatal: the aggregate
+  // line just doesn't render if the endpoint errors.
+  const [approvalStats, setApprovalStats] = useState(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api.getApprovalStats(projectId)
+      .then((s) => { if (!cancelled) setApprovalStats(s); })
+      .catch(() => { /* non-fatal — aggregate line just won't render */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
   return (
     <div className="card pd-header">
       <div className="pd-header-top">
@@ -63,6 +78,15 @@ export default function ProjectHeader({
           <div>
             <h1 style={{ fontWeight: 700, fontSize: "1.2rem", marginBottom: 2 }}>{project.name}</h1>
             <a href={project.url} target="_blank" rel="noreferrer" className="text-xs text-muted text-mono">{project.url}</a>
+            {approvalStats && approvalStats.total > 0 && (
+              <div
+                className="text-xs text-muted"
+                style={{ marginTop: 4 }}
+                title="Approval breakdown for this project (AUTO-003b)"
+              >
+                {approvalStats.total} tests · {approvalStats.human} human · {approvalStats.auto} auto 🤖 · {approvalStats.draft} drafts
+              </div>
+            )}
           </div>
         </div>
         <div className="pd-header-actions">
