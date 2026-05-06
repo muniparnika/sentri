@@ -19,7 +19,10 @@ function makeProject(overrides = {}) {
     id: `PRJ-${++projectCounter}`,
     name: "Proj",
     url: "https://example.com",
-    workspaceId: "ws-1",
+    // Omit workspaceId — `projects.workspaceId` has a FK to `workspaces`,
+    // and this unit test exercises pipeline logic (not ACL). Leave null so
+    // the FK isn't checked.
+    workspaceId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
