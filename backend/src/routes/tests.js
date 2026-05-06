@@ -682,6 +682,55 @@ router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req
   res.json(testRepo.getById(test.id));
 });
 
+// POST /api/v1/tests/:testId/revoke (AUTO-003b)
+//
+// Revoke an approved test (auto- or human-approved) back to draft. Clears
+// the provenance columns so a future approval writes a fresh decision-time
+// snapshot, and emits an activity row so the audit trail records who pulled
+// the test back. Workspace-scoped via the test's parent project (ACL-001).
+router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
+  const test = testRepo.getById(req.params.testId);
+  if (!test) return res.status(404).json({ error: "not found" });
+  const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  if (test.reviewStatus !== "approved") {
+    return res.status(400).json({ error: "only approved tests can be revoked" });
+  }
+  const previousSource = test.approvalSource;
+  testRepo.update(test.id, {
+    reviewStatus: "draft",
+    reviewedAt: null,
+    approvalSource: null,
+    approvalThreshold: null,
+    approvedAt: null,
+    approvedBy: null,
+  });
+  logActivity({ ...actor(req),
+    type: "test.revoke", projectId: project.id, projectName: project.name,
+    testId: test.id, testName: test.name,
+    detail: `Approval revoked — "${test.name}" (was ${previousSource === "auto" ? "auto-approved" : "human-approved"})`,
+  });
+  res.json(testRepo.getById(test.id));
+});
+
+// GET /api/v1/projects/:id/approval-stats (AUTO-003b)
+//
+// Returns approval-decision counts (human / auto / draft) plus a 7-day
+// revert rate, used by the project-settings calibration line under the
+// `autoApproveThreshold` input.
+router.get("/projects/:id/approval-stats", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
+  const tests = testRepo.getByProjectId(project.id);
+  let human = 0, auto = 0, draft = 0;
+  for (const t of tests) {
+    if (t.reviewStatus === "draft") draft++;
+    else if (t.reviewStatus === "approved" && t.approvalSource === "auto") auto++;
+    else if (t.reviewStatus === "approved") human++;
+  }
+  res.json({ human, auto, draft, total: tests.length });
+});
+
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
 router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
   // Verify the project belongs to the user's workspace (ACL-001)
