@@ -71,7 +71,7 @@ async function main() {
     assert.equal(saved.approvalSource, "auto");
     assert.equal(saved.approvalThreshold, 80);
     assert.equal(saved.approvedBy, "auto-approver");
-    const activities = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id });
+    const activities = activityRepo.getFiltered({ type: "test.auto_approve", projectId: project.id });
     assert.ok(activities.some((a) => a.testId === ids[0] && a.userName === "auto-approver"));
   }
 

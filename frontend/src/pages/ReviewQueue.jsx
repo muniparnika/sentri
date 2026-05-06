@@ -532,7 +532,7 @@ export default function ReviewQueue() {
   //     `autoApproveThreshold` configured (i.e. auto-approval is *on*; the
   //     tray would otherwise be permanently empty noise on projects that
   //     never auto-approve)
-  // Sourced from `GET /activities?type=test.auto_approved&projectId=…` and
+  // Sourced from `GET /activities?type=test.auto_approve&projectId=…` and
   // filtered client-side to `createdAt >= now - 24h`. Server caps `limit`
   // at 200; 24h of auto-approvals on a single project sits comfortably
   // below that for any realistic threshold.
@@ -542,7 +542,7 @@ export default function ReviewQueue() {
   useEffect(() => {
     if (!trayEnabled) { setTrayItems([]); return; }
     let cancelled = false;
-    api.getActivities({ type: "test.auto_approved", projectId: trayProject.id, limit: 200 })
+    api.getActivities({ type: "test.auto_approve", projectId: trayProject.id, limit: 200 })
       .then((rows) => {
         if (cancelled) return;
         const cutoff = Date.now() - 24 * 60 * 60 * 1000;

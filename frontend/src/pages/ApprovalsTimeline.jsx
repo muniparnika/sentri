@@ -36,11 +36,12 @@ export default function ApprovalsTimeline() {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      api.getActivities({ type: "test.auto_approved", limit: 200 }),
-      // Human-approval handler in `backend/src/routes/tests.js:629` emits
-      // the activity type `test.approve` (singular, no -d) — matching the
-      // existing `test.reject` / `test.create` naming convention. Don't
-      // change to `test.approved` without also migrating the writer.
+      // Activity-type literals follow the imperative `test.<verb>` convention
+      // shared by every `test.*` event in `backend/src/routes/tests.js` and
+      // `backend/src/pipeline/testPersistence.js` (create/approve/reject/
+      // restore/delete/generate/auto_approve/revoke). Don't add the past-tense
+      // `-d` suffix — readers and writers must stay in lockstep.
+      api.getActivities({ type: "test.auto_approve", limit: 200 }),
       api.getActivities({ type: "test.approve", limit: 200 }),
       api.getProjects(),
     ])

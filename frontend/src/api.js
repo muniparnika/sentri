@@ -272,7 +272,7 @@ export const api = {
   /**
    * List activity-log rows, optionally filtered by `type` and/or `projectId`.
    * Workspace-scoped on the backend (`backend/src/routes/system.js`).
-   * Used by `pages/ApprovalsTimeline.jsx` to fetch `test.auto_approved` and
+   * Used by `pages/ApprovalsTimeline.jsx` to fetch `test.auto_approve` and
    * `test.approve` rows for the daily-grouped audit feed.
    * @param {{ type?: string, projectId?: string, limit?: number }} [filters]
    */
@@ -789,9 +789,9 @@ export const api = {
    * Fetch the activity log, optionally filtered by `type` and/or `projectId`.
    * Server caps `limit` at 200 (see `backend/src/routes/system.js`'s
    * `GET /activities`). Powers the ReviewQueue auto-approval tray (AUTO-003b)
-   * which filters by `type === "test.auto_approved"`.
+   * which filters by `type === "test.auto_approve"`.
    * @param {Object} [filters]
-   * @param {string} [filters.type]      - e.g. `"test.auto_approved"`.
+   * @param {string} [filters.type]      - e.g. `"test.auto_approve"`.
    * @param {string} [filters.projectId]
    * @param {number} [filters.limit]
    * @returns {Promise<Array<{id: string, type: string, projectId: string, testId: string|null, testName: string|null, detail: string, createdAt: string, userName: string|null, meta: Object|null}>>}

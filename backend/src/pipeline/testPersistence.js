@@ -96,7 +96,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
     testRepo.create(test);
     if (autoApproved) {
       logActivity({
-        type: "test.auto_approved",
+        type: "test.auto_approve",
         projectId: project.id,
         projectName: project.name,
         testId,

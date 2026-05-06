@@ -749,7 +749,7 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
   }
 
   // 7-day revert rate: of the auto-approvals emitted in the last 7 days
-  // (`test.auto_approved` activity rows), how many were subsequently pulled
+  // (`test.auto_approve` activity rows), how many were subsequently pulled
   // back via `test.revoke`? Computed from the activity log because the
   // `tests` row only carries the *current* state — once revoked, the
   // provenance columns are cleared, so we need the audit trail to count
@@ -762,7 +762,7 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
   // the auto-approval count and the revert numerator on busy projects.
   // 10k covers ~1.4k auto-approvals/day for 7 days with headroom; the SQL
   // filter is index-friendly (type + projectId), so the cost is bounded.
-  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id, limit: 10000 }) || [];
+  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approve", projectId: project.id, limit: 10000 }) || [];
   const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id, limit: 10000 }) || [];
   const recentAuto = autoApprovals.filter((a) => new Date(a.createdAt).getTime() >= sinceMs);
   // Filter revokes by `meta.wasAutoApproved === true` (set by the revoke
