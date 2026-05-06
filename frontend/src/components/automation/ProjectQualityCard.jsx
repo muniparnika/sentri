@@ -128,12 +128,12 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
     : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="aap-panel">
       <div>
-        <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text2)", marginBottom: 4 }}>
+        <label className="aap-field-label">
           Confidence threshold (0.05–1) — leave empty to disable
         </label>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div className="aap-field-row">
           <input
             type="number"
             min="0.05"
@@ -143,7 +143,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
             onChange={(e) => setValue(e.target.value)}
             disabled={!canEdit || saving}
             placeholder="e.g. 0.8"
-            style={{ width: 120 }}
+            className="aap-input"
           />
           <button className="btn btn-primary btn-sm" onClick={save} disabled={!canEdit || saving}>
             {saving ? "Saving…" : "Save"}
@@ -151,7 +151,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
         </div>
       </div>
       {stats && (
-        <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+        <div className="aap-stats">
           {stats.auto} auto-approved · {stats.human} human-approved · {stats.draft} draft
           {revertPct !== null && (
             <> · <span title={`${stats.reverts7d} of ${stats.autoApprovals7d} auto-approvals were revoked in the last 7 days`}>
@@ -165,39 +165,32 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
           role="dialog"
           aria-modal="true"
           aria-label="Confirm auto-approval threshold"
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
-          }}
+          className="aap-modal-backdrop"
           onClick={() => setPreview(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "var(--bg)", border: "1px solid var(--border)",
-              borderRadius: 8, padding: 20, maxWidth: 480, width: "90%",
-              maxHeight: "80vh", overflow: "auto",
-            }}
+            className="aap-modal"
           >
-            <h3 style={{ margin: "0 0 8px", fontSize: "1rem" }}>Enable auto-approval at {preview.threshold.toFixed(2)}?</h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text2)", marginTop: 0 }}>
+            <h3 className="aap-modal__title">Enable auto-approval at {preview.threshold.toFixed(2)}?</h3>
+            <p className="aap-modal__desc">
               Of the last {preview.sample.length} generated test{preview.sample.length === 1 ? "" : "s"} on this project,{" "}
               <strong>{preview.wouldApprove.length}</strong> would have been auto-approved at this threshold.
               Sample these before enabling — once on, future tests bypass review automatically.
             </p>
             {preview.wouldApprove.length > 0 && (
-              <ul style={{ fontSize: "0.75rem", maxHeight: 200, overflow: "auto", paddingLeft: 18, margin: "8px 0" }}>
+              <ul className="aap-modal__sample">
                 {preview.wouldApprove.slice(0, 10).map((t) => (
                   <li key={t.id}>
-                    {t.name} <span style={{ color: "var(--text3)" }}>· {t.confidenceScore.toFixed(2)}</span>
+                    {t.name} <span className="aap-modal__sample-score">· {t.confidenceScore.toFixed(2)}</span>
                   </li>
                 ))}
                 {preview.wouldApprove.length > 10 && (
-                  <li style={{ color: "var(--text3)" }}>…and {preview.wouldApprove.length - 10} more</li>
+                  <li className="aap-modal__sample-overflow">…and {preview.wouldApprove.length - 10} more</li>
                 )}
               </ul>
             )}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <div className="aap-modal__actions">
               <button className="btn btn-ghost btn-sm" onClick={() => setPreview(null)} disabled={saving}>Cancel</button>
               <button
                 className="btn btn-primary btn-sm"

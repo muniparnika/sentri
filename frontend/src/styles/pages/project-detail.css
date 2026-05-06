@@ -98,6 +98,10 @@
 
 /* ── Project header card ────────────────────────────────────────────────────── */
 .pd-header { padding: 24px; margin-bottom: 16px; }
+
+/* AUTO-003b: header aggregate line under the project URL — small, muted,
+   non-fatal (only renders when `getApprovalStats` resolves with total > 0). */
+.pd-approval-aggregate { margin-top: 4px; }
 .pd-header-top {
   display: flex; align-items: flex-start; justify-content: space-between;
   flex-wrap: wrap; gap: 16px;

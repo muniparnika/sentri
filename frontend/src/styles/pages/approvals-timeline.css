@@ -1,0 +1,158 @@
+/**
+ * pages/approvals-timeline.css
+ *
+ * Scoped to .at-* namespace (approvals-timeline).
+ * Layer: Pages (ITCSS) — imported from index.css alongside other page styles.
+ *
+ * Daily-grouped audit feed of auto- and human-approved tests (AUTO-003b).
+ * Per STANDARDS.md §Styling, all visual rules live here as `var(--token)`
+ * references; the JSX carries class hooks only (no inline `style`).
+ */
+
+/* ── Page shell ──────────────────────────────────────────────────────────── */
+.at-page {
+  padding: 16px 24px;
+  max-width: 960px;
+}
+
+.at-header {
+  margin-bottom: 16px;
+}
+
+.at-header__title {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.at-header__desc {
+  font-size: 0.85rem;
+  color: var(--text2);
+  margin: 4px 0 0;
+}
+
+/* ── Loading / error states ──────────────────────────────────────────────── */
+.at-loading {
+  padding: 24px;
+  color: var(--text2);
+}
+
+.at-error {
+  padding: 24px;
+  color: var(--danger);
+}
+
+.at-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text2);
+  font-size: 0.875rem;
+}
+
+/* Truncation banner shown when either feed hits the 200-row server cap. */
+.at-truncated-banner {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  font-size: 0.8rem;
+  color: var(--text2);
+}
+
+/* ── Day groups ──────────────────────────────────────────────────────────── */
+.at-day {
+  margin-bottom: 24px;
+}
+
+.at-day__heading {
+  font-size: 0.8rem;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px;
+}
+
+.at-day__batches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Batch (auto / per-actor human group) ────────────────────────────────── */
+.at-batch {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+}
+
+.at-batch__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.875rem;
+  text-align: left;
+  font-family: var(--font-sans);
+}
+
+/* Per-batch icon colour. Auto uses the muted text colour; human uses the
+   accent so reviewer-driven decisions stand out in the daily feed. */
+.at-batch__icon--auto  { color: var(--text2); }
+.at-batch__icon--human { color: var(--accent); }
+
+/* ── Per-test rows inside an expanded batch ──────────────────────────────── */
+.at-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.at-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+}
+
+.at-row__name {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.at-row__sep {
+  color: var(--text3);
+}
+
+.at-row__project {
+  color: var(--text2);
+}
+
+.at-row__score {
+  color: var(--text2);
+}
+
+.at-row__time {
+  color: var(--text3);
+  margin-left: auto;
+}
+
+.at-row__revoked {
+  color: var(--text3);
+  font-style: italic;
+}
+
+/* Inline Revoke button — small ghost variant matching the page density. */
+.at-row__revoke {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

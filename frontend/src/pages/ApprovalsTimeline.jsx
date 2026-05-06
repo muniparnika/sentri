@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Bot, User, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { api } from "../api.js";
 import { useNotifications } from "../context/NotificationContext.jsx";
+import "../styles/pages/approvals-timeline.css";
 
 /**
  * AUTO-003b: ApprovalsTimeline — daily-grouped audit feed of approvals.
@@ -111,37 +112,37 @@ export default function ApprovalsTimeline() {
     }
   };
 
-  if (loading) return <div style={{ padding: 24, color: "var(--text2)" }}>Loading approvals…</div>;
-  if (error) return <div style={{ padding: 24, color: "var(--danger)" }}>{error}</div>;
+  if (loading) return <div className="at-loading">Loading approvals…</div>;
+  if (error) return <div className="at-error">{error}</div>;
 
   return (
-    <div style={{ padding: "16px 24px", maxWidth: 960 }}>
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: "1.4rem", margin: 0 }}>Approvals timeline</h1>
-        <p style={{ fontSize: "0.85rem", color: "var(--text2)", margin: "4px 0 0" }}>
+    <div className="at-page">
+      <header className="at-header">
+        <h1 className="at-header__title">Approvals timeline</h1>
+        <p className="at-header__desc">
           Daily audit trail of auto- and human-approved tests. Expand a batch
           to see per-test confidence, threshold-at-time, and revoke options.
         </p>
       </header>
 
       {(autoRows.length >= 200 || humanRows.length >= 200) && (
-        <div style={{ padding: "8px 12px", marginBottom: 12, border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg2)", fontSize: "0.8rem", color: "var(--text2)" }}>
+        <div className="at-truncated-banner">
           Showing the most recent 200 approvals. Older entries aren't displayed yet.
         </div>
       )}
 
       {days.length === 0 && (
-        <div style={{ padding: 32, textAlign: "center", color: "var(--text2)", fontSize: "0.875rem" }}>
+        <div className="at-empty">
           No approvals yet. Approvals will appear here as tests are reviewed.
         </div>
       )}
 
       {days.map(({ day, batches }) => (
-        <section key={day} style={{ marginBottom: 24 }}>
-          <h2 style={{ fontSize: "0.8rem", color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" }}>
+        <section key={day} className="at-day">
+          <h2 className="at-day__heading">
             {new Date(day).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
           </h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="at-day__batches">
             {batches.map((batch) => {
               const isOpen = expanded.has(batch.id);
               const Icon = batch.kind === "auto" ? Bot : User;
@@ -149,38 +150,40 @@ export default function ApprovalsTimeline() {
                 ? `${batch.rows.length} auto-approved (avg score ${avgScore(batch.rows)})`
                 : `@${batch.who} approved ${batch.rows.length}`;
               return (
-                <div key={batch.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg2)" }}>
+                <div key={batch.id} className="at-batch">
                   <button
+                    className="at-batch__toggle"
                     onClick={() => toggle(batch.id)}
                     aria-expanded={isOpen}
-                    style={{
-                      width: "100%", display: "flex", alignItems: "center", gap: 8,
-                      padding: "10px 12px", background: "transparent", border: 0, cursor: "pointer",
-                      color: "var(--text)", fontSize: "0.875rem", textAlign: "left",
-                    }}
                   >
                     {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <Icon size={14} color={batch.kind === "auto" ? "var(--text2)" : "var(--accent)"} />
+                    <Icon
+                      size={14}
+                      className={batch.kind === "auto" ? "at-batch__icon--auto" : "at-batch__icon--human"}
+                    />
                     <span>{headline}</span>
                   </button>
                   {isOpen && (
-                    <ul style={{ listStyle: "none", margin: 0, padding: "0 12px 10px 32px", display: "flex", flexDirection: "column", gap: 6 }}>
+                    <ul className="at-rows">
                       {batch.rows.map((row) => (
-                        <li key={row.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.8rem" }}>
-                          <Link to={row.testId ? `/tests/${row.testId}` : "#"} style={{ color: "var(--text)", fontWeight: 500, textDecoration: "none" }}>
+                        <li key={row.id} className="at-row">
+                          <Link
+                            to={row.testId ? `/tests/${row.testId}` : "#"}
+                            className="at-row__name"
+                          >
                             {row.testName || row.testId || "(unnamed test)"}
                           </Link>
-                          <span style={{ color: "var(--text3)" }}>·</span>
-                          <span style={{ color: "var(--text2)" }}>{projectName(row.projectId)}</span>
+                          <span className="at-row__sep">·</span>
+                          <span className="at-row__project">{projectName(row.projectId)}</span>
                           {batch.kind === "auto" && (
                             <>
-                              <span style={{ color: "var(--text3)" }}>·</span>
-                              <span style={{ color: "var(--text2)" }}>
+                              <span className="at-row__sep">·</span>
+                              <span className="at-row__score">
                                 score {fmtNum(row.meta?.score)} / threshold {fmtNum(row.meta?.threshold)}
                               </span>
                             </>
                           )}
-                          <span style={{ color: "var(--text3)", marginLeft: "auto" }}>
+                          <span className="at-row__time">
                             {new Date(row.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                           </span>
                           {/* Revoke is available for both auto- and human-approved
@@ -192,18 +195,17 @@ export default function ApprovalsTimeline() {
                               exists to shortcut exactly that flow. */}
                           {row.testId && !revokedTestIds.has(row.testId) && (
                             <button
-                              className="btn btn-ghost btn-sm"
+                              className="btn btn-ghost btn-sm at-row__revoke"
                               onClick={() => handleRevoke(row.testId)}
                               title={batch.kind === "auto"
                                 ? "Revoke this auto-approval — returns the test to draft"
                                 : "Revoke this approval — returns the test to draft"}
-                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
                             >
                               <RotateCcw size={12} /> Revoke
                             </button>
                           )}
                           {revokedTestIds.has(row.testId) && (
-                            <span style={{ color: "var(--text3)", fontStyle: "italic" }}>revoked</span>
+                            <span className="at-row__revoked">revoked</span>
                           )}
                         </li>
                       ))}
