@@ -900,6 +900,68 @@
    the empty state is shown inside the scrolling list pane. */
 .rq-empty--list { padding-top: 32px; }
 
+/* ── AUTO-003b: Last-24h auto-approvals tray ────────────────────────────────
+   Renders above the Draft list when the selected project has
+   `autoApproveThreshold` configured. One-line strip with score chips so
+   reviewers can spot-audit yesterday's auto-batch in 30 seconds. The
+   per-chip `Q:NN` colour is value-driven and stays inline (same precedent
+   as `.rq-quality-chip` above). */
+.rq-auto-tray {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  overflow-x: auto;
+}
+
+.rq-auto-tray__label {
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.rq-auto-tray__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  white-space: nowrap;
+  cursor: default;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+}
+
+/* Modifier — applied when the chip's underlying activity row carries a
+   `testId`, so clicking navigates to the test detail. Without `testId`
+   the chip is informational only and the cursor stays default. */
+.rq-auto-tray__chip--clickable { cursor: pointer; }
+.rq-auto-tray__chip--clickable:hover { background: var(--bg2); }
+
+.rq-auto-tray__chip-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Score readout — colour is set inline from `qualityColor()` so the
+   value-driven hue stays out of CSS (same pattern as `.rq-quality-chip`). */
+.rq-auto-tray__chip-score {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-auto-tray__overflow {
+  color: var(--text3);
+}
+
 /* Compact tag inside `.rq-item__meta`. */
 .badge--xs { font-size: 0.62rem; }
 

@@ -931,38 +931,32 @@ export default function ReviewQueue() {
                 className="rq-auto-tray"
                 role="region"
                 aria-label="Auto-approvals in the last 24 hours"
-                style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px", marginBottom: 8,
-                  background: "var(--bg2)", border: "1px solid var(--border)",
-                  borderRadius: 6, fontSize: "0.72rem", overflowX: "auto",
-                }}
               >
-                <span style={{ color: "var(--text2)", whiteSpace: "nowrap" }}>
+                <span className="rq-auto-tray__label">
                   🤖 {trayItems.length} auto-approved (24h):
                 </span>
                 {trayItems.slice(0, 20).map((a) => {
                   const score = a.meta?.score;
                   const score100 = typeof score === "number" ? Math.round(score <= 1 ? score * 100 : score) : null;
+                  const clickable = !!a.testId;
                   return (
                     <button
                       key={a.id}
-                      className="rq-auto-tray__chip"
-                      onClick={() => a.testId && navigate(`/tests/${a.testId}`)}
+                      className={`rq-auto-tray__chip${clickable ? " rq-auto-tray__chip--clickable" : ""}`}
+                      onClick={() => clickable && navigate(`/tests/${a.testId}`)}
+                      disabled={!clickable}
                       title={a.testName ? `${a.testName} — ${a.detail}` : a.detail}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 4,
-                        padding: "2px 6px", border: "1px solid var(--border)",
-                        borderRadius: 4, background: "var(--bg)",
-                        cursor: a.testId ? "pointer" : "default", whiteSpace: "nowrap",
-                        color: "var(--text)",
-                      }}
                     >
-                      <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <span className="rq-auto-tray__chip-name">
                         {a.testName ? cleanTestName(a.testName) : a.testId || "test"}
                       </span>
                       {score100 != null && (
-                        <span style={{ color: qualityColor(score100), fontWeight: 600 }}>
+                        // Value-driven colour stays inline per the
+                        // `.rq-quality-chip` precedent in review-queue.css.
+                        <span
+                          className="rq-auto-tray__chip-score"
+                          style={{ color: qualityColor(score100) }}
+                        >
                           Q:{score100}
                         </span>
                       )}
@@ -970,7 +964,7 @@ export default function ReviewQueue() {
                   );
                 })}
                 {trayItems.length > 20 && (
-                  <span style={{ color: "var(--text3)" }}>+{trayItems.length - 20} more</span>
+                  <span className="rq-auto-tray__overflow">+{trayItems.length - 20} more</span>
                 )}
               </div>
             )}
