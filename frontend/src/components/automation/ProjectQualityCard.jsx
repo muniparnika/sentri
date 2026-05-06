@@ -97,7 +97,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div>
         <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text2)", marginBottom: 4 }}>
-          Confidence threshold (0–1) — leave empty to disable
+          Confidence threshold (0.05–1) — leave empty to disable
         </label>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
