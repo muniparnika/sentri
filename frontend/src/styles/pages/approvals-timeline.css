@@ -19,9 +19,29 @@
   margin-bottom: 16px;
 }
 
+/* Title + project filter sit on a flex row so the dropdown aligns to the
+   right edge of the page width and wraps cleanly under 480px. */
+.at-header__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .at-header__title {
   font-size: 1.4rem;
   margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compact project-filter select — matches the dimensions ReviewQueue uses
+   on its `.rq-header-select` so the two pages feel consistent. */
+.at-header__project-select {
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
+  min-width: 140px;
 }
 
 .at-header__desc {

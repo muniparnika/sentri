@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Bot, User, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -41,32 +41,61 @@ export default function ApprovalsTimeline() {
   const { addNotification } = useNotifications();
   const { user } = useAuth();
 
+  // URL-driven project filter — mirrors the ReviewQueue pattern so a
+  // deep-link like `/approvals?projectId=PRJ-1` lands in the same scoped
+  // view, and changing the dropdown updates the URL (`replace: true` so
+  // the browser's back-button isn't polluted with every selection).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const projectId = searchParams.get("projectId") || "all";
+  const setProjectId = (v) => setSearchParams((p) => {
+    const n = new URLSearchParams(p);
+    if (v === "all") n.delete("projectId"); else n.set("projectId", v);
+    return n;
+  }, { replace: true });
+
+  // Project list is loaded once on mount (independent of the activity
+  // fetches below, which re-run when `projectId` changes). Pulling it
+  // here separately keeps the dropdown options stable while filters
+  // re-fetch the per-project event slices.
+  useEffect(() => {
+    let cancelled = false;
+    api.getProjects()
+      .then((projs) => { if (!cancelled) setProjects(Array.isArray(projs) ? projs : []); })
+      .catch(() => { /* non-fatal — dropdown shows only "All projects" */ });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    // Pass `projectId` to the backend filter when one is selected so the
+    // timeline reads as a per-project compliance view (NEXT.md AUTO-003b
+    // calls out "who approved this test?" as a per-project audit need).
+    // The 200-row server cap then applies *within* that project rather
+    // than across the workspace, so a busy single project no longer
+    // crowds out a quieter one in the workspace-wide view.
+    const filter = projectId === "all" ? undefined : projectId;
     Promise.all([
       // Activity-type literals follow the imperative `test.<verb>` convention
       // shared by every `test.*` event in `backend/src/routes/tests.js` and
       // `backend/src/pipeline/testPersistence.js` (create/approve/reject/
       // restore/delete/generate/auto_approve/revoke). Don't add the past-tense
       // `-d` suffix — readers and writers must stay in lockstep.
-      api.getActivities({ type: "test.auto_approve", limit: 200 }),
-      api.getActivities({ type: "test.approve", limit: 200 }),
-      api.getActivities({ type: "test.revoke", limit: 200 }),
-      api.getProjects(),
+      api.getActivities({ type: "test.auto_approve", projectId: filter, limit: 200 }),
+      api.getActivities({ type: "test.approve", projectId: filter, limit: 200 }),
+      api.getActivities({ type: "test.revoke", projectId: filter, limit: 200 }),
     ])
-      .then(([auto, human, revokes, projs]) => {
+      .then(([auto, human, revokes]) => {
         if (cancelled) return;
         setAutoRows(Array.isArray(auto) ? auto : []);
         setHumanRows(Array.isArray(human) ? human : []);
         setRevokeRows(Array.isArray(revokes) ? revokes : []);
-        setProjects(Array.isArray(projs) ? projs : []);
         setError(null);
       })
       .catch((err) => { if (!cancelled) setError(err?.message || "Failed to load approvals timeline."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectId]);
 
   // Map testId → most-recent revoke activity row. A test that's been
   // re-approved and re-revoked carries multiple revoke rows; the latest
@@ -162,7 +191,26 @@ export default function ApprovalsTimeline() {
   return (
     <div className="at-page">
       <header className="at-header">
-        <h1 className="at-header__title">Approvals timeline</h1>
+        <div className="at-header__row">
+          <h1 className="at-header__title">Approvals timeline</h1>
+          {/* Per-project filter — mirrors the ReviewQueue dropdown so the
+              compliance view ("who approved this test?") can scope to a
+              single project. Hidden when there's only one project so the
+              dropdown isn't dead UI on small workspaces. */}
+          {projects.length > 1 && (
+            <select
+              className="input at-header__project-select"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              aria-label="Filter by project"
+            >
+              <option value="all">All projects</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
         <p className="at-header__desc">
           Daily audit trail of auto- and human-approved tests. Expand a batch
           to see per-test confidence, threshold-at-time, and revoke options.
