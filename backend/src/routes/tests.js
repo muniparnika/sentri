@@ -745,8 +745,13 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
   // in project settings so users can tell whether their threshold is too
   // permissive.
   const sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id }) || [];
-  const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id }) || [];
+  // Pull a generous window from the activity log — `getFiltered` defaults to
+  // LIMIT 200 and silently truncates older rows, which would understate both
+  // the auto-approval count and the revert numerator on busy projects.
+  // 10k covers ~1.4k auto-approvals/day for 7 days with headroom; the SQL
+  // filter is index-friendly (type + projectId), so the cost is bounded.
+  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id, limit: 10000 }) || [];
+  const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id, limit: 10000 }) || [];
   const recentAuto = autoApprovals.filter((a) => new Date(a.createdAt).getTime() >= sinceMs);
   // Filter revokes by `meta.wasAutoApproved === true` (set by the revoke
   // handler above) instead of correlating testIds against recent auto rows.
@@ -766,7 +771,6 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
       .filter(Boolean),
   );
   const recentAutoTestIds = new Set(recentAuto.map((a) => a.testId).filter(Boolean));
-  const recentReverts = [...recentRevertTestIds];
   // Belt-and-suspenders clamp: if a backfill ever produces more revokes than
   // auto-approvals in the window (e.g. revokes of pre-window approvals),
   // cap the ratio at 1 so the UI never renders "117% revert rate".
