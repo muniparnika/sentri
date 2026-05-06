@@ -890,7 +890,7 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 **Sentri's unique strengths:** Self-hosted + AI generation + human review queue + multi-provider LLM + standalone Playwright export (✅ DIF-006). No competitor offers all five together. BearQ narrows the AI generation gap but remains SaaS-only with no self-hosted option or LLM provider choice.
 
-**Critical gaps to close next:** AUTO-003 + AUTO-003b (auto-approval + provenance — current PR) · AUTO-001 (risk-based test selection) · AUTO-002 (change detection) · AUTO-003 + AUTO-003b (auto-approval + provenance) · INT-002 (GitHub PR check comments)
+**Critical gaps to close next:** AUTO-003 + AUTO-003b (auto-approval + provenance — current PR) · AUTO-002 (change detection) · AUTO-001 (risk-based test selection) · INT-002 (GitHub PR check comments)
 
 > **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · PROC-002 · UI-REFACTOR-001.
 
@@ -904,14 +904,14 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 | Infrastructure | 6 | 6 | 0 | 0 | — |
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 4 | 4 | 0 | 0 | — |
-| Differentiators | 22 | 15 | 1 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6); AUTO-017.3 + INT-002 in-flight |
+| Differentiators | 22 | 16 | 0 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6) |
 | Autonomous Intelligence | 26 | 10 | 0 | 16 | AUTO-001/002/003/003b/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
 | Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
 | Process automation | 3 | 3 | 0 | 0 | — |
 | Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
-| **Totals** | **83** | **50** | **0** | **33** | |
+| **Totals** | **83** | **51** | **0** | **32** | |
 
-**Total tracked items:** 83 across 9 categories — **50 complete** (60%), **0 in current PR**, **33 remaining**
+**Total tracked items:** 83 across 9 categories — **51 complete** (61%), **0 in current PR**, **32 remaining**
 
 **Blockers (must ship before team deployment):** All resolved. ✅
 
