@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bot, User, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { api } from "../api.js";
-import { useNotification } from "../context/NotificationContext.jsx";
+import { useNotifications } from "../context/NotificationContext.jsx";
 
 /**
  * AUTO-003b: ApprovalsTimeline — daily-grouped audit feed of approvals.
@@ -29,7 +29,7 @@ export default function ApprovalsTimeline() {
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
   const [revokedTestIds, setRevokedTestIds] = useState(() => new Set());
-  const { notify } = useNotification();
+  const { addNotification } = useNotifications();
 
   useEffect(() => {
     let cancelled = false;
@@ -101,9 +101,9 @@ export default function ApprovalsTimeline() {
     try {
       await api.revokeApproval(testId);
       setRevokedTestIds((prev) => new Set(prev).add(testId));
-      notify?.({ type: "success", message: "Approval revoked — test returned to draft." });
+      addNotification({ title: "Approval revoked", body: "Test returned to draft." });
     } catch (err) {
-      notify?.({ type: "error", message: err?.message || "Failed to revoke approval." });
+      addNotification({ title: "Revoke failed", body: err?.message || "Failed to revoke approval." });
     }
   };
 
