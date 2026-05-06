@@ -183,11 +183,20 @@ export default function ApprovalsTimeline() {
                           <span style={{ color: "var(--text3)", marginLeft: "auto" }}>
                             {new Date(row.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                           </span>
-                          {batch.kind === "auto" && row.testId && !revokedTestIds.has(row.testId) && (
+                          {/* Revoke is available for both auto- and human-approved
+                              tests — `POST /api/v1/tests/:id/revoke` (qa_lead+)
+                              clears the provenance columns regardless of source.
+                              Gating this on `batch.kind === "auto"` would force
+                              a reviewer who approved a test by mistake to navigate
+                              to TestDetail just to undo it; the Approvals page
+                              exists to shortcut exactly that flow. */}
+                          {row.testId && !revokedTestIds.has(row.testId) && (
                             <button
                               className="btn btn-ghost btn-sm"
                               onClick={() => handleRevoke(row.testId)}
-                              title="Revoke this auto-approval — returns the test to draft"
+                              title={batch.kind === "auto"
+                                ? "Revoke this auto-approval — returns the test to draft"
+                                : "Revoke this approval — returns the test to draft"}
                               style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
                             >
                               <RotateCcw size={12} /> Revoke
