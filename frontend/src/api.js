@@ -280,7 +280,10 @@ export const api = {
     const params = new URLSearchParams();
     if (filters.type) params.set("type", filters.type);
     if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.after) params.set("after", filters.after);
+    if (filters.before) params.set("before", filters.before);
     if (filters.limit != null) params.set("limit", String(filters.limit));
+    if (filters.offset != null) params.set("offset", String(filters.offset));
     const qs = params.toString();
     return req("GET", `/activities${qs ? `?${qs}` : ""}`);
   },
@@ -800,7 +803,10 @@ export const api = {
     const params = new URLSearchParams();
     if (filters.type) params.set("type", filters.type);
     if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.after) params.set("after", filters.after);
+    if (filters.before) params.set("before", filters.before);
     if (filters.limit) params.set("limit", String(filters.limit));
+    if (filters.offset != null) params.set("offset", String(filters.offset));
     const qs = params.toString();
     return req("GET", `/activities${qs ? `?${qs}` : ""}`);
   },

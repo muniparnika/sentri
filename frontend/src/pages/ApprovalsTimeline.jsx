@@ -53,6 +53,42 @@ export default function ApprovalsTimeline() {
     return n;
   }, { replace: true });
 
+  // Date-range filter — `week` / `30d` / `all`. Default `30d` covers the
+  // common "what shipped this month?" audit while keeping the row count
+  // bounded for typical workspaces. The compliance contract ("who
+  // approved this test six months later?") is now satisfied by switching
+  // to `all` + Load more, rather than requiring a 200-row scan.
+  const range = searchParams.get("range") || "30d";
+  const setRange = (v) => setSearchParams((p) => {
+    const n = new URLSearchParams(p);
+    if (v === "30d") n.delete("range"); else n.set("range", v);
+    return n;
+  }, { replace: true });
+
+  // Compute the `after` ISO bound from the active range. `null` means
+  // "no lower bound" — the backend then returns the most-recent N rows
+  // regardless of age. Recomputed once per `range` change.
+  const afterIso = useMemo(() => {
+    const now = Date.now();
+    if (range === "week") return new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
+    if (range === "30d")  return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    return null; // "all" — no time bound
+  }, [range]);
+
+  // Page-size for the activity feeds. Each "Load more" click bumps this
+  // by `PAGE_SIZE`; the same value is passed as `limit` to all three
+  // `getActivities` calls so the Auto / Human / Revoke streams stay in
+  // step. Server caps `limit` at 1000 (`backend/src/routes/system.js`),
+  // so the user can expand up to 5 pages before hitting that ceiling.
+  // 1000 covers ~140 auto-approvals/day for a week, or ~33/day for a
+  // month — sufficient for any realistic single-project audit window.
+  const PAGE_SIZE = 200;
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  // Reset back to one page whenever the filters change, otherwise a user
+  // narrowing the date range while on page 4 would leave the cursor
+  // pointing past the new (smaller) result set.
+  useEffect(() => { setPageSize(PAGE_SIZE); }, [projectId, range]);
+
   // Project list is loaded once on mount (independent of the activity
   // fetches below, which re-run when `projectId` changes). Pulling it
   // here separately keeps the dropdown options stable while filters
@@ -71,19 +107,23 @@ export default function ApprovalsTimeline() {
     // Pass `projectId` to the backend filter when one is selected so the
     // timeline reads as a per-project compliance view (NEXT.md AUTO-003b
     // calls out "who approved this test?" as a per-project audit need).
-    // The 200-row server cap then applies *within* that project rather
-    // than across the workspace, so a busy single project no longer
-    // crowds out a quieter one in the workspace-wide view.
+    // The server cap then applies *within* that project rather than
+    // across the workspace, so a busy single project no longer crowds
+    // out a quieter one in the workspace-wide view.
     const filter = projectId === "all" ? undefined : projectId;
+    // `after` narrows the row count to the active date range so the
+    // server doesn't return rows outside the user's audit window. When
+    // range === "all", `afterIso` is null and we omit the param.
+    const after = afterIso || undefined;
     Promise.all([
       // Activity-type literals follow the imperative `test.<verb>` convention
       // shared by every `test.*` event in `backend/src/routes/tests.js` and
       // `backend/src/pipeline/testPersistence.js` (create/approve/reject/
       // restore/delete/generate/auto_approve/revoke). Don't add the past-tense
       // `-d` suffix — readers and writers must stay in lockstep.
-      api.getActivities({ type: "test.auto_approve", projectId: filter, limit: 200 }),
-      api.getActivities({ type: "test.approve", projectId: filter, limit: 200 }),
-      api.getActivities({ type: "test.revoke", projectId: filter, limit: 200 }),
+      api.getActivities({ type: "test.auto_approve", projectId: filter, after, limit: pageSize }),
+      api.getActivities({ type: "test.approve",      projectId: filter, after, limit: pageSize }),
+      api.getActivities({ type: "test.revoke",       projectId: filter, after, limit: pageSize }),
     ])
       .then(([auto, human, revokes]) => {
         if (cancelled) return;
@@ -95,7 +135,7 @@ export default function ApprovalsTimeline() {
       .catch((err) => { if (!cancelled) setError(err?.message || "Failed to load approvals timeline."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, afterIso, pageSize]);
 
   // Map testId → most-recent revoke activity row. A test that's been
   // re-approved and re-revoked carries multiple revoke rows; the latest
@@ -210,6 +250,19 @@ export default function ApprovalsTimeline() {
               ))}
             </select>
           )}
+          {/* Date-range picker — bounds the server query to the audit
+              window the user actually cares about, so the 200-row page
+              isn't burned on stale rows the user doesn't need. */}
+          <select
+            className="input at-header__range-select"
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+            aria-label="Filter by date range"
+          >
+            <option value="week">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="all">All time</option>
+          </select>
         </div>
         <p className="at-header__desc">
           Daily audit trail of auto- and human-approved tests. Expand a batch
@@ -217,9 +270,16 @@ export default function ApprovalsTimeline() {
         </p>
       </header>
 
-      {(autoRows.length >= 200 || humanRows.length >= 200) && (
+      {/* Truncation banner — only shown when the server returned a full
+          page on at least one feed AND we're already at the server's
+          1000-row hard cap. Below the cap, the "Load more" footer below
+          handles the affordance, so this banner doesn't need to repeat
+          it. Capping at 1000 (matching `backend/src/routes/system.js`)
+          tells the user they've hit the ceiling and need to narrow the
+          range further (e.g. switch from "All time" to a 30-day window). */}
+      {pageSize >= 1000 && (autoRows.length >= 1000 || humanRows.length >= 1000) && (
         <div className="at-truncated-banner">
-          Showing the most recent 200 approvals. Older entries aren't displayed yet.
+          Showing the most recent 1000 approvals per stream. Narrow the date range to see older entries.
         </div>
       )}
 
@@ -331,6 +391,33 @@ export default function ApprovalsTimeline() {
           </div>
         </section>
       ))}
+
+      {/* Load more — bumps the per-feed `limit` by `PAGE_SIZE` so the
+          next render fetches a wider window. `hasMore` is conservative:
+          true when at least one feed returned a full page (more rows
+          likely exist server-side). A false positive (the feed had
+          exactly `pageSize` matching rows and no more) is harmless —
+          the next click returns no new rows and the button hides on
+          the render after that. Capped at the server's 1000-row hard
+          limit (`backend/src/routes/system.js`). */}
+      {days.length > 0 && pageSize < 1000 && (
+        autoRows.length >= pageSize
+        || humanRows.length >= pageSize
+        || revokeRows.length >= pageSize
+      ) && (
+        <div className="at-load-more">
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setPageSize((n) => Math.min(1000, n + PAGE_SIZE))}
+            disabled={loading}
+          >
+            {loading ? "Loading…" : "Load more"}
+          </button>
+          <span className="at-load-more__hint">
+            Showing up to {pageSize} per stream
+          </span>
+        </div>
+      )}
     </div>
   );
 }

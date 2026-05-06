@@ -37,11 +37,35 @@
 
 /* Compact project-filter select — matches the dimensions ReviewQueue uses
    on its `.rq-header-select` so the two pages feel consistent. */
-.at-header__project-select {
+.at-header__project-select,
+.at-header__range-select {
   height: 32px;
   font-size: 0.78rem;
   padding: 0 28px 0 10px;
   min-width: 140px;
+}
+
+/* Date-range select sits to the right of the project filter; narrower
+   minimum because the option labels are short ("Last 7 days" etc.). */
+.at-header__range-select {
+  min-width: 120px;
+}
+
+/* Load-more footer — centred row below the last day section. The hint
+   text gives users a sense of how many rows they've expanded to without
+   having to count, so they know when to switch tactics (narrow date
+   range vs. keep scrolling). */
+.at-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 8px;
+}
+
+.at-load-more__hint {
+  font-size: 0.72rem;
+  color: var(--text3);
 }
 
 .at-header__desc {

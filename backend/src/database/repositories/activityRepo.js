@@ -73,14 +73,34 @@ export function getAllAsDict() {
 
 /**
  * Get filtered activities.
+ *
+ * `after` / `before` accept ISO-8601 strings (matching the column's storage
+ * format). The comparison is lexicographic on ISO strings, which is correct
+ * for the YYYY-MM-DDTHH:MM:SS.sssZ shape `Date.toISOString()` produces.
+ *
+ * `offset` pairs with `limit` for cursor-style "Load more" — clients pass
+ * the count of rows they've already rendered. Combined with the default
+ * `ORDER BY createdAt DESC`, this gives a stable forward window even
+ * when new rows arrive between fetches (the ordering key is the row's
+ * own timestamp, so a new row only shifts the cursor on the *first*
+ * page, not subsequent pages).
+ *
  * @param {Object} [filters]
  * @param {string} [filters.type]
  * @param {string} [filters.projectId]
  * @param {string} [filters.workspaceId] — Scope to workspace (ACL-001).
+ * @param {string} [filters.after]       — ISO timestamp; only rows with
+ *   `createdAt >= after` are returned. Powers the AUTO-003b approvals
+ *   timeline date-range picker (This week / Last 30 days / Custom).
+ * @param {string} [filters.before]      — ISO timestamp; only rows with
+ *   `createdAt < before` are returned. Pairs with `after` for bounded
+ *   ranges; either bound is optional.
  * @param {number} [filters.limit=200]
+ * @param {number} [filters.offset]      — Skip the first N rows of the
+ *   result set; used by paginated UIs (Load more) to fetch the next page.
  * @returns {Object[]}
  */
-export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
+export function getFiltered({ type, projectId, workspaceId, after, before, limit, offset } = {}) {
   const db = getDatabase();
   let sql = "SELECT * FROM activities WHERE 1=1";
   const params = [];
@@ -96,8 +116,20 @@ export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
     sql += " AND projectId = ?";
     params.push(projectId);
   }
+  if (after) {
+    sql += " AND createdAt >= ?";
+    params.push(after);
+  }
+  if (before) {
+    sql += " AND createdAt < ?";
+    params.push(before);
+  }
   sql += " ORDER BY createdAt DESC LIMIT ?";
   params.push(limit || 200);
+  if (Number.isFinite(offset) && offset > 0) {
+    sql += " OFFSET ?";
+    params.push(offset);
+  }
   return db.prepare(sql).all(...params).map(hydrate);
 }
 
