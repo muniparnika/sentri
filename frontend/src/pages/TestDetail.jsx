@@ -16,7 +16,7 @@ import { cleanTestName } from "../utils/formatTestName.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
 import { exportCsv } from "../utils/exportCsv.js";
 import { StatusBadge, ReviewBadge, ScenarioBadges } from "../components/shared/TestBadges.jsx";
-import { fmtDate, fmtDateTime } from "../utils/formatters.js";
+import { fmtDate, fmtDateTime, fmtRelativeTimeFull } from "../utils/formatters.js";
 import highlightCode from "../utils/highlightCode.js";
 import playwrightToCurl from "../utils/playwrightToCurl.js";
 import splitCodeBySteps from "../utils/splitCodeBySteps.js";
@@ -858,6 +858,32 @@ export default function TestDetail() {
 
           {/* Quick actions */}
           <div className="td-sidebar-actions">
+            {/*
+             * AUTO-003b: visible approval provenance line. NEXT.md:83 calls out
+             * an explicit anti-pattern of surfacing provenance only on hover —
+             * so the auto/human source, score, threshold, and approval time
+             * all render inline above the Revoke button. The button keeps its
+             * tooltip as a secondary affordance for screen-reader / keyboard
+             * users hovering for context. `approvedAt` is epoch ms (migration
+             * 017), so we hand it to `fmtRelativeTimeFull` as an ISO string.
+             */}
+            {test.reviewStatus === "approved" && (
+              <div className="td-approval-provenance" style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 4 }}>
+                {test.approvalSource === "auto" ? (
+                  <>
+                    🤖 Auto-approved
+                    {Number.isFinite(test.confidenceScore) && <> · score {test.confidenceScore.toFixed(2)}</>}
+                    {Number.isFinite(test.approvalThreshold) && <> · threshold {test.approvalThreshold.toFixed(2)}</>}
+                    {test.approvedAt && <> · {fmtRelativeTimeFull(new Date(test.approvedAt).toISOString())}</>}
+                  </>
+                ) : (
+                  <>
+                    👤 Approved{test.approvedBy ? <> by @{test.approvedBy}</> : ""}
+                    {test.approvedAt && <> · {fmtRelativeTimeFull(new Date(test.approvedAt).toISOString())}</>}
+                  </>
+                )}
+              </div>
+            )}
             {test.reviewStatus !== "approved" && (
               <button className={`btn btn-sm td-approve-btn`} onClick={() => api.approveTest(test.projectId, testId).then(load)}>
                 <CheckCircle2 size={13} /> Approve Test
