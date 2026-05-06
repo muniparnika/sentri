@@ -753,14 +753,25 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
   // The testId-correlation approach undercounted whenever an auto-approval
   // and its revoke straddled the 7-day boundary; the meta flag is the
   // decision-time truth and is independent of when the auto-approval fired.
-  const recentReverts = revokes.filter((a) =>
-    new Date(a.createdAt).getTime() >= sinceMs && a.meta?.wasAutoApproved === true,
+  // Dedupe by testId so a test that round-trips
+  // auto-approve → revoke → re-approve → revoke within the 7-day window
+  // counts as a single revert (the metric answers "what fraction of
+  // auto-approved *tests* did humans pull back?", not "how many revoke
+  // events fired?"). `recentAuto` is deduped the same way for symmetry —
+  // a test auto-approved twice in 7 days is still one auto-approved test.
+  const recentRevertTestIds = new Set(
+    revokes
+      .filter((a) => new Date(a.createdAt).getTime() >= sinceMs && a.meta?.wasAutoApproved === true)
+      .map((a) => a.testId)
+      .filter(Boolean),
   );
+  const recentAutoTestIds = new Set(recentAuto.map((a) => a.testId).filter(Boolean));
+  const recentReverts = [...recentRevertTestIds];
   // Belt-and-suspenders clamp: if a backfill ever produces more revokes than
   // auto-approvals in the window (e.g. revokes of pre-window approvals),
   // cap the ratio at 1 so the UI never renders "117% revert rate".
-  const revertRate7d = recentAuto.length > 0
-    ? Math.min(1, recentReverts.length / recentAuto.length)
+  const revertRate7d = recentAutoTestIds.size > 0
+    ? Math.min(1, recentRevertTestIds.size / recentAutoTestIds.size)
     : 0;
 
   res.json({
@@ -770,8 +781,8 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
     rejected,
     total: tests.length,
     revertRate7d,
-    autoApprovals7d: recentAuto.length,
-    reverts7d: recentReverts.length,
+    autoApprovals7d: recentAutoTestIds.size,
+    reverts7d: recentRevertTestIds.size,
   });
 });
 
