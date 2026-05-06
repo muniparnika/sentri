@@ -12,6 +12,7 @@ import authRouter, { requireAuth } from "../src/routes/auth.js";
 import projectsRouter from "../src/routes/projects.js";
 import testsRouter from "../src/routes/tests.js";
 import * as testRepo from "../src/database/repositories/testRepo.js";
+import * as activityRepo from "../src/database/repositories/activityRepo.js";
 import { createTestContext } from "./helpers/test-base.js";
 
 const t = createTestContext();
@@ -77,6 +78,22 @@ async function main() {
     assert.equal(out.json.approvedAt, null);
     assert.equal(out.json.approvedBy, null);
     assert.equal(out.json.reviewedAt, null);
+
+    // ── revoke writes meta.wasAutoApproved (AUTO-003b audit trail) ────────
+    // The approval-stats handler filters reverts by `meta.wasAutoApproved
+    // === true`, so this row needs to round-trip the JSON column correctly.
+    const revokeRows = activityRepo.getFiltered({ type: "test.revoke", projectId });
+    const revokeRow = revokeRows.find((a) => a.testId === testId);
+    assert.ok(revokeRow, "revoke activity row was logged");
+    assert.equal(revokeRow.meta?.wasAutoApproved, true);
+
+    // ── stats: revert rate now reflects the meta-filtered revoke ──────────
+    // The seeded test was created via testRepo.create() (no auto_approved
+    // activity row), so autoApprovals7d is 0 and revertRate7d stays at 0
+    // — but the handler should still survive a meta-bearing revoke row.
+    out = await t.req(base, `/api/v1/projects/${projectId}/approval-stats`, { token });
+    assert.equal(out.res.status, 200);
+    assert.ok(out.json.revertRate7d >= 0 && out.json.revertRate7d <= 1, "revertRate7d is clamped to [0, 1]");
 
     // ── revoke is idempotent-guarded: drafts can't be revoked ─────────────
     out = await t.req(base, `/api/v1/tests/${testId}/revoke`, { method: "POST", token });

@@ -30,9 +30,10 @@ import { formatLogLine } from "./logFormatter.js";
  * @param {string}      [opts.userId]    - ID of the user who triggered the action (from req.authUser.sub).
  * @param {string}      [opts.userName]  - Display name of the user (from req.authUser.name or email).
  * @param {string}      [opts.workspaceId] - Workspace ID for multi-tenancy scoping (ACL-001).
+ * @param {Object}      [opts.meta]      - Structured metadata persisted as JSON (migration 018). E.g. `{ score, threshold }` on auto-approval, `{ wasAutoApproved }` on revoke.
  * @returns {Object}    The created activity record.
  */
-export function logActivity({ type, projectId, projectName, testId, testName, detail, status, userId, userName, workspaceId }) {
+export function logActivity({ type, projectId, projectName, testId, testName, detail, status, userId, userName, workspaceId, meta }) {
   // Warn when a project-scoped activity is logged without a workspaceId.
   // Activities with workspaceId=NULL become orphaned — invisible to
   // workspace-scoped queries (/api/activities, /api/data/activities).
@@ -55,6 +56,7 @@ export function logActivity({ type, projectId, projectName, testId, testName, de
     userId: userId || null,
     userName: userName || null,
     workspaceId: workspaceId || null,
+    meta: meta || null,
   };
   activityRepo.create(activity);
   return activity;

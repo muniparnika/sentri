@@ -12,8 +12,8 @@ import { getDatabase } from "../sqlite.js";
 export function create(activity) {
   const db = getDatabase();
   db.prepare(`
-    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName, workspaceId)
-    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName, @workspaceId)
+    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName, workspaceId, meta)
+    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName, @workspaceId, @meta)
   `).run({
     id: activity.id,
     type: activity.type,
@@ -27,7 +27,28 @@ export function create(activity) {
     userId: activity.userId || null,
     userName: activity.userName || null,
     workspaceId: activity.workspaceId || null,
+    // `meta` is JSON-encoded TEXT (migration 018) so callers can pass a plain
+    // object; readers below re-parse it. Null when absent so the column is
+    // genuinely empty rather than the string "null".
+    meta: activity.meta != null ? JSON.stringify(activity.meta) : null,
   });
+}
+
+/**
+ * Re-parse the JSON `meta` column into a plain object for callers. Tolerant
+ * of legacy rows where the column is null/empty/non-JSON — those rows
+ * predate migration 018 and surface as `meta: null`.
+ * @param {Object} row
+ * @returns {Object}
+ */
+function hydrate(row) {
+  if (!row) return row;
+  if (typeof row.meta === "string" && row.meta.length > 0) {
+    try { row.meta = JSON.parse(row.meta); } catch { row.meta = null; }
+  } else if (row.meta === undefined) {
+    row.meta = null;
+  }
+  return row;
 }
 
 /**
@@ -36,7 +57,7 @@ export function create(activity) {
  */
 export function getAll() {
   const db = getDatabase();
-  return db.prepare("SELECT * FROM activities ORDER BY createdAt DESC").all();
+  return db.prepare("SELECT * FROM activities ORDER BY createdAt DESC").all().map(hydrate);
 }
 
 /**
@@ -77,7 +98,7 @@ export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
   }
   sql += " ORDER BY createdAt DESC LIMIT ?";
   params.push(limit || 200);
-  return db.prepare(sql).all(...params);
+  return db.prepare(sql).all(...params).map(hydrate);
 }
 
 /**

@@ -104,6 +104,9 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
         detail: `Auto-approved at confidence ${confidenceScore.toFixed(2)} (threshold ${threshold.toFixed(2)})`,
         userName: AUTO_APPROVER_USER,
         workspaceId: project.workspaceId || null,
+        // Structured provenance per ROADMAP.md / NEXT.md AUTO-003b spec —
+        // detail is for humans; meta is for analytics joins (calibration UI).
+        meta: { score: confidenceScore, threshold },
       });
     }
     run.tests.push(testId);

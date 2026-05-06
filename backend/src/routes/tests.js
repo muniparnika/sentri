@@ -711,6 +711,10 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
     type: "test.revoke", projectId: project.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE_AUTO ? "auto-approved" : "human-approved"})`,
+    // `wasAutoApproved` lets the project approval-stats handler compute the
+    // 7-day revert rate without correlating testIds across activity types
+    // — see GET /api/v1/projects/:id/approval-stats below.
+    meta: { wasAutoApproved: previousSource === APPROVAL_SOURCE_AUTO },
   });
   res.json(testRepo.getById(test.id));
 });
@@ -744,9 +748,20 @@ router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) =>
   const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id }) || [];
   const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id }) || [];
   const recentAuto = autoApprovals.filter((a) => new Date(a.createdAt).getTime() >= sinceMs);
-  const recentAutoTestIds = new Set(recentAuto.map((a) => a.testId).filter(Boolean));
-  const recentReverts = revokes.filter((a) => new Date(a.createdAt).getTime() >= sinceMs && recentAutoTestIds.has(a.testId));
-  const revertRate7d = recentAuto.length > 0 ? recentReverts.length / recentAuto.length : 0;
+  // Filter revokes by `meta.wasAutoApproved === true` (set by the revoke
+  // handler above) instead of correlating testIds against recent auto rows.
+  // The testId-correlation approach undercounted whenever an auto-approval
+  // and its revoke straddled the 7-day boundary; the meta flag is the
+  // decision-time truth and is independent of when the auto-approval fired.
+  const recentReverts = revokes.filter((a) =>
+    new Date(a.createdAt).getTime() >= sinceMs && a.meta?.wasAutoApproved === true,
+  );
+  // Belt-and-suspenders clamp: if a backfill ever produces more revokes than
+  // auto-approvals in the window (e.g. revokes of pre-window approvals),
+  // cap the ratio at 1 so the UI never renders "117% revert rate".
+  const revertRate7d = recentAuto.length > 0
+    ? Math.min(1, recentReverts.length / recentAuto.length)
+    : 0;
 
   res.json({
     human,
