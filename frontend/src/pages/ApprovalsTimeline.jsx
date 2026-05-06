@@ -36,7 +36,11 @@ export default function ApprovalsTimeline() {
     setLoading(true);
     Promise.all([
       api.getActivities({ type: "test.auto_approved", limit: 200 }),
-      api.getActivities({ type: "test.approved", limit: 200 }),
+      // Human-approval handler in `backend/src/routes/tests.js:629` emits
+      // the activity type `test.approve` (singular, no -d) — matching the
+      // existing `test.reject` / `test.create` naming convention. Don't
+      // change to `test.approved` without also migrating the writer.
+      api.getActivities({ type: "test.approve", limit: 200 }),
       api.getProjects(),
     ])
       .then(([auto, human, projs]) => {

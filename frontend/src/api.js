@@ -270,6 +270,21 @@ export const api = {
    */
   revokeApproval:  (testId) => req("POST", `/tests/${testId}/revoke`),
   /**
+   * List activity-log rows, optionally filtered by `type` and/or `projectId`.
+   * Workspace-scoped on the backend (`backend/src/routes/system.js`).
+   * Used by `pages/ApprovalsTimeline.jsx` to fetch `test.auto_approved` and
+   * `test.approve` rows for the daily-grouped audit feed.
+   * @param {{ type?: string, projectId?: string, limit?: number }} [filters]
+   */
+  getActivities:   (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.type) params.set("type", filters.type);
+    if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.limit != null) params.set("limit", String(filters.limit));
+    const qs = params.toString();
+    return req("GET", `/activities${qs ? `?${qs}` : ""}`);
+  },
+  /**
    * Approval-decision counts for a project (AUTO-003b) — powers the
    * project-settings calibration line under the `autoApproveThreshold` input.
    * @param {string} projectId
