@@ -43,6 +43,7 @@ import * as runRepo from "./database/repositories/runRepo.js";
 import { signRunArtifacts, signArtifactUrl } from "./middleware/appSetup.js";
 import { writeArtifactBuffer } from "./utils/objectStorage.js";
 import fs from "fs";
+import { recordMetric } from "./utils/recordMetric.js";
 
 
 function evaluateQualityGates(gates, run) {
@@ -391,6 +392,27 @@ export async function runTests(project, tests, run, { parallelWorkers, browser: 
 
   run.gateResult = evaluateQualityGates(project.qualityGates, run);
   run.webVitalsResult = evaluateWebVitalsBudgets(project.webVitalsBudgets, run);
+
+  // AUTO-017.3: persist per-run Web Vitals samples for MET-001 trend charts.
+  // Best-effort only — telemetry failures must never fail the run.
+  try {
+    const rows = Array.isArray(run.results) ? run.results : [];
+    const keys = ["lcp", "cls", "inp", "ttfb"];
+    for (const key of keys) {
+      const values = rows
+        .map((r) => Number(r?.webVitals?.[key]))
+        .filter((v) => Number.isFinite(v));
+      if (values.length === 0) continue;
+      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+      const threshold = Number(project?.webVitalsBudgets?.[key]);
+      recordMetric(project.id, `webVitals.${key}`, avg, { runId, source: "run", metric: key }, runStart);
+      if (Number.isFinite(threshold)) {
+        recordMetric(project.id, `webVitals.${key}.budget`, threshold, { runId, source: "budget", metric: key }, runStart);
+      }
+    }
+  } catch (metricErr) {
+    logWarn(run, `Web Vitals trend metric write failed: ${metricErr.message}`);
+  }
 
   // NOTE: We intentionally keep run.status === "running" here so that:
   //   1. The abort endpoint (POST /api/runs/:id/abort) still works during the
