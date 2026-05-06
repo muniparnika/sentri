@@ -579,6 +579,74 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 
 ---
 
+### 🤖 Auto-Approval (AUTO-003b)
+
+**Preconditions:** Project exists with `qa_lead` or `admin` access. Endpoints documented in `backend/src/routes/projects.js` (PATCH threshold), `backend/src/routes/tests.js` (revoke + approval-stats), and `backend/src/middleware/permissions.json`.
+
+**Threshold configuration** (`/automation` → expand a project → **Auto-Approval** inner tab, `frontend/src/components/automation/ProjectQualityCard.jsx`):
+1. Default state: `autoApproveThreshold` is `null` → all generated tests still land in **Draft** (zero behaviour change for projects that haven't opted in).
+2. Enter a threshold of `0.8` and click **Save** → since this is the *first* enable, a confirmation modal appears showing how many of the last 30 generated tests would have been auto-approved at this threshold (`getTests()` + client-side filter on `confidenceScore >= threshold`).
+3. Click **Enable auto-approval** in the modal → `PATCH /api/v1/projects/:id` with body `{ autoApproveThreshold: 0.8 }` → toast "Auto-approval threshold set to 0.8".
+4. Re-enable / change threshold (project already had a non-null value) → no preview modal; saves immediately. Disable (clear input → `null`) → no preview modal; toast "Auto-approval disabled".
+5. Stats line below the input renders `N auto-approved · N human-approved · N draft` from `GET /api/v1/projects/:id/approval-stats`. When auto-approvals exist, a `X% revert rate (7d)` chip appears with a tooltip `M of N auto-approvals were revoked in the last 7 days`.
+
+**Validation (each must return 400):**
+6. PATCH with `autoApproveThreshold: 0` → 400 "must be null or a number greater than 0 and at most 1" (the route disallows 0 as a footgun — `confidenceScore >= 0` would auto-approve everything).
+7. PATCH with `autoApproveThreshold: 1.5` → 400 (out of range).
+8. PATCH with `autoApproveThreshold: "0.8"` (string) → 400 (must be finite number or null).
+9. PATCH body `{ autoApproveThreshold: 0.8 }` with no `name` / `url` → succeeds (threshold-only PATCHes bypass the name/url validator; `backend/src/routes/projects.js:145-151`).
+
+**Auto-approval at generation time** (`backend/src/pipeline/testPersistence.js`):
+10. With threshold set to `0.8`, generate tests → tests with `confidenceScore >= 0.8` persist as `reviewStatus: "approved"` with `approvalSource: "auto"`, `approvalThreshold: 0.8` (captured at decision time), `approvedAt` (epoch ms), `approvedBy: "auto-approver"`.
+11. Tests with `confidenceScore < 0.8` persist as `reviewStatus: "draft"` with all four provenance columns null.
+12. Each auto-approval emits one `test.auto_approved` activity row with `userName: "auto-approver"` and structured `meta: { score, threshold }`.
+13. After raising the threshold to `0.9`, historical auto-approvals retain their original `approvalThreshold: 0.8` — provenance is captured at decision time, not refreshed against the current setting.
+
+**Tests page badges** (`frontend/src/pages/Tests.jsx`):
+14. Auto-approved tests render `🤖 Auto · 0.91` (purple). Human-approved render `👤 Human` (green). Draft renders `📝 Draft · 0.62` (amber). Provenance is visible inline at table density — not hover-only (NEXT.md:100 anti-pattern).
+15. Filter pills row: `All Tests` / `Approved` (human only) / `Auto-approved` / `Draft`. Counts on the pills reflect partition: clicking `Approved` excludes auto-approved tests; clicking `Auto-approved` shows only `approvalSource === "auto"`.
+
+**Test Detail provenance + revoke** (`frontend/src/pages/TestDetail.jsx`):
+16. Open an auto-approved test → sidebar shows inline provenance line: `🤖 Auto-approved · score 0.91 · threshold 0.80 · 2h ago` (`fmtRelativeTimeFull`).
+17. Open a human-approved test → sidebar shows `👤 Approved by @alice · 3h ago`.
+18. Click **Revoke approval** → `POST /api/v1/tests/:testId/revoke` → test returns to `reviewStatus: "draft"`; all five columns (`reviewedAt`, `approvalSource`, `approvalThreshold`, `approvedAt`, `approvedBy`) clear; the page reloads showing the draft state. Tooltip on the button surfaces the original threshold for context.
+19. Try to revoke an already-draft test → 400 "only approved tests can be revoked".
+20. Revoke writes a `test.revoke` activity with `meta.wasAutoApproved` set to `true` for auto-approved tests, `false` for human-approved.
+
+**ReviewQueue 24h auto-approval tray** (`frontend/src/pages/ReviewQueue.jsx`, AUTO-003b):
+21. With a single project selected (project filter, not "All") AND `autoApproveThreshold` set, open the Draft tab → a tray strip renders above the draft list: `🤖 N auto-approved (24h):` followed by clickable test chips with `Q:NN` quality scores (`qualityColor()` styling).
+22. Click a chip → navigates to `/tests/:testId` for a 30-second spot-audit.
+23. Tray is suppressed on the Approved / Rejected tabs, when "All projects" is selected, or when the selected project has no threshold configured.
+24. Tray is empty (renders nothing) when no auto-approvals have fired in the last 24h.
+
+**ProjectHeader aggregate** (`frontend/src/components/project/ProjectHeader.jsx`):
+25. Open a project → header subtitle shows `N tests · N human · N auto 🤖 · N drafts` from `GET /api/v1/projects/:id/approval-stats`.
+26. Aggregate is non-fatal: if the endpoint errors, the line just doesn't render.
+
+**ApprovalsTimeline page** (`/approvals`, `frontend/src/pages/ApprovalsTimeline.jsx`):
+27. Sidebar → **Approvals** → daily-grouped audit feed renders. Each day splits into per-actor batches: `🤖 12 auto-approved (avg score 0.89)` and `👤 @alice approved 3`.
+28. Expand a batch → per-test rows with confidence/threshold (read from `activity.meta`), project name, time, and a per-test **Revoke** button on auto-approval rows.
+29. Click Revoke on a row → toast "Approval revoked"; the row flips to italic `revoked` and the button hides. Failure surfaces as a "Revoke failed" toast.
+30. Activity log is the source of truth: revoked tests still appear here even after their provenance columns are cleared on the test row.
+
+**Bulk approve / restore provenance** (`backend/src/routes/tests.js`, AUTO-003b):
+31. Bulk approve via Review Queue → each test gets `approvalSource: "human"`, `approvedBy` (the actor's `userName` / `userId`), `approvedAt` (epoch ms), `approvalThreshold: null`. Verify by GET'ting the tests after the bulk action.
+32. Bulk restore → all four provenance columns clear (so a previously auto-approved test bulk-restored to draft doesn't retain stale `approvalSource: "auto"`).
+
+**Permissions:**
+33. `viewer` calling `POST /tests/:testId/revoke` → 403. `qa_lead` and `admin` succeed.
+34. `viewer` calling `GET /projects/:id/approval-stats` → 403. `qa_lead` and `admin` succeed.
+35. Cross-workspace ACL — outsider hitting `/projects/:id/approval-stats` for another workspace → 404.
+
+**Negative / edge:**
+- 7-day revert rate is clamped to `[0, 1]` — even if backfill produces more revokes than auto-approvals in the window, the UI renders at most "100%", never `117%`.
+- `meta.wasAutoApproved` flag on revoke rows lets approval-stats compute the rate without correlating testIds across activity types — verify by revoking a human-approved test (its `wasAutoApproved: false` row must NOT count toward the auto-approval revert rate).
+- Pre-AUTO-003b tests (created before the migration) have `confidenceScore: null` — they never auto-approve regardless of threshold; the Tests page renders them as `📝 Draft` without a score chip.
+- First-time enable preview gracefully degrades: if `getTests()` fails, the panel falls through to a direct save rather than blocking the user (the toast on persist surfaces any save error).
+- Disabling auto-approval (clearing the threshold) does NOT retroactively revoke previously auto-approved tests — those keep their provenance and remain approved. Reviewers who want to clear them must Revoke individually or via bulk restore.
+
+---
+
 ### 🪄 AI Fix (failed test recovery)
 
 **Preconditions:** A test exists with `playwrightCode` and `lastResult === "failed"` (or its latest run result is failed). AI provider configured. Role: `qa_lead` or `admin` (`backend/src/routes/testFix.js:152` — `requireRole("qa_lead")`).
