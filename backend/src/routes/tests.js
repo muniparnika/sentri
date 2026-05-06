@@ -626,8 +626,20 @@ router.patch("/projects/:id/tests/:testId/approve", requireRole("qa_lead"), (req
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "approved", reviewedAt });
-  logActivity({ ...actor(req),
+  // AUTO-003b: populate provenance columns on human approvals too so the
+  // approval-stats counter and audit trail carry full decision-time data
+  // (approvedBy = the actor, approvalSource = "human"). The revoke handler
+  // clears all six columns regardless of source.
+  const actorInfo = actor(req);
+  testRepo.update(test.id, {
+    reviewStatus: "approved",
+    reviewedAt,
+    approvalSource: "human",
+    approvalThreshold: null,
+    approvedAt: Date.now(),
+    approvedBy: actorInfo.userName || actorInfo.userId || null,
+  });
+  logActivity({ ...actorInfo,
     type: "test.approve", projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test approved — "${test.name}"`,
@@ -822,6 +834,23 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
   const statusMap = { approve: "approved", reject: "rejected", restore: "draft" };
   const reviewedAt = action === "restore" ? null : new Date().toISOString();
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
+
+  // AUTO-003b: bulk approve must populate provenance, and bulk restore must
+  // clear it — otherwise an auto-approved test bulk-restored to draft would
+  // retain stale `approvalSource`/`approvedAt` columns that the revoke
+  // endpoint normally clears via the dedicated /tests/:testId/revoke path.
+  if (updated.length && action === "approve") {
+    const actorInfo = actor(req);
+    const approvedBy = actorInfo.userName || actorInfo.userId || null;
+    const approvedAt = Date.now();
+    for (const t of updated) {
+      testRepo.update(t.id, { approvalSource: "human", approvalThreshold: null, approvedAt, approvedBy });
+    }
+  } else if (updated.length && action === "restore") {
+    for (const t of updated) {
+      testRepo.update(t.id, { approvalSource: null, approvalThreshold: null, approvedAt: null, approvedBy: null });
+    }
+  }
 
   if (updated.length) {
     for (const test of updated) {

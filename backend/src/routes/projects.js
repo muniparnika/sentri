@@ -139,11 +139,19 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   const existing = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!existing) return res.status(404).json({ error: "not found" });
 
-  const validationErr = validateProjectPayload(req.body);
-  if (validationErr) return res.status(400).json({ error: validationErr });
+  // Allow threshold-only PATCHes (from AutoApprovalPanel) to skip the
+  // name/url validation gate — those fields aren't being changed and
+  // `validateProjectPayload` would 400 on a body like `{ autoApproveThreshold }`.
+  const isThresholdOnly = Object.hasOwn(req.body, "autoApproveThreshold")
+    && req.body.name === undefined && req.body.url === undefined
+    && req.body.credentials === undefined;
+  if (!isThresholdOnly) {
+    const validationErr = validateProjectPayload(req.body);
+    if (validationErr) return res.status(400).json({ error: validationErr });
+  }
 
-  const name = sanitise(req.body.name, 200);
-  const url  = req.body.url?.trim() || "";
+  const name = req.body.name !== undefined ? sanitise(req.body.name, 200) : existing.name;
+  const url  = req.body.url !== undefined ? (req.body.url?.trim() || "") : existing.url;
 
   const fields = { name, url };
   if (Object.hasOwn(req.body, "autoApproveThreshold")) {
