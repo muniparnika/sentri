@@ -231,38 +231,45 @@ export default function ApprovalsTimeline() {
   return (
     <div className="at-page">
       <header className="at-header">
+        {/* Header row — title on the left, filter controls pushed right by
+            the flex-grow spacer. Mirrors the ReviewQueue layout (`.rq-header`
+            uses the same title / spacer / controls structure) so the two
+            audit pages feel like the same surface. */}
         <div className="at-header__row">
           <h1 className="at-header__title">Approvals timeline</h1>
-          {/* Per-project filter — mirrors the ReviewQueue dropdown so the
-              compliance view ("who approved this test?") can scope to a
-              single project. Hidden when there's only one project so the
-              dropdown isn't dead UI on small workspaces. */}
-          {projects.length > 1 && (
+          <div className="at-header__spacer" />
+          <div className="at-header__controls">
+            {/* Per-project filter — scopes the compliance view ("who
+                approved this test?") to a single project. Hidden when
+                there's only one project so the dropdown isn't dead UI
+                on small workspaces. */}
+            {projects.length > 1 && (
+              <select
+                className="input at-header__project-select"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                aria-label="Filter by project"
+              >
+                <option value="all">All projects</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+            {/* Date-range picker — bounds the server query to the audit
+                window the user actually cares about, so the 200-row page
+                isn't burned on stale rows the user doesn't need. */}
             <select
-              className="input at-header__project-select"
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              aria-label="Filter by project"
+              className="input at-header__range-select"
+              value={range}
+              onChange={(e) => setRange(e.target.value)}
+              aria-label="Filter by date range"
             >
-              <option value="all">All projects</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+              <option value="week">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="all">All time</option>
             </select>
-          )}
-          {/* Date-range picker — bounds the server query to the audit
-              window the user actually cares about, so the 200-row page
-              isn't burned on stale rows the user doesn't need. */}
-          <select
-            className="input at-header__range-select"
-            value={range}
-            onChange={(e) => setRange(e.target.value)}
-            aria-label="Filter by date range"
-          >
-            <option value="week">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="all">All time</option>
-          </select>
+          </div>
         </div>
         <p className="at-header__desc">
           Daily audit trail of auto- and human-approved tests. Expand a batch

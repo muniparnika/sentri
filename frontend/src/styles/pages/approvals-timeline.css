@@ -19,8 +19,9 @@
   margin-bottom: 16px;
 }
 
-/* Title + project filter sit on a flex row so the dropdown aligns to the
-   right edge of the page width and wraps cleanly under 480px. */
+/* Header row — title on the left, spacer in the middle, controls on the
+   right. Mirrors `.rq-header` on the ReviewQueue page so the two audit
+   surfaces share a layout vocabulary. */
 .at-header__row {
   display: flex;
   align-items: center;
@@ -31,8 +32,23 @@
 .at-header__title {
   font-size: 1.4rem;
   margin: 0;
+}
+
+/* Flex-grow spacer that pushes `.at-header__controls` to the right edge.
+   Mirrors `.rq-header__spacer`; using a spacer rather than `margin-left:
+   auto` on the controls keeps the order in the DOM linear (title →
+   spacer → controls), which matches reading order and tab order. */
+.at-header__spacer {
   flex: 1;
   min-width: 0;
+}
+
+/* Right-side controls cluster — project filter + date-range picker. */
+.at-header__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Compact project-filter select — matches the dimensions ReviewQueue uses

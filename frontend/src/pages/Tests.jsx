@@ -413,15 +413,16 @@ export default function Tests() {
               "Review Drafts" quick-action card below — no need for a
               duplicate header button. */}
           <div style={{ flex: 1 }} />
-          {/* Project dropdown — mirrors the Review Queue's project filter.
-              Scopes the export button to a single project so users with 3+
-              projects don't see 3+ export buttons cluttering the header. */}
+          {/* Project dropdown — mirrors the Review Queue's project filter
+              (`.rq-header-select` dimensions). Scopes the export button
+              to a single project so users with 3+ projects don't see 3+
+              export buttons cluttering the header. */}
           {projects.length > 1 && (
             <select
-              className="input"
+              className="input tests-header-select"
               value={selectedProjectId}
               onChange={e => setSelectedProjectId(e.target.value)}
-              style={{ height: 32, fontSize: "0.78rem", padding: "0 28px 0 10px", minWidth: 140 }}
+              aria-label="Filter by project"
             >
               <option value="all">All projects</option>
               {projects.map(p => (
