@@ -871,7 +871,21 @@ export default function Tests() {
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           {t.reviewStatus === "draft" && <span className="badge badge-amber">Draft</span>}
-                          {t.reviewStatus === "approved" && <span className="badge badge-green">Approved</span>}
+                          {t.reviewStatus === "approved" && (
+                            <>
+                              <span className="badge badge-green">Approved</span>
+                              {t.approvalSource === "auto" && (
+                                <span
+                                  className="badge badge-gray"
+                                  title={`Auto-approved at confidence ${t.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${t.approvalThreshold?.toFixed?.(2) ?? "?"})`}
+                                  style={{ padding: "0 5px", fontSize: "0.65rem" }}
+                                  aria-label="Auto-approved"
+                                >
+                                  🤖
+                                </span>
+                              )}
+                            </>
+                          )}
                           {t.reviewStatus === "rejected" && <span className="badge badge-red">Rejected</span>}
                         </div>
                       </td>

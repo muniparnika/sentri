@@ -262,6 +262,21 @@ export const api = {
   /** @param {string} projectId @param {string} testId - Restore to Draft. */
   restoreTest:     (projectId, testId) => req("PATCH", `/projects/${projectId}/tests/${testId}/restore`),
   /**
+   * Revoke an approval (auto- or human-approved) back to draft (AUTO-003b).
+   * Clears the four provenance columns (`approvalSource`, `approvalThreshold`,
+   * `approvedAt`, `approvedBy`) so a future approval writes a fresh
+   * decision-time snapshot. `qa_lead`+ on the backend.
+   * @param {string} testId
+   */
+  revokeApproval:  (testId) => req("POST", `/tests/${testId}/revoke`),
+  /**
+   * Approval-decision counts for a project (AUTO-003b) — powers the
+   * project-settings calibration line under the `autoApproveThreshold` input.
+   * @param {string} projectId
+   * @returns {Promise<{human: number, auto: number, draft: number, total: number}>}
+   */
+  getApprovalStats: (projectId) => req("GET", `/projects/${projectId}/approval-stats`),
+  /**
    * Bulk update tests.
    * @param {string}   projectId
    * @param {string[]} testIds

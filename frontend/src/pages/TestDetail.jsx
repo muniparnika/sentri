@@ -864,8 +864,16 @@ export default function TestDetail() {
               </button>
             )}
             {test.reviewStatus === "approved" && (
-              <button className="btn btn-ghost btn-sm td-draft-btn" onClick={() => api.restoreTest(test.projectId, testId).then(load)}>
-                <RotateCcw size={13} /> Move to Draft
+              <button
+                className="btn btn-ghost btn-sm td-draft-btn"
+                title={
+                  test.approvalSource === "auto"
+                    ? `Auto-approved at confidence ${test.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${test.approvalThreshold?.toFixed?.(2) ?? "?"}) — revoking returns to draft`
+                    : "Revoke approval and return to draft"
+                }
+                onClick={() => api.revokeApproval(testId).then(load)}
+              >
+                <RotateCcw size={13} /> Revoke approval
               </button>
             )}
             <button className="btn btn-primary btn-sm td-run-sidebar-btn" onClick={handleRunTest} disabled={running}>
