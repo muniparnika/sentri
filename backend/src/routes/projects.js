@@ -146,6 +146,13 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   const url  = req.body.url?.trim() || "";
 
   const fields = { name, url };
+  if (Object.hasOwn(req.body, "autoApproveThreshold")) {
+    const threshold = req.body.autoApproveThreshold;
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold < 0 || threshold > 1)) {
+      return res.status(400).json({ error: "autoApproveThreshold must be null or a number between 0 and 1." });
+    }
+    fields.autoApproveThreshold = threshold;
+  }
 
   if (req.body.credentials === null) {
     fields.credentials = null;

@@ -13,6 +13,7 @@ import { generateTestId } from "../utils/idGenerator.js";
 import { getProviderName } from "../aiProvider.js";
 import { PROMPT_VERSION } from "./prompts/outputSchema.js";
 import * as testRepo from "../database/repositories/testRepo.js";
+import { logActivity } from "../utils/activityLogger.js";
 
 /**
  * Write validated test objects into SQLite and update the run record.
@@ -25,8 +26,12 @@ import * as testRepo from "../database/repositories/testRepo.js";
  */
 export function persistGeneratedTests(validatedTests, project, run, defaults = {}) {
   const createdTestIds = [];
+  const threshold = Number.isFinite(project?.autoApproveThreshold) ? project.autoApproveThreshold : null;
   for (const t of validatedTests) {
     const testId = generateTestId();
+    const confidenceScore = Number.isFinite(t?.confidenceScore) ? t.confidenceScore : (t._quality || 0);
+    const autoApproved = threshold !== null && confidenceScore >= threshold;
+    const approvedAt = autoApproved ? new Date().toISOString() : null;
     const test = {
       // Spread AI-generated fields first so our critical fields below always win.
       // This prevents the AI from accidentally overriding id, projectId, reviewStatus, etc.
@@ -41,6 +46,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       lastResult: null,
       lastRunAt: null,
       qualityScore: t._quality || 0,
+      confidenceScore,
       // Per-factor breakdown that produced `qualityScore` — surfaced as the
       // "why was this drafted?" explainer in the Review Queue. `_qualityFactors`
       // is set by `deduplicateTests`; we coerce missing data to `[]` so the
@@ -52,8 +58,12 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       journeyType: t.journeyType || null,
       assertionEnhanced: t._assertionEnhanced || false,
       // All generated tests start as draft — humans must approve before regression
-      reviewStatus: "draft",
-      reviewedAt: null,
+      reviewStatus: autoApproved ? "approved" : "draft",
+      reviewedAt: approvedAt,
+      approvalSource: autoApproved ? "auto" : null,
+      approvalThreshold: autoApproved ? threshold : null,
+      approvedAt,
+      approvedBy: autoApproved ? "auto-approver" : null,
       // Traceability — which prompt version and AI model produced this test
       promptVersion: PROMPT_VERSION,
       modelUsed: getProviderName(),
@@ -67,6 +77,18 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       workspaceId: project.workspaceId || null,
     };
     testRepo.create(test);
+    if (autoApproved) {
+      logActivity({
+        type: "test.auto_approved",
+        projectId: project.id,
+        projectName: project.name,
+        testId,
+        testName: test.name,
+        detail: `Auto-approved at confidence ${confidenceScore.toFixed(2)} (threshold ${threshold.toFixed(2)})`,
+        userName: "auto-approver",
+        workspaceId: project.workspaceId || null,
+      });
+    }
     run.tests.push(testId);
     createdTestIds.push(testId);
   }
