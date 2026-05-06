@@ -120,6 +120,13 @@ export default function ApprovalsTimeline() {
         </p>
       </header>
 
+      {(autoRows.length >= 200 || humanRows.length >= 200) && (
+        <div style={{ padding: "8px 12px", marginBottom: 12, border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg2)", fontSize: "0.8rem", color: "var(--text2)" }}>
+          Showing the most recent 200 entries per type — older approvals are not displayed.
+          The backend caps `GET /activities?limit=` at 200 (see `backend/src/routes/system.js`).
+        </div>
+      )}
+
       {days.length === 0 && (
         <div style={{ padding: 32, textAlign: "center", color: "var(--text2)", fontSize: "0.875rem" }}>
           No approvals yet. Approvals will appear here as tests are reviewed.
