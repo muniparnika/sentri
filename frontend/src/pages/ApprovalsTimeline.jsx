@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bot, User, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { api } from "../api.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import { useNotifications } from "../context/NotificationContext.jsx";
+import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import "../styles/pages/approvals-timeline.css";
 
 /**
@@ -25,12 +27,19 @@ import "../styles/pages/approvals-timeline.css";
 export default function ApprovalsTimeline() {
   const [autoRows, setAutoRows] = useState([]);
   const [humanRows, setHumanRows] = useState([]);
+  // `test.revoke` activity rows — the persistent source of truth for which
+  // tests have been revoked. Survives page reload (unlike the previous
+  // optimistic `revokedTestIds` Set, which only tracked clicks in the
+  // current session). Each row carries `userName`, `createdAt`, `testId`,
+  // and `meta.wasAutoApproved`, so the UI can render
+  // "revoked by @alice · 3h ago" persistently.
+  const [revokeRows, setRevokeRows] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
-  const [revokedTestIds, setRevokedTestIds] = useState(() => new Set());
   const { addNotification } = useNotifications();
+  const { user } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
@@ -43,12 +52,14 @@ export default function ApprovalsTimeline() {
       // `-d` suffix — readers and writers must stay in lockstep.
       api.getActivities({ type: "test.auto_approve", limit: 200 }),
       api.getActivities({ type: "test.approve", limit: 200 }),
+      api.getActivities({ type: "test.revoke", limit: 200 }),
       api.getProjects(),
     ])
-      .then(([auto, human, projs]) => {
+      .then(([auto, human, revokes, projs]) => {
         if (cancelled) return;
         setAutoRows(Array.isArray(auto) ? auto : []);
         setHumanRows(Array.isArray(human) ? human : []);
+        setRevokeRows(Array.isArray(revokes) ? revokes : []);
         setProjects(Array.isArray(projs) ? projs : []);
         setError(null);
       })
@@ -56,6 +67,22 @@ export default function ApprovalsTimeline() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // Map testId → most-recent revoke activity row. A test that's been
+  // re-approved and re-revoked carries multiple revoke rows; the latest
+  // by `createdAt` is the one whose actor + timestamp the UI renders.
+  // Built once per `revokeRows` change so individual row renders stay O(1).
+  const revokeByTestId = useMemo(() => {
+    const map = new Map();
+    for (const r of revokeRows) {
+      if (!r?.testId) continue;
+      const existing = map.get(r.testId);
+      if (!existing || new Date(r.createdAt) > new Date(existing.createdAt)) {
+        map.set(r.testId, r);
+      }
+    }
+    return map;
+  }, [revokeRows]);
 
   const projectName = useMemo(() => {
     const map = new Map(projects.map((p) => [p.id, p.name]));
@@ -103,10 +130,26 @@ export default function ApprovalsTimeline() {
     return next;
   });
 
-  const handleRevoke = async (testId) => {
+  const handleRevoke = async (testId, sourceRow) => {
     try {
       await api.revokeApproval(testId);
-      setRevokedTestIds((prev) => new Set(prev).add(testId));
+      // Optimistic insert — backend has already written the real `test.revoke`
+      // activity row, so this synthetic row is immediately replaced on the
+      // next page load by the persisted record. The shape mirrors what
+      // `GET /activities` returns (see `backend/src/database/repositories/
+      // activityRepo.js`) so `revokeByTestId` and the renderer don't need
+      // to special-case it.
+      const synthetic = {
+        id: `local-revoke-${testId}-${Date.now()}`,
+        type: "test.revoke",
+        testId,
+        testName: sourceRow?.testName || null,
+        projectId: sourceRow?.projectId || null,
+        userName: user?.name || user?.email || null,
+        createdAt: new Date().toISOString(),
+        meta: { wasAutoApproved: sourceRow?.type === "test.auto_approve" },
+      };
+      setRevokeRows((prev) => [synthetic, ...prev]);
       addNotification({ title: "Approval revoked", body: "Test returned to draft." });
     } catch (err) {
       addNotification({ title: "Revoke failed", body: err?.message || "Failed to revoke approval." });
@@ -193,21 +236,43 @@ export default function ApprovalsTimeline() {
                               Gating this on `batch.kind === "auto"` would force
                               a reviewer who approved a test by mistake to navigate
                               to TestDetail just to undo it; the Approvals page
-                              exists to shortcut exactly that flow. */}
-                          {row.testId && !revokedTestIds.has(row.testId) && (
-                            <button
-                              className="btn btn-ghost btn-sm at-row__revoke"
-                              onClick={() => handleRevoke(row.testId)}
-                              title={batch.kind === "auto"
-                                ? "Revoke this auto-approval — returns the test to draft"
-                                : "Revoke this approval — returns the test to draft"}
-                            >
-                              <RotateCcw size={12} /> Revoke
-                            </button>
-                          )}
-                          {revokedTestIds.has(row.testId) && (
-                            <span className="at-row__revoked">revoked</span>
-                          )}
+                              exists to shortcut exactly that flow.
+
+                              Revocation state is read from the persisted
+                              `test.revoke` activity rows (`revokeByTestId`)
+                              rather than session state, so the
+                              "revoked by @alice · 3h ago" note survives
+                              page reload. The revoke is only counted when
+                              the activity row's `createdAt` is *after* this
+                              approval row's — otherwise an approval that
+                              happened *after* an earlier revoke would render
+                              as already-revoked, which is the wrong story. */}
+                          {(() => {
+                            if (!row.testId) return null;
+                            const revoked = revokeByTestId.get(row.testId);
+                            const isRevokedAfter = revoked
+                              && new Date(revoked.createdAt) > new Date(row.createdAt);
+                            if (isRevokedAfter) {
+                              return (
+                                <span className="at-row__revoked">
+                                  revoked
+                                  {revoked.userName ? <> by @{revoked.userName}</> : null}
+                                  {revoked.createdAt ? <> · {fmtRelativeTimeFull(revoked.createdAt)}</> : null}
+                                </span>
+                              );
+                            }
+                            return (
+                              <button
+                                className="btn btn-ghost btn-sm at-row__revoke"
+                                onClick={() => handleRevoke(row.testId, row)}
+                                title={batch.kind === "auto"
+                                  ? "Revoke this auto-approval — returns the test to draft"
+                                  : "Revoke this approval — returns the test to draft"}
+                              >
+                                <RotateCcw size={12} /> Revoke
+                              </button>
+                            );
+                          })()}
                         </li>
                       ))}
                     </ul>
