@@ -328,7 +328,10 @@ export function deduplicateTests(tests) {
       _hash: hash,
       _quality: quality,
       _qualityFactors: factors,
-      confidenceScore: quality,
+      // `quality` is on a 0–100 scale (see scoreTestWithFactors); the
+      // `autoApproveThreshold` config is on a 0–1 scale per AUTO-003b.
+      // Normalize here so a single comparison in testPersistence.js works.
+      confidenceScore: quality / 100,
     };
 
     if (!hashMap.has(hash)) {
