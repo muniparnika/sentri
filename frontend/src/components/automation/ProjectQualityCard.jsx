@@ -11,13 +11,14 @@
  * @param {{ project, defaultExpanded?, canEdit?, onToast? }} props
  */
 
-import { useState } from "react";
-import { ChevronDown, Globe, ShieldCheck, Gauge } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown, Globe, ShieldCheck, Gauge, Bot } from "lucide-react";
 import QualityGatesPanel from "../project/QualityGatesPanel.jsx";
 import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
 import TrendChart from "../shared/TrendChart.jsx";
 import { useAutomationStatusQuery } from "../../hooks/queries/useAutomationStatusQueries.js";
 import { useProjectMetricQuery } from "../../hooks/queries/useProjectMetricQuery.js";
+import api from "../../api.js";
 
 // AUTO-017.3: the four Web Vital metrics we render trend charts for. Each
 // entry's `key` is the `metric_samples.metricKey` written by `recordMetric()`
@@ -46,7 +47,88 @@ function WebVitalTrend({ projectId, metricKey, title, threshold }) {
 const INNER_TABS = [
   { id: "gates",     label: "Quality Gates",   icon: ShieldCheck },
   { id: "webvitals", label: "Web Vitals",       icon: Gauge       },
+  { id: "autoapprove", label: "Auto-Approval", icon: Bot         },
 ];
+
+/**
+ * AUTO-003b: configures `project.autoApproveThreshold` and renders the
+ * approval-stats calibration line. Empty input → null (feature off).
+ */
+function AutoApprovalPanel({ project, canEdit, onToast }) {
+  const [value, setValue] = useState(
+    project.autoApproveThreshold == null ? "" : String(project.autoApproveThreshold),
+  );
+  const [stats, setStats] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getApprovalStats(project.id)
+      .then((s) => { if (!cancelled) setStats(s); })
+      .catch(() => { /* non-fatal — stats line just won't render */ });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const save = async () => {
+    const trimmed = value.trim();
+    const threshold = trimmed === "" ? null : Number(trimmed);
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold < 0 || threshold > 1)) {
+      onToast?.({ type: "error", message: "Threshold must be empty or a number between 0 and 1." });
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateProject(project.id, { autoApproveThreshold: threshold });
+      onToast?.({ type: "success", message: threshold === null ? "Auto-approval disabled." : `Auto-approval threshold set to ${threshold}.` });
+      const fresh = await api.getApprovalStats(project.id);
+      setStats(fresh);
+    } catch (err) {
+      onToast?.({ type: "error", message: err?.message || "Failed to save threshold." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revertPct = stats && stats.autoApprovals7d > 0
+    ? Math.round((stats.revertRate7d || 0) * 100)
+    : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div>
+        <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text2)", marginBottom: 4 }}>
+          Confidence threshold (0–1) — leave empty to disable
+        </label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={!canEdit || saving}
+            placeholder="e.g. 0.8"
+            style={{ width: 120 }}
+          />
+          <button className="btn btn-primary btn-sm" onClick={save} disabled={!canEdit || saving}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+      {stats && (
+        <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+          {stats.auto} auto-approved · {stats.human} human-approved · {stats.draft} draft
+          {revertPct !== null && (
+            <> · <span title={`${stats.reverts7d} of ${stats.autoApprovals7d} auto-approvals were revoked in the last 7 days`}>
+              {revertPct}% revert rate (7d)
+            </span></>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProjectQualityCard({
   project,
@@ -126,6 +208,13 @@ export default function ProjectQualityCard({
             {innerTab === "gates" && (
               <QualityGatesPanel
                 projectId={project.id}
+                canEdit={canEdit}
+                onToast={onToast}
+              />
+            )}
+            {innerTab === "autoapprove" && (
+              <AutoApprovalPanel
+                project={project}
                 canEdit={canEdit}
                 onToast={onToast}
               />

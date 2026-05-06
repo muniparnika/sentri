@@ -28,6 +28,7 @@ import { Router } from "express";
 import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
+import * as activityRepo from "../database/repositories/activityRepo.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
@@ -728,7 +729,32 @@ router.get("/projects/:id/approval-stats", (req, res) => {
     else if (t.reviewStatus === "approved" && t.approvalSource === "auto") auto++;
     else if (t.reviewStatus === "approved") human++;
   }
-  res.json({ human, auto, draft, total: tests.length });
+
+  // 7-day revert rate: of the auto-approvals emitted in the last 7 days
+  // (`test.auto_approved` activity rows), how many were subsequently pulled
+  // back via `test.revoke`? Computed from the activity log because the
+  // `tests` row only carries the *current* state — once revoked, the
+  // provenance columns are cleared, so we need the audit trail to count
+  // the round-trip. Drives the calibration line under `autoApproveThreshold`
+  // in project settings so users can tell whether their threshold is too
+  // permissive.
+  const sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id }) || [];
+  const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id }) || [];
+  const recentAuto = autoApprovals.filter((a) => new Date(a.createdAt).getTime() >= sinceMs);
+  const recentAutoTestIds = new Set(recentAuto.map((a) => a.testId).filter(Boolean));
+  const recentReverts = revokes.filter((a) => new Date(a.createdAt).getTime() >= sinceMs && recentAutoTestIds.has(a.testId));
+  const revertRate7d = recentAuto.length > 0 ? recentReverts.length / recentAuto.length : 0;
+
+  res.json({
+    human,
+    auto,
+    draft,
+    total: tests.length,
+    revertRate7d,
+    autoApprovals7d: recentAuto.length,
+    reverts7d: recentReverts.length,
+  });
 });
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
