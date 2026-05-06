@@ -1,21 +1,30 @@
 import assert from "node:assert/strict";
 import { resetDb } from "./helpers/test-base.js";
 import * as testRepo from "../src/database/repositories/testRepo.js";
+import * as projectRepo from "../src/database/repositories/projectRepo.js";
 import * as activityRepo from "../src/database/repositories/activityRepo.js";
 import { persistGeneratedTests } from "../src/pipeline/testPersistence.js";
+
+let projectCounter = 0;
 
 function makeRun() {
   return { tests: [] };
 }
 
+// Inserts a real project row so the FK on `tests.projectId` is satisfied
+// when `persistGeneratedTests` calls `testRepo.create()`. Each call gets a
+// unique id to avoid PK collisions across the test blocks below.
 function makeProject(overrides = {}) {
-  return {
-    id: "PRJ-1",
+  const project = {
+    id: `PRJ-${++projectCounter}`,
     name: "Proj",
     url: "https://example.com",
     workspaceId: "ws-1",
+    createdAt: new Date().toISOString(),
     ...overrides,
   };
+  projectRepo.create(project);
+  return project;
 }
 
 function makeTest(confidenceScore) {
@@ -27,7 +36,8 @@ async function main() {
 
   {
     const run = makeRun();
-    const ids = persistGeneratedTests([makeTest(0.95)], makeProject({ autoApproveThreshold: null }), run);
+    const project = makeProject({ autoApproveThreshold: null });
+    const ids = persistGeneratedTests([makeTest(0.95)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "draft");
     assert.equal(saved.approvalSource, null);
@@ -35,20 +45,22 @@ async function main() {
 
   {
     const run = makeRun();
-    const ids = persistGeneratedTests([makeTest(0.4)], makeProject({ autoApproveThreshold: 0.8 }), run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.4)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "draft");
   }
 
   {
     const run = makeRun();
-    const ids = persistGeneratedTests([makeTest(0.9)], makeProject({ autoApproveThreshold: 0.8 }), run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.9)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "approved");
     assert.equal(saved.approvalSource, "auto");
     assert.equal(saved.approvalThreshold, 0.8);
     assert.equal(saved.approvedBy, "auto-approver");
-    const activities = activityRepo.getFiltered({ type: "test.auto_approved", projectId: "PRJ-1" });
+    const activities = activityRepo.getFiltered({ type: "test.auto_approved", projectId: project.id });
     assert.ok(activities.some((a) => a.testId === ids[0] && a.userName === "auto-approver"));
   }
 
@@ -59,7 +71,8 @@ async function main() {
   // a sibling integration test once the supertest harness is wired in.
   {
     const run = makeRun();
-    const ids = persistGeneratedTests([makeTest(0.95)], makeProject({ autoApproveThreshold: 0.8 }), run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.95)], project, run);
     const before = testRepo.getById(ids[0]);
     assert.equal(before.reviewStatus, "approved");
     assert.equal(before.approvalSource, "auto");
@@ -74,7 +87,7 @@ async function main() {
     });
     activityRepo.create({
       type: "test.revoke",
-      projectId: "PRJ-1",
+      projectId: project.id,
       projectName: "Proj",
       testId: ids[0],
       testName: before.name,
@@ -90,14 +103,15 @@ async function main() {
     assert.equal(after.approvedAt, null);
     assert.equal(after.approvedBy, null);
     assert.equal(after.reviewedAt, null);
-    const revokeActivities = activityRepo.getFiltered({ type: "test.revoke", projectId: "PRJ-1" });
+    const revokeActivities = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id });
     assert.ok(revokeActivities.some((a) => a.testId === ids[0]));
   }
 
   // Revoking a human-approved test also clears provenance and returns to draft.
   {
     const run = makeRun();
-    const ids = persistGeneratedTests([makeTest(0.5)], makeProject({ autoApproveThreshold: null }), run);
+    const project = makeProject({ autoApproveThreshold: null });
+    const ids = persistGeneratedTests([makeTest(0.5)], project, run);
     // Simulate a human approval (mirrors PATCH /projects/:id/tests/:testId/approve).
     testRepo.update(ids[0], { reviewStatus: "approved", reviewedAt: new Date().toISOString() });
     testRepo.update(ids[0], {
