@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, X, CheckCircle2, XCircle, Clock,
-  Loader2, Play,
+  Loader2, Play, Bot,
   AlertCircle, ArrowUpDown, Trash2, Inbox, Atom,
 } from "lucide-react";
 import { api } from "../api.js";
@@ -27,8 +27,11 @@ const STATUS_FILTERS = [
   { key: "Not Run", tooltip: "Not run",  activeColor: "#64748b", activeBg: "rgba(100,116,139,0.12)", icon: <Clock        size={14} /> },
 ];
 const REVIEW_FILTERS = [
-  { key: "Approved", tooltip: "Approved", activeColor: "#16a34a", activeBg: "rgba(34,197,94,0.12)",  icon: <CheckCircle2 size={14} /> },
-  { key: "Draft",    tooltip: "Draft",    activeColor: "#d97706", activeBg: "rgba(217,119,6,0.12)",  icon: <AlertCircle size={14} /> },
+  { key: "Approved",      tooltip: "Human-approved",                  activeColor: "#16a34a", activeBg: "rgba(34,197,94,0.12)",  icon: <CheckCircle2 size={14} /> },
+  // AUTO-003b: dedicated filter so reviewers can audit the auto-approved
+  // bypass path without trawling the activity log.
+  { key: "Auto-approved", tooltip: "Auto-approved (review for spot-check)", activeColor: "#7c3aed", activeBg: "rgba(124,58,237,0.12)", icon: <Bot size={14} /> },
+  { key: "Draft",         tooltip: "Draft",                           activeColor: "#d97706", activeBg: "rgba(217,119,6,0.12)",  icon: <AlertCircle size={14} /> },
 ];
 const CATEGORY_FILTERS = [
   { key: "UI",  tooltip: "UI tests",  activeColor: "#7c3aed", activeBg: "rgba(124,58,237,0.12)", label: "UI"  },
@@ -185,9 +188,12 @@ export default function Tests() {
   }), [tests]);
 
   const reviewCounts = useMemo(() => ({
-    "All Tests": tests.length,
-    Approved:    tests.filter(t => t.reviewStatus === "approved").length,
-    Draft:       tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length,
+    "All Tests":     tests.length,
+    // "Approved" = human-approved only — keeps the green badge honest
+    // (auto-approved tests are surfaced via their own pill, per AUTO-003b).
+    Approved:        tests.filter(t => t.reviewStatus === "approved" && t.approvalSource !== "auto").length,
+    "Auto-approved": tests.filter(t => t.reviewStatus === "approved" && t.approvalSource === "auto").length,
+    Draft:           tests.filter(t => !t.reviewStatus || t.reviewStatus === "draft").length,
   }), [tests]);
 
   const isApiTest = useCallback(t => t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described", []);
@@ -208,7 +214,8 @@ export default function Tests() {
       if (selectedProjectId !== "all" && t.projectId !== selectedProjectId) return false;
       const matchReview =
         reviewFilter === "All Tests" ? true :
-        reviewFilter === "Approved" ? t.reviewStatus === "approved" :
+        reviewFilter === "Approved" ? (t.reviewStatus === "approved" && t.approvalSource !== "auto") :
+        reviewFilter === "Auto-approved" ? (t.reviewStatus === "approved" && t.approvalSource === "auto") :
         reviewFilter === "Draft" ? (!t.reviewStatus || t.reviewStatus === "draft") : true;
       const matchSearch = !search
         || t.name?.toLowerCase().includes(search.toLowerCase())
@@ -869,22 +876,48 @@ export default function Tests() {
                         </div>
                       </td>
                       <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          {t.reviewStatus === "draft" && <span className="badge badge-amber">Draft</span>}
-                          {t.reviewStatus === "approved" && (
-                            <>
-                              <span className="badge badge-green">Approved</span>
-                              {t.approvalSource === "auto" && (
-                                <span
-                                  className="badge badge-gray"
-                                  title={`Auto-approved at confidence ${t.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${t.approvalThreshold?.toFixed?.(2) ?? "?"})`}
-                                  style={{ padding: "0 5px", fontSize: "0.65rem" }}
-                                  aria-label="Auto-approved"
-                                >
-                                  🤖
+                        {/* AUTO-003b: two-tone badge column.
+                            🤖 Auto · 0.91 (purple) vs 👤 Human (green) vs
+                            📝 Draft · 0.62 (amber). Provenance must be
+                            visible at table density — never hover-only
+                            (NEXT.md anti-pattern). */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                          {(!t.reviewStatus || t.reviewStatus === "draft") && (
+                            <span
+                              className="badge badge-amber"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                            >
+                              📝 Draft
+                              {Number.isFinite(t.confidenceScore) && (
+                                <span style={{ opacity: 0.85, fontVariantNumeric: "tabular-nums" }}>
+                                  · {t.confidenceScore.toFixed(2)}
                                 </span>
                               )}
-                            </>
+                            </span>
+                          )}
+                          {t.reviewStatus === "approved" && t.approvalSource === "auto" && (
+                            <span
+                              className="badge"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                background: "rgba(124,58,237,0.12)", color: "#7c3aed",
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                              aria-label={`Auto-approved at confidence ${t.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${t.approvalThreshold?.toFixed?.(2) ?? "?"})`}
+                            >
+                              🤖 Auto
+                              {Number.isFinite(t.confidenceScore) && (
+                                <span style={{ opacity: 0.85 }}>· {t.confidenceScore.toFixed(2)}</span>
+                              )}
+                            </span>
+                          )}
+                          {t.reviewStatus === "approved" && t.approvalSource !== "auto" && (
+                            <span
+                              className="badge badge-green"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                            >
+                              👤 Human
+                            </span>
                           )}
                           {t.reviewStatus === "rejected" && <span className="badge badge-red">Rejected</span>}
                         </div>
