@@ -60,6 +60,10 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
   );
   const [stats, setStats] = useState(null);
   const [saving, setSaving] = useState(false);
+  // AUTO-003b: first-time-enable preview. Holds the pending threshold +
+  // the last-30-tests sample so the user sees what they're about to
+  // greenlight before persisting. `null` means no preview pending.
+  const [preview, setPreview] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,13 +73,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
     return () => { cancelled = true; };
   }, [project.id]);
 
-  const save = async () => {
-    const trimmed = value.trim();
-    const threshold = trimmed === "" ? null : Number(trimmed);
-    if (threshold !== null && (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1)) {
-      onToast?.({ type: "error", message: "Threshold must be empty or a number greater than 0 and at most 1." });
-      return;
-    }
+  const persist = async (threshold) => {
     setSaving(true);
     try {
       await api.updateProject(project.id, { autoApproveThreshold: threshold });
@@ -86,6 +84,41 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
       onToast?.({ type: "error", message: err?.message || "Failed to save threshold." });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // AUTO-003b: first-time enablement guard. When the project goes from
+  // "no threshold" → "some threshold", show a preview of which of the last
+  // 30 generated tests would have been auto-approved at the proposed
+  // threshold so the user can sanity-check before flipping the switch.
+  // Re-enables (already had a threshold) and disables (→ null) skip the
+  // preview — only the *first* enablement is the dangerous one.
+  const save = async () => {
+    const trimmed = value.trim();
+    const threshold = trimmed === "" ? null : Number(trimmed);
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1)) {
+      onToast?.({ type: "error", message: "Threshold must be empty or a number greater than 0 and at most 1." });
+      return;
+    }
+    const isFirstEnable = threshold !== null && project.autoApproveThreshold == null;
+    if (!isFirstEnable) {
+      await persist(threshold);
+      return;
+    }
+    try {
+      const tests = await api.getTests(project.id);
+      // Most-recent first, last 30. `confidenceScore` is null for
+      // pre-AUTO-003 rows — those are excluded from the "would be
+      // auto-approved" tally rather than counted as failures.
+      const recent = [...tests]
+        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+        .slice(0, 30);
+      const wouldApprove = recent.filter((t) => Number.isFinite(t.confidenceScore) && t.confidenceScore >= threshold);
+      setPreview({ threshold, sample: recent, wouldApprove });
+    } catch {
+      // If the preview fetch fails, fall through to direct persist rather
+      // than block the user — the toast on persist() will surface any save error.
+      await persist(threshold);
     }
   };
 
@@ -124,6 +157,56 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
               {revertPct}% revert rate (7d)
             </span></>
           )}
+        </div>
+      )}
+      {preview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm auto-approval threshold"
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+          }}
+          onClick={() => setPreview(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--bg)", border: "1px solid var(--border)",
+              borderRadius: 8, padding: 20, maxWidth: 480, width: "90%",
+              maxHeight: "80vh", overflow: "auto",
+            }}
+          >
+            <h3 style={{ margin: "0 0 8px", fontSize: "1rem" }}>Enable auto-approval at {preview.threshold.toFixed(2)}?</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text2)", marginTop: 0 }}>
+              Of the last {preview.sample.length} generated test{preview.sample.length === 1 ? "" : "s"} on this project,{" "}
+              <strong>{preview.wouldApprove.length}</strong> would have been auto-approved at this threshold.
+              Sample these before enabling — once on, future tests bypass review automatically.
+            </p>
+            {preview.wouldApprove.length > 0 && (
+              <ul style={{ fontSize: "0.75rem", maxHeight: 200, overflow: "auto", paddingLeft: 18, margin: "8px 0" }}>
+                {preview.wouldApprove.slice(0, 10).map((t) => (
+                  <li key={t.id}>
+                    {t.name} <span style={{ color: "var(--text3)" }}>· {t.confidenceScore.toFixed(2)}</span>
+                  </li>
+                ))}
+                {preview.wouldApprove.length > 10 && (
+                  <li style={{ color: "var(--text3)" }}>…and {preview.wouldApprove.length - 10} more</li>
+                )}
+              </ul>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPreview(null)} disabled={saving}>Cancel</button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={async () => { const t = preview.threshold; setPreview(null); await persist(t); }}
+                disabled={saving}
+              >
+                {saving ? "Enabling…" : "Enable auto-approval"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
