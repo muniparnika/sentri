@@ -30,6 +30,7 @@ If the user asks for… read only this section:
 | "Record a test" | [Recorder](#-recorder) | 470–510 |
 | "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 514–536 |
 | "Review / approve / reject drafts" | [Review Queue](#-review-queue) | 540–574 |
+| "Auto-approve tests / revoke / calibration" | [Auto-Approval](#-auto-approval-auto-003b) | 578–640 |
 | "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 604–651 |
 | "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 655–685 |
 | "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 746–762 |
@@ -49,6 +50,7 @@ tests-page:          { lines: 430-467 }
 recorder:            { lines: 470-510 }
 runs:                { lines: 514-536 }
 review-queue:        { lines: 540-574 }     # NEW (PR #7)
+auto-approval:       { lines: 578-640 }     # NEW (AUTO-003b)
 ai-fix:              { lines: 578-600 }
 test-code-editing:   { lines: 604-651 }
 automation:          { lines: 655-685 }
