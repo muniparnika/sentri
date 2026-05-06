@@ -770,6 +770,25 @@ export const api = {
   getSystemInfo:   () => req("GET",    "/system"),
   /** @returns {Promise<{cleared: number}>} Clear all run history. */
   clearRuns:       () => req("DELETE", "/data/runs"),
+  /**
+   * Fetch the activity log, optionally filtered by `type` and/or `projectId`.
+   * Server caps `limit` at 200 (see `backend/src/routes/system.js`'s
+   * `GET /activities`). Powers the ReviewQueue auto-approval tray (AUTO-003b)
+   * which filters by `type === "test.auto_approved"`.
+   * @param {Object} [filters]
+   * @param {string} [filters.type]      - e.g. `"test.auto_approved"`.
+   * @param {string} [filters.projectId]
+   * @param {number} [filters.limit]
+   * @returns {Promise<Array<{id: string, type: string, projectId: string, testId: string|null, testName: string|null, detail: string, createdAt: string, userName: string|null, meta: Object|null}>>}
+   */
+  getActivities: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.type) params.set("type", filters.type);
+    if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const qs = params.toString();
+    return req("GET", `/activities${qs ? `?${qs}` : ""}`);
+  },
   /** @returns {Promise<{cleared: number}>} Clear activity log. */
   clearActivities: () => req("DELETE", "/data/activities"),
   /** @returns {Promise<{cleared: number}>} Clear self-healing history. */

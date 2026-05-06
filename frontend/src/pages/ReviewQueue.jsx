@@ -524,6 +524,38 @@ export default function ReviewQueue() {
   // Clear selection when tab changes
   useEffect(() => { setSelected(new Set()); }, [tab]);
 
+  // ── AUTO-003b: Last 24h auto-approvals tray ─────────────────────────────────
+  // One-line strip above the Draft list listing tests auto-approved in the
+  // last 24h, with their confidence-score chips. Only rendered when:
+  //   - we're on the Draft tab (it belongs to the review-inbox context)
+  //   - a single project is selected AND that project has
+  //     `autoApproveThreshold` configured (i.e. auto-approval is *on*; the
+  //     tray would otherwise be permanently empty noise on projects that
+  //     never auto-approve)
+  // Sourced from `GET /activities?type=test.auto_approved&projectId=…` and
+  // filtered client-side to `createdAt >= now - 24h`. Server caps `limit`
+  // at 200; 24h of auto-approvals on a single project sits comfortably
+  // below that for any realistic threshold.
+  const trayProject = projectId !== "all" ? projMap[projectId] : null;
+  const trayEnabled = !!trayProject && trayProject.autoApproveThreshold != null && tab === "draft";
+  const [trayItems, setTrayItems] = useState([]);
+  useEffect(() => {
+    if (!trayEnabled) { setTrayItems([]); return; }
+    let cancelled = false;
+    api.getActivities({ type: "test.auto_approved", projectId: trayProject.id, limit: 200 })
+      .then((rows) => {
+        if (cancelled) return;
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        setTrayItems((rows || []).filter((r) => new Date(r.createdAt).getTime() >= cutoff));
+      })
+      .catch(() => { /* non-fatal — tray just won't render */ });
+    return () => { cancelled = true; };
+    // Re-fetch when the active project changes or when the review-queue
+    // cache invalidates (e.g. after a revoke), via reviewQuery.dataUpdatedAt
+    // which changes whenever the underlying tests refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trayEnabled, trayProject?.id, reviewQuery.dataUpdatedAt]);
+
   const activeTest    = useMemo(() => visibleTests.find(t => t.id === activeTestId) ?? null, [visibleTests, activeTestId]);
   const activeProject = activeTest ? projMap[activeTest.projectId] : null;
   const activeIdx     = useMemo(() => visibleTests.findIndex(t => t.id === activeTestId), [visibleTests, activeTestId]);
@@ -888,6 +920,59 @@ export default function ReviewQueue() {
                   {selected.size === visibleTests.length ? "Deselect all" : "Select all"}
                 </span>
               </label>
+            )}
+
+            {/* AUTO-003b: 24h auto-approvals tray. Renders only when the
+                selected project has auto-approval enabled and we're on the
+                Draft tab. Score chips reuse `qualityColor()` for the same
+                visual encoding as the per-test quality chips below. */}
+            {trayEnabled && trayItems.length > 0 && (
+              <div
+                className="rq-auto-tray"
+                role="region"
+                aria-label="Auto-approvals in the last 24 hours"
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 10px", marginBottom: 8,
+                  background: "var(--bg2)", border: "1px solid var(--border)",
+                  borderRadius: 6, fontSize: "0.72rem", overflowX: "auto",
+                }}
+              >
+                <span style={{ color: "var(--text2)", whiteSpace: "nowrap" }}>
+                  🤖 {trayItems.length} auto-approved (24h):
+                </span>
+                {trayItems.slice(0, 20).map((a) => {
+                  const score = a.meta?.score;
+                  const score100 = typeof score === "number" ? Math.round(score <= 1 ? score * 100 : score) : null;
+                  return (
+                    <button
+                      key={a.id}
+                      className="rq-auto-tray__chip"
+                      onClick={() => a.testId && navigate(`/tests/${a.testId}`)}
+                      title={a.testName ? `${a.testName} — ${a.detail}` : a.detail}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                        padding: "2px 6px", border: "1px solid var(--border)",
+                        borderRadius: 4, background: "var(--bg)",
+                        cursor: a.testId ? "pointer" : "default", whiteSpace: "nowrap",
+                        color: "var(--text)",
+                      }}
+                    >
+                      <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {a.testName ? cleanTestName(a.testName) : a.testId || "test"}
+                      </span>
+                      {score100 != null && (
+                        <span style={{ color: qualityColor(score100), fontWeight: 600 }}>
+                          Q:{score100}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                {trayItems.length > 20 && (
+                  <span style={{ color: "var(--text3)" }}>+{trayItems.length - 20} more</span>
+                )}
+              </div>
             )}
 
             {/* Test rows */}
