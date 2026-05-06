@@ -271,6 +271,18 @@
   color: var(--text2);
 }
 
+/* Visible "calibration stats unavailable" fallback — same density as
+   `.aap-stats` but uses the amber palette to signal the trust signal
+   is missing without alarming the user. */
+.aap-stats-error {
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  border: 1px solid var(--amber-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
 /* Modal — portal'd to document.body so it overlays the viewport regardless
    of any ancestor's containing-block transforms. */
 .aap-modal-backdrop {

@@ -60,6 +60,12 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
     project.autoApproveThreshold == null ? "" : String(project.autoApproveThreshold),
   );
   const [stats, setStats] = useState(null);
+  // Calibration stats are trust-critical for this feature — silently hiding
+  // the line on a fetch failure could lead a user to set a threshold without
+  // any context for whether their current threshold is over- or under-tuned.
+  // Track the load error explicitly so the panel can surface a small amber
+  // note instead of rendering a blank space.
+  const [statsError, setStatsError] = useState(null);
   const [saving, setSaving] = useState(false);
   // AUTO-003b: first-time-enable preview. Holds the pending threshold +
   // the last-30-tests sample so the user sees what they're about to
@@ -69,8 +75,17 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
   useEffect(() => {
     let cancelled = false;
     api.getApprovalStats(project.id)
-      .then((s) => { if (!cancelled) setStats(s); })
-      .catch(() => { /* non-fatal — stats line just won't render */ });
+      .then((s) => { if (!cancelled) { setStats(s); setStatsError(null); } })
+      .catch((err) => {
+        // Capture the failure rather than swallowing it — the renderer below
+        // turns this into a visible "Calibration stats unavailable" note so
+        // users don't tune the threshold blind. Forbidden role responses
+        // (viewer hitting a qa_lead-gated endpoint) get a short message;
+        // everything else surfaces the underlying error.
+        if (cancelled) return;
+        setStats(null);
+        setStatsError(err?.message || "Could not load calibration stats.");
+      });
     return () => { cancelled = true; };
   }, [project.id]);
 
@@ -79,8 +94,18 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
     try {
       await api.updateProject(project.id, { autoApproveThreshold: threshold });
       onToast?.({ type: "success", message: threshold === null ? "Auto-approval disabled." : `Auto-approval threshold set to ${threshold}.` });
-      const fresh = await api.getApprovalStats(project.id);
-      setStats(fresh);
+      // Re-fetch stats after the threshold change so the calibration line
+      // reflects the new state. Mirror the mount-time error handling so a
+      // post-save fetch failure surfaces the same visible note rather than
+      // leaving the now-stale (or missing) line silently in place.
+      try {
+        const fresh = await api.getApprovalStats(project.id);
+        setStats(fresh);
+        setStatsError(null);
+      } catch (err) {
+        setStats(null);
+        setStatsError(err?.message || "Could not load calibration stats.");
+      }
     } catch (err) {
       onToast?.({ type: "error", message: err?.message || "Failed to save threshold." });
     } finally {
@@ -158,6 +183,16 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
               {revertPct}% revert rate (7d)
             </span></>
           )}
+        </div>
+      )}
+      {/* Visible failure mode — when the calibration fetch errors we surface
+          a short amber note instead of leaving an empty space, so a user
+          can't tune the threshold without realising the stats signal is
+          gone. `role="status"` flags it for screen readers without the
+          alarm volume of `role="alert"`. */}
+      {!stats && statsError && (
+        <div className="aap-stats-error" role="status">
+          ⚠ Calibration stats unavailable — {statsError}
         </div>
       )}
       {preview && createPortal(
