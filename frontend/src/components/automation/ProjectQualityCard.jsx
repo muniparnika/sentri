@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Globe, ShieldCheck, Gauge, Bot } from "lucide-react";
 import QualityGatesPanel from "../project/QualityGatesPanel.jsx";
 import WebVitalsBudgetsPanel from "../project/WebVitalsBudgetsPanel.jsx";
@@ -159,7 +160,7 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
           )}
         </div>
       )}
-      {preview && (
+      {preview && createPortal(
         <div
           role="dialog"
           aria-modal="true"
@@ -207,7 +208,8 @@ function AutoApprovalPanel({ project, canEdit, onToast }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
