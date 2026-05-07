@@ -125,7 +125,12 @@ export function getFiltered({ type, projectId, workspaceId, after, before, limit
     params.push(before);
   }
   sql += " ORDER BY createdAt DESC LIMIT ?";
-  params.push(limit || 200);
+  // Honour an explicit `limit: 0` (legit "count-only / probe" value) and
+  // reject non-finite inputs (NaN, Infinity) by falling back to the default
+  // only for `undefined` / `null`. `limit || 200` would coerce both `0` and
+  // `NaN` to 200 — the first silently returns 200 rows when the caller
+  // asked for none; the second hides a bad input behind a full page.
+  params.push(Number.isFinite(limit) ? limit : 200);
   if (Number.isFinite(offset) && offset > 0) {
     sql += " OFFSET ?";
     params.push(offset);
