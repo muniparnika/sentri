@@ -134,6 +134,81 @@ export function getFiltered({ type, projectId, workspaceId, after, before, limit
 }
 
 /**
+ * Count `DISTINCT testId` across activity rows matching the filter (AUTO-003b).
+ *
+ * Used by the approval-stats 7-day revert-rate calculation, which asks
+ * *"how many distinct tests were auto-approved in the window?"* and
+ * *"how many distinct tests were revoked in the window?"* — set sizes,
+ * not row counts, because a test that auto-approved twice in the window
+ * should still count as one.
+ *
+ * Previously computed by fetching up to 10,000 rows via `getFiltered`
+ * and building two `Set`s in JS; at ~1 KB per row that's ~10 MB of
+ * transferred data per project per call. This query returns a single
+ * integer, and the `activities(type, projectId, createdAt)` access
+ * pattern is index-friendly on both adapters.
+ *
+ * The `metaIsAutoApproved` filter matches the JSON-encoded flag
+ * `meta.wasAutoApproved = true` via a portable `LIKE` on the serialised
+ * `meta` TEXT column (migration 018). LIKE is case-sensitive on SQLite
+ * and case-insensitive on PostgreSQL (the adapter rewrites LIKE→ILIKE)
+ * — fine here because `logActivity` always writes the lowercase
+ * `"wasAutoApproved":true` shape, so case-variation isn't possible on
+ * real data. Using LIKE instead of `json_extract` keeps the query
+ * portable across the SQLite/PostgreSQL adapters without a dialect
+ * branch (INF-001).
+ *
+ * @param {Object} filters
+ * @param {string} filters.type                   — required, exact match on `activities.type`.
+ * @param {string} [filters.projectId]            — scope to project.
+ * @param {string} [filters.workspaceId]          — scope to workspace (ACL).
+ * @param {string} [filters.after]                — ISO timestamp lower bound (inclusive).
+ * @param {string} [filters.before]               — ISO timestamp upper bound (exclusive).
+ * @param {boolean} [filters.metaIsAutoApproved]  — match rows whose `meta`
+ *   column encodes `{ ..., "wasAutoApproved": true }`. Used to filter revoke
+ *   rows down to "was the revoked test originally auto-approved?" without
+ *   reading 10k rows into memory.
+ * @returns {number} Count of distinct non-null `testId` values among matching rows.
+ */
+export function countDistinctTestIds({ type, projectId, workspaceId, after, before, metaIsAutoApproved } = {}) {
+  const db = getDatabase();
+  let sql = "SELECT COUNT(DISTINCT testId) AS cnt FROM activities WHERE testId IS NOT NULL";
+  const params = [];
+  if (type) {
+    sql += " AND type = ?";
+    params.push(type);
+  }
+  if (projectId) {
+    sql += " AND projectId = ?";
+    params.push(projectId);
+  }
+  if (workspaceId) {
+    sql += " AND workspaceId = ?";
+    params.push(workspaceId);
+  }
+  if (after) {
+    sql += " AND createdAt >= ?";
+    params.push(after);
+  }
+  if (before) {
+    sql += " AND createdAt < ?";
+    params.push(before);
+  }
+  if (metaIsAutoApproved) {
+    // Portable JSON-in-TEXT probe. Matches the exact substring
+    // `"wasAutoApproved":true` (no spaces — `JSON.stringify` omits them)
+    // so the filter is stable across both adapters. A dialect-specific
+    // `json_extract(meta, '$.wasAutoApproved') = 1` would be nicer on
+    // SQLite but breaks on PostgreSQL (`jsonb_extract_path` / `->>`),
+    // and the LIKE is already bounded by the indexed `type + projectId`
+    // predicates above.
+    sql += " AND meta LIKE ?";
+    params.push('%"wasAutoApproved":true%');
+  }
+  return db.prepare(sql).get(...params)?.cnt || 0;
+}
+
+/**
  * Count activities with optional workspace/project scope.
  * @param {Object} [filters]
  * @param {string} [filters.workspaceId]

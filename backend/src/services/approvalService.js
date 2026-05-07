@@ -26,8 +26,8 @@
  *                       provenance cleared.
  */
 
-import * as testRepo from "../database/repositories/testRepo.js";
-import * as activityRepo from "../database/repositories/activityRepo.js";
+import { countApprovalSplitByProjectId } from "../database/repositories/testRepo.js";
+import { countDistinctTestIds } from "../database/repositories/activityRepo.js";
 import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 
 /** `tests.approvalSource` enumeration. */
@@ -90,53 +90,55 @@ export function humanApproval(actorInfo) {
  * }}
  */
 export function computeStats(projectId) {
-  const tests = testRepo.getByProjectId(projectId);
-  let human = 0, auto = 0, draft = 0, rejected = 0;
-  for (const t of tests) {
-    if (t.reviewStatus === "draft") draft++;
-    else if (t.reviewStatus === "rejected") rejected++;
-    else if (t.reviewStatus === "approved" && t.approvalSource === APPROVAL_SOURCE.AUTO) auto++;
-    else if (t.reviewStatus === "approved") human++;
-  }
+  // ── Status counts ──────────────────────────────────────────────────────────
+  // Single `SUM(CASE WHEN ...)` aggregate over `tests` — returns five integers
+  // instead of every row in the project. See `countApprovalSplitByProjectId`
+  // in testRepo.js for the SQL and the human/auto split contract.
+  const counts = countApprovalSplitByProjectId(projectId);
 
-  const sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  // Pull a generous window from the activity log — `getFiltered` defaults to
-  // LIMIT 200 and silently truncates older rows, which would understate both
-  // the auto-approval count and the revert numerator on busy projects.
-  // 10k covers ~1.4k auto-approvals/day for 7 days with headroom; the SQL
-  // filter is index-friendly (type + projectId), so the cost is bounded.
-  const autoApprovals = activityRepo.getFiltered({ type: ACTIVITY_TYPES.TEST_AUTO_APPROVE, projectId, limit: 10000 }) || [];
-  const revokes       = activityRepo.getFiltered({ type: ACTIVITY_TYPES.TEST_REVOKE,       projectId, limit: 10000 }) || [];
+  // ── 7-day revert rate ──────────────────────────────────────────────────────
+  // Two `COUNT(DISTINCT testId)` aggregates over `activities`, bounded by the
+  // 7-day `after` timestamp and the index-friendly `(type, projectId)`
+  // predicates. Replaces a pair of `getFiltered({ limit: 10000 })` calls that
+  // pulled up to 20 MB of row data per request just to compute two set sizes.
+  //
+  // The revoke-side filter uses `metaIsAutoApproved: true` so the count only
+  // includes revokes of *auto-approved* tests — matching the metric's
+  // denominator. The flag is the decision-time truth and is independent of
+  // whether the original auto-approval fell inside the same 7-day window,
+  // so this stays correct across window-boundary cases.
+  //
+  // Distinctness is by `testId`: a test auto-approved twice or revoked twice
+  // in the window still counts as one. That matches the question the UI asks
+  // ("what fraction of *tests* did humans pull back?"), not raw event count.
+  const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const autoApprovals7d = countDistinctTestIds({
+    type:      ACTIVITY_TYPES.TEST_AUTO_APPROVE,
+    projectId,
+    after:     sinceIso,
+  });
+  const reverts7d = countDistinctTestIds({
+    type:                ACTIVITY_TYPES.TEST_REVOKE,
+    projectId,
+    after:               sinceIso,
+    metaIsAutoApproved:  true,
+  });
 
-  const recentAutoTestIds = new Set(
-    autoApprovals
-      .filter((a) => new Date(a.createdAt).getTime() >= sinceMs)
-      .map((a) => a.testId)
-      .filter(Boolean),
-  );
-  // Filter revokes by `meta.wasAutoApproved === true` (set by the revoke
-  // handler) instead of correlating testIds against the auto-approval list.
-  // The flag is the decision-time truth and survives boundary effects where
-  // an auto-approval and its revoke straddle the 7-day window.
-  const recentRevertTestIds = new Set(
-    revokes
-      .filter((a) => new Date(a.createdAt).getTime() >= sinceMs && a.meta?.wasAutoApproved === true)
-      .map((a) => a.testId)
-      .filter(Boolean),
-  );
-
-  const revertRate7d = recentAutoTestIds.size > 0
-    ? Math.min(1, recentRevertTestIds.size / recentAutoTestIds.size)
+  // Defensive clamp: if a backfill ever produces more matching revokes than
+  // auto-approvals in the window (e.g. revokes of pre-window approvals), cap
+  // the ratio at 1 so the UI never renders "117% revert rate".
+  const revertRate7d = autoApprovals7d > 0
+    ? Math.min(1, reverts7d / autoApprovals7d)
     : 0;
 
   return {
-    human,
-    auto,
-    draft,
-    rejected,
-    total: tests.length,
+    human:    counts.human,
+    auto:     counts.auto,
+    draft:    counts.draft,
+    rejected: counts.rejected,
+    total:    counts.total,
     revertRate7d,
-    autoApprovals7d: recentAutoTestIds.size,
-    reverts7d:       recentRevertTestIds.size,
+    autoApprovals7d,
+    reverts7d,
   };
 }

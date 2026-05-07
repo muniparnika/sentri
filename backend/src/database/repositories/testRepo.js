@@ -655,6 +655,50 @@ export function clearStaleByProjectIds(projectIds) {
 // ─── Counts ───────────────────────────────────────────────────────────────────
 
 /**
+ * Count tests by review status + approval source for a project (AUTO-003b).
+ *
+ * Splits approved tests into `human` (reviewer-driven) and `auto` (machine-
+ * driven) buckets based on the `approvalSource` column. Used by the project
+ * approval-stats endpoint to render the calibration line
+ * `N auto-approved · N human · N draft`.
+ *
+ * Done as a single `SUM(CASE WHEN ...)` aggregate so the query cost is
+ * O(index lookup) instead of the previous O(n) in-JS scan over every row
+ * in the project. Matches the existing {@link countByReviewStatus}
+ * pattern — both are portable across the SQLite and PostgreSQL adapters
+ * (INF-001) because they use only vanilla `CASE WHEN`, no dialect-specific
+ * JSON or date functions.
+ *
+ * `auto` matches `approvalSource = 'auto'` exactly; `human` matches
+ * `approved` with any other source (`'human'` on new rows, NULL on legacy
+ * rows approved before migration 017). This preserves the invariant
+ * `auto + human == approved` without a separate LEFT JOIN.
+ *
+ * @param {string} projectId
+ * @returns {{ human: number, auto: number, draft: number, rejected: number, total: number }}
+ */
+export function countApprovalSplitByProjectId(projectId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN reviewStatus = 'approved' AND approvalSource = 'auto'                              THEN 1 ELSE 0 END) AS auto,
+      SUM(CASE WHEN reviewStatus = 'approved' AND (approvalSource IS NULL OR approvalSource <> 'auto') THEN 1 ELSE 0 END) AS human,
+      SUM(CASE WHEN reviewStatus = 'draft'                                                             THEN 1 ELSE 0 END) AS draft,
+      SUM(CASE WHEN reviewStatus = 'rejected'                                                          THEN 1 ELSE 0 END) AS rejected,
+      COUNT(*)                                                                                                            AS total
+    FROM tests
+    WHERE projectId = ? AND deletedAt IS NULL
+  `).get(projectId);
+  return {
+    human:    row?.human    || 0,
+    auto:     row?.auto     || 0,
+    draft:    row?.draft    || 0,
+    rejected: row?.rejected || 0,
+    total:    row?.total    || 0,
+  };
+}
+
+/**
  * Count tests by review status for a project (non-deleted only).
  * Also returns last-result breakdown (passed/failed) for approved tests
  * and category breakdown (api/ui) across all statuses — so the frontend
