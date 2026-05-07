@@ -30,6 +30,8 @@ import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
 import * as activityRepo from "../database/repositories/activityRepo.js";
 import { APPROVAL_SOURCE_AUTO } from "../pipeline/testPersistence.js";
+import { PROVENANCE_CLEAR, humanApproval, computeStats } from "../services/approvalService.js";
+import { ACTIVITY_TYPES } from "../utils/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
@@ -627,20 +629,17 @@ router.patch("/projects/:id/tests/:testId/approve", requireRole("qa_lead"), (req
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
   // AUTO-003b: populate provenance columns on human approvals too so the
-  // approval-stats counter and audit trail carry full decision-time data
-  // (approvedBy = the actor, approvalSource = "human"). The revoke handler
-  // clears all six columns regardless of source.
+  // approval-stats counter and audit trail carry full decision-time data.
+  // `humanApproval()` returns the four provenance fields keyed to this
+  // actor — see backend/src/services/approvalService.js for the contract.
   const actorInfo = actor(req);
   testRepo.update(test.id, {
     reviewStatus: "approved",
     reviewedAt,
-    approvalSource: "human",
-    approvalThreshold: null,
-    approvedAt: Date.now(),
-    approvedBy: actorInfo.userName || actorInfo.userId || null,
+    ...humanApproval(actorInfo),
   });
   logActivity({ ...actorInfo,
-    type: "test.approve", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_APPROVE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test approved — "${test.name}"`,
   });
@@ -688,19 +687,15 @@ router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   // AUTO-003b: clear the four provenance columns alongside reviewStatus/reviewedAt
-  // so a previously-approved test (auto- or human-) doesn't retain stale
-  // `approvalSource`/`approvedAt` etc. after being restored to draft. Matches
-  // the bulk-restore path below and the dedicated /tests/:testId/revoke endpoint.
+  // via the shared `PROVENANCE_CLEAR` shape so this stays in lock-step with
+  // bulk restore + revoke (see backend/src/services/approvalService.js).
   testRepo.update(test.id, {
     reviewStatus: "draft",
     reviewedAt: null,
-    approvalSource: null,
-    approvalThreshold: null,
-    approvedAt: null,
-    approvedBy: null,
+    ...PROVENANCE_CLEAR,
   });
   logActivity({ ...actor(req),
-    type: "test.restore", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_RESTORE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test restored to draft — "${test.name}"`,
   });
@@ -725,13 +720,10 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
   testRepo.update(test.id, {
     reviewStatus: "draft",
     reviewedAt: null,
-    approvalSource: null,
-    approvalThreshold: null,
-    approvedAt: null,
-    approvedBy: null,
+    ...PROVENANCE_CLEAR,
   });
   logActivity({ ...actor(req),
-    type: "test.revoke", projectId: project.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_REVOKE, projectId: project.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE_AUTO ? "auto-approved" : "human-approved"})`,
     // `wasAutoApproved` lets the project approval-stats handler compute the
@@ -750,67 +742,10 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
 router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
-  const tests = testRepo.getByProjectId(project.id);
-  let human = 0, auto = 0, draft = 0, rejected = 0;
-  for (const t of tests) {
-    if (t.reviewStatus === "draft") draft++;
-    else if (t.reviewStatus === "rejected") rejected++;
-    else if (t.reviewStatus === "approved" && t.approvalSource === APPROVAL_SOURCE_AUTO) auto++;
-    else if (t.reviewStatus === "approved") human++;
-  }
-
-  // 7-day revert rate: of the auto-approvals emitted in the last 7 days
-  // (`test.auto_approve` activity rows), how many were subsequently pulled
-  // back via `test.revoke`? Computed from the activity log because the
-  // `tests` row only carries the *current* state — once revoked, the
-  // provenance columns are cleared, so we need the audit trail to count
-  // the round-trip. Drives the calibration line under `autoApproveThreshold`
-  // in project settings so users can tell whether their threshold is too
-  // permissive.
-  const sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  // Pull a generous window from the activity log — `getFiltered` defaults to
-  // LIMIT 200 and silently truncates older rows, which would understate both
-  // the auto-approval count and the revert numerator on busy projects.
-  // 10k covers ~1.4k auto-approvals/day for 7 days with headroom; the SQL
-  // filter is index-friendly (type + projectId), so the cost is bounded.
-  const autoApprovals = activityRepo.getFiltered({ type: "test.auto_approve", projectId: project.id, limit: 10000 }) || [];
-  const revokes = activityRepo.getFiltered({ type: "test.revoke", projectId: project.id, limit: 10000 }) || [];
-  const recentAuto = autoApprovals.filter((a) => new Date(a.createdAt).getTime() >= sinceMs);
-  // Filter revokes by `meta.wasAutoApproved === true` (set by the revoke
-  // handler above) instead of correlating testIds against recent auto rows.
-  // The testId-correlation approach undercounted whenever an auto-approval
-  // and its revoke straddled the 7-day boundary; the meta flag is the
-  // decision-time truth and is independent of when the auto-approval fired.
-  // Dedupe by testId so a test that round-trips
-  // auto-approve → revoke → re-approve → revoke within the 7-day window
-  // counts as a single revert (the metric answers "what fraction of
-  // auto-approved *tests* did humans pull back?", not "how many revoke
-  // events fired?"). `recentAuto` is deduped the same way for symmetry —
-  // a test auto-approved twice in 7 days is still one auto-approved test.
-  const recentRevertTestIds = new Set(
-    revokes
-      .filter((a) => new Date(a.createdAt).getTime() >= sinceMs && a.meta?.wasAutoApproved === true)
-      .map((a) => a.testId)
-      .filter(Boolean),
-  );
-  const recentAutoTestIds = new Set(recentAuto.map((a) => a.testId).filter(Boolean));
-  // Belt-and-suspenders clamp: if a backfill ever produces more revokes than
-  // auto-approvals in the window (e.g. revokes of pre-window approvals),
-  // cap the ratio at 1 so the UI never renders "117% revert rate".
-  const revertRate7d = recentAutoTestIds.size > 0
-    ? Math.min(1, recentRevertTestIds.size / recentAutoTestIds.size)
-    : 0;
-
-  res.json({
-    human,
-    auto,
-    draft,
-    rejected,
-    total: tests.length,
-    revertRate7d,
-    autoApprovals7d: recentAutoTestIds.size,
-    reverts7d: recentRevertTestIds.size,
-  });
+  // Aggregation lives in `services/approvalService.js` — keeping the route
+  // handler thin lets the service be reused (e.g. a future workspace-wide
+  // rollup) and keeps the test surface focused on auth/HTTP shape vs. logic.
+  res.json(computeStats(project.id));
 });
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
@@ -847,20 +782,15 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
 
   // AUTO-003b: bulk approve must populate provenance, and bulk restore must
-  // clear it — otherwise an auto-approved test bulk-restored to draft would
-  // retain stale `approvalSource`/`approvedAt` columns that the revoke
-  // endpoint normally clears via the dedicated /tests/:testId/revoke path.
+  // clear it. Reuse the same `humanApproval()` / `PROVENANCE_CLEAR` shapes
+  // the single-test handlers use (services/approvalService.js) so all four
+  // approve/restore paths stay byte-identical — the previous bug where
+  // single-restore drifted from bulk-restore is impossible to recreate now.
   if (updated.length && action === "approve") {
-    const actorInfo = actor(req);
-    const approvedBy = actorInfo.userName || actorInfo.userId || null;
-    const approvedAt = Date.now();
-    for (const t of updated) {
-      testRepo.update(t.id, { approvalSource: "human", approvalThreshold: null, approvedAt, approvedBy });
-    }
+    const provenance = humanApproval(actor(req));
+    for (const t of updated) testRepo.update(t.id, provenance);
   } else if (updated.length && action === "restore") {
-    for (const t of updated) {
-      testRepo.update(t.id, { approvalSource: null, approvalThreshold: null, approvedAt: null, approvedBy: null });
-    }
+    for (const t of updated) testRepo.update(t.id, PROVENANCE_CLEAR);
   }
 
   if (updated.length) {

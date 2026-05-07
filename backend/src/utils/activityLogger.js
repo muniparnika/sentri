@@ -3,13 +3,19 @@
  * @description Shared activity logging helper. Records user/system actions
  * so the Activity page shows a complete timeline.
  *
- * ### Type convention (dot-separated: `<resource>.<action>`)
+ * ### Type convention (dot-separated: `<resource>.<action>`, imperative form)
  * `project.create` · `crawl.start` · `crawl.complete` · `crawl.fail` ·
  * `test_run.start` · `test_run.complete` · `test_run.fail` ·
  * `test.create` · `test.generate` · `test.edit` · `test.delete` ·
  * `test.approve` · `test.reject` · `test.restore` ·
+ * `test.auto_approve` · `test.revoke` · (AUTO-003b)
  * `test.bulk_approve` · `test.bulk_reject` · `test.bulk_restore` ·
  * `settings.update`
+ *
+ * Test-review event literals are exported as `ACTIVITY_TYPES` from
+ * `backend/src/utils/activityTypes.js` — prefer the constant over the
+ * literal string at every callsite (the `"test.approve"` vs `"test.approved"`
+ * mismatch with the frontend was the bug that motivated extracting them).
  */
 
 import { generateActivityId } from "./idGenerator.js";

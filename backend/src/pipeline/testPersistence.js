@@ -14,6 +14,7 @@ import { getProviderName } from "../aiProvider.js";
 import { PROMPT_VERSION } from "./prompts/outputSchema.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
+import { ACTIVITY_TYPES } from "../utils/activityTypes.js";
 
 /**
  * Pseudo-user attributed to machine-made approvals in `tests.approvedBy` and
@@ -104,7 +105,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
     testRepo.create(test);
     if (autoApproved) {
       logActivity({
-        type: "test.auto_approve",
+        type: ACTIVITY_TYPES.TEST_AUTO_APPROVE,
         projectId: project.id,
         projectName: project.name,
         testId,
