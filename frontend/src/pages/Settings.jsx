@@ -537,12 +537,30 @@ function fmtUptime(seconds) {
 }
 
 const SETTINGS_TABS = [
-  { key: "providers",   label: "AI Providers",  icon: <Zap size={14} /> },
-  { key: "members",     label: "Members",       icon: <Users size={14} /> },
-  { key: "execution",   label: "Execution",     icon: <Cpu size={14} /> },
-  { key: "data",        label: "Data",          icon: <Database size={14} /> },
-  { key: "account",     label: "Account",       icon: <Shield size={14} /> },
+  { key: "providers",   label: "AI Providers",  icon: <Zap size={14} />,      adminOnly: true },
+  { key: "members",     label: "Members",       icon: <Users size={14} />,    adminOnly: true },
+  { key: "execution",   label: "Execution",     icon: <Cpu size={14} />,      adminOnly: false },
+  { key: "data",        label: "Data",          icon: <Database size={14} />, adminOnly: true },
+  { key: "account",     label: "Account",       icon: <Shield size={14} />,   adminOnly: false },
 ];
+
+// Renders in place of an admin-only tab body when a non-admin lands on it
+// (e.g. via deep link / stale tab state). UI gate only — backend mutation
+// routes still enforce requireRole("admin") as the authoritative ACL.
+function AdminLockedSection({ feature, role }) {
+  return (
+    <div className="card card-padded" style={{ textAlign: "center", padding: "40px 24px" }}>
+      <Shield size={28} color="var(--text3)" style={{ marginBottom: 12 }} />
+      <div className="font-bold" style={{ fontSize: "1.05rem", marginBottom: 6 }}>
+        {feature} requires admin access
+      </div>
+      <div className="text-sm text-muted" style={{ maxWidth: 420, margin: "0 auto" }}>
+        Your current role is <strong>{role || "viewer"}</strong>. Ask a workspace admin to grant you
+        the <strong>admin</strong> role if you need to change these settings.
+      </div>
+    </div>
+  );
+}
 
 
 // ── Members tab (ACL-002) ─────────────────────────────────────────────────────
@@ -1038,7 +1056,11 @@ function AccountTab() {
 export default function Settings() {
   usePageTitle("Settings");
   const navigate = useNavigate();
-  const [tab, setTab]           = useState("providers");
+  const { user } = useAuth();
+  const isAdmin = user?.workspaceRole === "admin";
+  const visibleTabs = SETTINGS_TABS.filter(t => isAdmin || !t.adminOnly);
+  // Default to first visible tab so non-admins don't land on a locked section.
+  const [tab, setTab]           = useState(visibleTabs[0]?.key || "account");
 
   const bundleQuery = useSettingsBundleQuery();
 
@@ -1080,7 +1102,7 @@ export default function Settings() {
 
       {/* ── Tab bar ── */}
       <div className="tab-bar">
-        {SETTINGS_TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -1090,6 +1112,16 @@ export default function Settings() {
           </button>
         ))}
       </div>
+
+      {/* Defense-in-depth: if `tab` ever points at an admin-only section for a
+          non-admin (stale state, deep link), short-circuit with a locked card
+          instead of rendering the admin UI. */}
+      {!isAdmin && SETTINGS_TABS.find(t => t.key === tab)?.adminOnly && (
+        <AdminLockedSection
+          feature={SETTINGS_TABS.find(t => t.key === tab)?.label}
+          role={user?.workspaceRole}
+        />
+      )}
 
       {/* ── Tab: AI Providers ── */}
       {tab === "providers" && <>
