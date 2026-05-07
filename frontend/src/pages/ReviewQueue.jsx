@@ -103,8 +103,31 @@ function QualityScoreChip({ score, factors }) {
         aria-expanded={open}
         aria-haspopup="dialog"
         style={{ color: qualityColor(score) }}
+        aria-label={`Quality score ${score} out of 100`}
       >
-        Q:{score}{hasFactors ? " ▾" : ""}
+        {/* Circular progress arc — replaces the "Q:72" prefix with a
+            visual ring (Sonar-style). The score sits in the centre as a
+            bare number; the ring's filled arc encodes the value. */}
+        <svg
+          className="rq-quality-chip__ring"
+          width="22"
+          height="22"
+          viewBox="0 0 22 22"
+          aria-hidden="true"
+        >
+          <circle cx="11" cy="11" r="9" fill="none" stroke="var(--border)" strokeWidth="2" />
+          <circle
+            cx="11" cy="11" r="9"
+            fill="none"
+            stroke={qualityColor(score)}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray={`${(Math.max(0, Math.min(100, score)) / 100) * (2 * Math.PI * 9)} ${2 * Math.PI * 9}`}
+            transform="rotate(-90 11 11)"
+          />
+        </svg>
+        <span className="rq-quality-chip__score">{score}</span>
+        {hasFactors && <span className="rq-quality-chip__caret" aria-hidden="true">▾</span>}
       </button>
       {open && hasFactors && (
         <div className="rq-quality-popover" role="dialog" aria-label="Quality score breakdown">
@@ -977,8 +1000,9 @@ export default function ReviewQueue() {
                         <span
                           className="rq-auto-tray__chip-score"
                           style={{ color: qualityColor(score100) }}
+                          aria-label={`Quality score ${score100} out of 100`}
                         >
-                          Q:{score100}
+                          {score100}<span className="rq-auto-tray__chip-score-denom">/100</span>
                         </span>
                       )}
                     </button>
