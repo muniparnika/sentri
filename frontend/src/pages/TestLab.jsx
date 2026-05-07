@@ -633,6 +633,53 @@ export default function TestLab() {
     persistRun(activeRun, runData, logLines);
   }, [activeRun, runData, logLines]);
 
+  // ── Backfill missing log lines on remount ──
+  // SSE has no replay cursor — `useRunSSE` (`hooks/useRunSSE.js:114-134`) only
+  // forwards messages emitted *after* its EventSource opens. If the user
+  // navigated away mid-pipeline, any log lines emitted while they were on
+  // another page are missing from the rehydrated `logLines` slice.
+  //
+  // Backend ENH-008 persists every log line in the `run_logs` table and
+  // `GET /api/v1/runs/:id` hydrates `run.logs` from that table (see
+  // `backend/src/database/repositories/runRepo.js:272-287`), so a single
+  // fetch on mount restores the complete history. Subsequent SSE messages
+  // append from the reconnect point as usual.
+  //
+  // Guarded with a ref so it runs at most once per `activeRun.runId` — without
+  // this, every SSE update that mutates `runData` would re-trigger the effect
+  // and we'd refetch the full log on every render.
+  const backfilledRunIdRef = useRef(null);
+  useEffect(() => {
+    if (!activeRun?.runId) return;
+    if (backfilledRunIdRef.current === activeRun.runId) return;
+    if (!persisted || persisted.activeRun?.runId !== activeRun.runId) {
+      // Only backfill on rehydration — runs started fresh in-page already
+      // have their logs streamed from the start.
+      backfilledRunIdRef.current = activeRun.runId;
+      return;
+    }
+    backfilledRunIdRef.current = activeRun.runId;
+    let cancelled = false;
+    api.getRun(activeRun.runId)
+      .then((run) => {
+        if (cancelled) return;
+        const serverLogs = Array.isArray(run?.logs) ? run.logs : [];
+        if (serverLogs.length === 0) return;
+        // Merge: prefer the server's authoritative copy. Cap at LOG_CAP so a
+        // long run doesn't blow past the in-memory bound that `setLogLines`
+        // enforces elsewhere.
+        setLogLines((prev) => {
+          // If we already have ≥ server's count, the user never lost any
+          // lines (they stayed on Test Lab); keep the local copy intact.
+          if (prev.length >= serverLogs.length) return prev;
+          const merged = serverLogs.slice(-LOG_CAP);
+          return merged;
+        });
+      })
+      .catch(() => { /* non-fatal — keep whatever we rehydrated */ });
+    return () => { cancelled = true; };
+  }, [activeRun?.runId, persisted]);
+
   // ── Derived ──
   const selectedProject = projects.find(p => p.id === selectedId) ?? null;
   const lastCrawlRun = useMemo(() => {
