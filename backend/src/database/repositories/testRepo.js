@@ -81,12 +81,29 @@ const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
  * @returns {string} LIKE pattern
  */
 function buildTagLikePattern(tag) {
-  const escaped = String(tag)
+  // Two-stage encoding:
+  //   1. Mirror what `JSON.stringify` does to the tag value when it's
+  //      persisted into the `tags` TEXT column — `"` and `\` get
+  //      backslash-escaped, so a tag value `needs "review"` is stored
+  //      on disk as the bytes `needs \"review\"`.
+  //   2. Then escape SQL LIKE metacharacters (`%`, `_`) and the LIKE
+  //      escape char itself (`\`) so user-supplied tags like `"50%_off"`
+  //      don't match unrelated rows. The output MUST be used with a
+  //      `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+  //
+  // Order matters: stage 1 must run BEFORE stage 2's `\` escape, so the
+  // backslashes introduced by JSON-encoding get themselves escaped for
+  // the LIKE engine. Otherwise a JSON-stored `\"` in the row would only
+  // match a pattern of `\"` in the SQL, but ESCAPE='\\' would consume
+  // that backslash and leave just `"`, missing the row entirely.
+  const jsonEncoded = String(tag)
     .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/"/g, '\\"');
-  return `%"${escaped}"%`;
+    .replace(/"/g,  '\\"');
+  const likeEscaped = jsonEncoded
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g,  "\\%")
+    .replace(/_/g,  "\\_");
+  return `%"${likeEscaped}"%`;
 }
 
 /** SQL fragment appended to every `tags LIKE ?` clause to honour the
