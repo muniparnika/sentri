@@ -152,7 +152,12 @@ export function cookieSameSite() {
   return `; SameSite=Strict${secure ? "; Secure" : ""}`;
 }
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  },
+}));
 
 // ─── Cookie parsing ───────────────────────────────────────────────────────────
 // Parse the Cookie header into req.cookies without an external dependency.

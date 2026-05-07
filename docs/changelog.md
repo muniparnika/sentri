@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **AUTO-002 + AUTO-015 (in progress)**: Added crawl baseline primitives for diff-aware crawling (`crawl_baselines` table + `crawlBaselineRepo` + `crawlDiff`), wired `pages_changed` SSE emission with `changedPages`/`removedPages` metadata in the crawl pipeline, added CI trigger support for `triggerCrawl` + optional `previewUrl`, and added signed deployment webhook endpoints for Vercel (`X-Vercel-Signature`, HMAC-SHA1) and Netlify (`X-Netlify-Token`, HMAC-SHA256) with preview-URL extraction. Integration Snippets now includes copy-pasteable Vercel/Netlify webhook payload templates, and `backend/.env.example` documents `VERCEL_WEBHOOK_SECRET`/`NETLIFY_WEBHOOK_SECRET`.
+
 ### Removed
 - **Sprint-promotion automation (PROC-002 + PROC-003, reverted)**: Deleted `scripts/promote-sprint-item.mjs` and `scripts/promote-sprint-item.test.mjs` — the regex-based transforms that tried to automate the NEXT.md / ROADMAP.md / changelog hand-off after a PR ships. In practice the promotions had too many edge cases the transforms couldn't cover cleanly: (1) bundled PRs leaked `(bundled)` suffixes into ledger reads; (2) queue slots are the script's source for scope prose, but most queue items live as one-line entries in `NEXT.md` and a full spec in `ROADMAP.md` — the script couldn't fetch the latter without bespoke per-id logic; (3) the Recently-completed row cap and per-row title fields drifted from the queue's title format, so manual cleanup was always needed after every run. The canonical sprint hand-off is now the expanded manual checklist in `REVIEW.md § Sprint Tracker Hand-off` (PR #10). The original `### Added` entries for PROC-002 (PR #8) and PROC-003 (PR #9) below are preserved for audit continuity — treat both as superseded by this entry.
 

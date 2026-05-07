@@ -233,25 +233,28 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   res.status(202).json({ runId, statusUrl });
 });
 
-function verifyWebhookSignature(provider, body, signatureHeader) {
+function verifyWebhookSignature(provider, rawBody, signatureHeader) {
   const secret = provider === "vercel" ? process.env.VERCEL_WEBHOOK_SECRET : process.env.NETLIFY_WEBHOOK_SECRET;
-  if (!secret) return false;
-  const payload = JSON.stringify(body || {});
+  if (!secret || !signatureHeader || !rawBody) return false;
   const algo = provider === "vercel" ? "sha1" : "sha256";
-  const expected = crypto.createHmac(algo, secret).update(payload).digest("hex");
-  return signatureHeader === expected || signatureHeader === `${algo}=${expected}`;
+  const expected = crypto.createHmac(algo, secret).update(rawBody).digest("hex");
+  const provided = signatureHeader.startsWith(`${algo}=`) ? signatureHeader.slice(algo.length + 1) : signatureHeader;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 router.post("/projects/:id/trigger/vercel", expensiveOpLimiter, async (req, res) => {
   const sig = req.get("X-Vercel-Signature");
-  if (!verifyWebhookSignature("vercel", req.body, sig)) return res.status(401).json({ error: "invalid signature" });
+  if (!verifyWebhookSignature("vercel", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
   const deploymentUrl = req.body?.deployment?.url;
   res.json({ ok: true, provider: "vercel", previewUrl: deploymentUrl ? `https://${deploymentUrl.replace(/^https?:\/\//, "")}` : null });
 });
 
 router.post("/projects/:id/trigger/netlify", expensiveOpLimiter, async (req, res) => {
   const sig = req.get("X-Netlify-Token");
-  if (!verifyWebhookSignature("netlify", req.body, sig)) return res.status(401).json({ error: "invalid signature" });
+  if (!verifyWebhookSignature("netlify", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
   const deploymentUrl = req.body?.deploy_ssl_url || req.body?.deploy_url || null;
   res.json({ ok: true, provider: "netlify", previewUrl: deploymentUrl });
 });

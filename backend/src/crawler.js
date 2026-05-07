@@ -302,8 +302,18 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     });
     if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
       log(run, "🟰 No page changes detected against the previous crawl baseline.");
+      snapshots = [];
+      snapshotsByUrl = {};
     } else {
       log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
+      if (Object.keys(existingBaselines).length > 0) {
+        const changedSet = new Set(diff.changedPages);
+        snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
+        snapshotsByUrl = Object.fromEntries(
+          Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
+        );
+        log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
+      }
     }
 
     // ── Early failure: unreachable target ────────────────────────────────
