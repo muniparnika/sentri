@@ -290,6 +290,46 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     snapshots = crawlResult.snapshots;
     snapshotsByUrl = crawlResult.snapshotsByUrl;
     apiEndpoints = crawlResult.apiEndpoints || [];
+
+    // ── Early failure: unreachable target ────────────────────────────────
+    // If the crawl produced zero pages AND every navigation attempt failed
+    // with a network-class error (DNS, connection refused, TLS, timeout),
+    // throw a navigation error so the run is classified `failed` with a
+    // clear DNS/network reason — instead of silently completing as
+    // "completed_empty" after the Filter/Classify/Generate stages run on
+    // an empty snapshot list.
+    //
+    // NOTE: This check uses the raw crawl result (before diff filtering) and
+    // runs BEFORE baselines are replaced — so a transient network failure
+    // does not wipe the project's baseline fingerprints.
+    const failures = crawlResult.navigationFailures || [];
+    if (snapshots.length === 0 && failures.length > 0) {
+      const networkFailures = failures.filter(f =>
+        f.category === "dns" || f.category === "network" || f.category === "timeout"
+      );
+      if (networkFailures.length === failures.length) {
+        const primary = networkFailures[0];
+        const isDns = networkFailures.some(f => f.category === "dns");
+        logWarn(run, isDns
+          ? `Crawl aborted: DNS resolution failed for ${project.url} (${primary.message})`
+          : `Crawl aborted: target URL unreachable — ${primary.message}`);
+        structuredLog("crawl.unreachable", {
+          runId: run.id, projectId: project.id, url: project.url,
+          category: primary.category, message: primary.message,
+        });
+        // Throw with a message that contains "net::err_" / DNS markers so
+        // classifyError() routes it to the NAVIGATION category (and the DNS
+        // branch added in this change produces the DNS-specific hint).
+        throw new Error(isDns
+          ? `Target host could not be resolved (DNS). "${project.url}" is not reachable — ${primary.message}`
+          : `Target URL is unreachable — ${primary.message}`
+        );
+      }
+    }
+
+    // ── Diff-aware crawl baseline (AUTO-002) ──────────────────────────────
+    // Runs after the unreachable-target check so that transient network
+    // failures cannot wipe existing baselines.
     const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
     const diff = diffCrawlSnapshots(existingBaselines, snapshots);
     run.changedPages = diff.changedPages;
@@ -313,38 +353,6 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
           Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
         );
         log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
-      }
-    }
-
-    // ── Early failure: unreachable target ────────────────────────────────
-    // If the crawl produced zero pages AND every navigation attempt failed
-    // with a network-class error (DNS, connection refused, TLS, timeout),
-    // throw a navigation error so the run is classified `failed` with a
-    // clear DNS/network reason — instead of silently completing as
-    // "completed_empty" after the Filter/Classify/Generate stages run on
-    // an empty snapshot list.
-    const failures = crawlResult.navigationFailures || [];
-    if (snapshots.length === 0 && failures.length > 0) {
-      const networkFailures = failures.filter(f =>
-        f.category === "dns" || f.category === "network" || f.category === "timeout"
-      );
-      if (networkFailures.length === failures.length) {
-        const primary = networkFailures[0];
-        const isDns = networkFailures.some(f => f.category === "dns");
-        logWarn(run, isDns
-          ? `Crawl aborted: DNS resolution failed for ${project.url} (${primary.message})`
-          : `Crawl aborted: target URL unreachable — ${primary.message}`);
-        structuredLog("crawl.unreachable", {
-          runId: run.id, projectId: project.id, url: project.url,
-          category: primary.category, message: primary.message,
-        });
-        // Throw with a message that contains "net::err_" / DNS markers so
-        // classifyError() routes it to the NAVIGATION category (and the DNS
-        // branch added in this change produces the DNS-specific hint).
-        throw new Error(isDns
-          ? `Target host could not be resolved (DNS). "${project.url}" is not reachable — ${primary.message}`
-          : `Target URL is unreachable — ${primary.message}`
-        );
       }
     }
 

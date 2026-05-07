@@ -123,6 +123,17 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
     if (urlErr) return res.status(400).json({ error: urlErr });
   }
 
+  // SSRF protection for previewUrl — same DNS-resolving validation used for
+  // callbackUrl. Without this, a valid trigger token could redirect the
+  // browser crawl at an internal address (e.g. cloud metadata, RFC1918).
+  if (req.body?.previewUrl && typeof req.body.previewUrl === "string") {
+    if (req.body.previewUrl.length > 2048) {
+      return res.status(400).json({ error: "previewUrl exceeds maximum length (2048 characters)." });
+    }
+    const previewErr = await validateUrl(req.body.previewUrl);
+    if (previewErr) return res.status(400).json({ error: previewErr });
+  }
+
   const validatedDials = resolveDialsConfig(dialsConfig);
   const parallelWorkers = validatedDials?.parallelWorkers ?? 1;
 
