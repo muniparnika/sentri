@@ -14,7 +14,7 @@ import { getProviderName } from "../aiProvider.js";
 import { PROMPT_VERSION } from "./prompts/outputSchema.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { ACTIVITY_TYPES } from "../utils/activityTypes.js";
+import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 
 /**
  * Pseudo-user attributed to machine-made approvals in `tests.approvedBy` and

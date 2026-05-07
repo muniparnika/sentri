@@ -31,7 +31,7 @@ import * as runRepo from "../database/repositories/runRepo.js";
 import * as activityRepo from "../database/repositories/activityRepo.js";
 import { APPROVAL_SOURCE_AUTO } from "../pipeline/testPersistence.js";
 import { PROVENANCE_CLEAR, humanApproval, computeStats } from "../services/approvalService.js";
-import { ACTIVITY_TYPES } from "../utils/activityTypes.js";
+import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";

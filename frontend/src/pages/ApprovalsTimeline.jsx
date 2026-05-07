@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNotifications } from "../context/NotificationContext.jsx";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
-import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
+import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 import "../styles/pages/approvals-timeline.css";
 
 /**

@@ -35,7 +35,7 @@ import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
-import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
+import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import highlightCode from "../utils/highlightCode.js";
