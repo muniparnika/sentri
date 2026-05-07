@@ -261,18 +261,114 @@ function verifyWebhookSignature(provider, rawBody, signatureHeader) {
   return crypto.timingSafeEqual(a, b);
 }
 
-router.post("/projects/:id/trigger/vercel", expensiveOpLimiter, async (req, res) => {
+/**
+ * Launch a crawl run against a deployment-preview URL. Shared by the Vercel
+ * and Netlify webhook handlers below — kept in one place so the run-object
+ * shape and runWithAbort wiring stay aligned with `runs.js:71-127`
+ * (the canonical crawl entry point).
+ *
+ * The caller must have already (a) verified the provider's HMAC signature,
+ * (b) authenticated the trigger token via requireTrigger, and (c) validated
+ * `previewUrl` via SSRF guard.
+ */
+async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow }) {
+  // Concurrent-run guard — same as POST /trigger
+  const existingRun = runRepo.findActiveByProjectId(project.id);
+  if (existingRun) {
+    return { status: 409, body: { error: `A run is already in progress (${existingRun.id}).`, runId: existingRun.id } };
+  }
+
+  const runId = generateRunId();
+  const run = {
+    id: runId,
+    projectId: project.id,
+    type: "crawl",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    logs: [],
+    tests: [],
+    pagesFound: 0,
+    workspaceId: project.workspaceId || null,
+  };
+  runRepo.create(run);
+
+  if (tokenRow) webhookTokenRepo.touch(tokenRow.id);
+
+  logActivity({
+    type: "crawl.start",
+    projectId: project.id,
+    projectName: project.name,
+    workspaceId: project.workspaceId,
+    detail: `${provider} deployment webhook — crawl ${previewUrl}`,
+    status: "running",
+  });
+
+  runWithAbort(runId, run,
+    (signal) => crawlAndGenerateTests({ ...project, url: previewUrl }, run, { signal }),
+    {
+      onSuccess: () => logActivity({
+        type: "crawl.complete",
+        projectId: project.id,
+        projectName: project.name,
+        workspaceId: project.workspaceId,
+        detail: `${provider} preview crawl completed — ${run.pagesFound || 0} pages, ${run.tests?.length || 0} test(s) generated`,
+      }),
+      onFailActivity: (err) => ({
+        type: "crawl.fail",
+        projectId: project.id,
+        projectName: project.name,
+        workspaceId: project.workspaceId,
+        detail: `${provider} preview crawl failed: ${classifyError(err, "crawl").message}`,
+      }),
+      onComplete: async (finishedRun) => {
+        try { await fireNotifications(finishedRun, project); } catch { /* best-effort */ }
+      },
+    },
+  );
+
+  return { status: 202, body: { ok: true, provider, runId, previewUrl } };
+}
+
+/**
+ * Webhook handlers require BOTH:
+ *   1. A valid HMAC signature from the deployment provider (proves Vercel/
+ *      Netlify sent the payload — protects against forged calls).
+ *   2. A project-scoped trigger token via `requireTrigger` (proves which
+ *      project should run — without this, a single global webhook secret
+ *      would let any signed payload trigger any project ID in the URL).
+ */
+router.post("/projects/:id/trigger/vercel", expensiveOpLimiter, requireTrigger, async (req, res) => {
   const sig = req.get("X-Vercel-Signature");
   if (!verifyWebhookSignature("vercel", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
+
   const deploymentUrl = req.body?.deployment?.url;
-  res.json({ ok: true, provider: "vercel", previewUrl: deploymentUrl ? `https://${deploymentUrl.replace(/^https?:\/\//, "")}` : null });
+  if (!deploymentUrl) return res.status(400).json({ error: "deployment.url missing from payload" });
+  const previewUrl = `https://${String(deploymentUrl).replace(/^https?:\/\//, "")}`;
+
+  // SSRF guard — same DNS-resolving validation used elsewhere in this file
+  if (previewUrl.length > 2048) return res.status(400).json({ error: "previewUrl exceeds maximum length (2048 characters)." });
+  const previewErr = await validateUrl(previewUrl);
+  if (previewErr) return res.status(400).json({ error: previewErr });
+
+  const { triggerProject: project, triggerToken: tokenRow } = req;
+  const { status, body } = await launchPreviewCrawl({ project, previewUrl, provider: "vercel", tokenRow });
+  res.status(status).json(body);
 });
 
-router.post("/projects/:id/trigger/netlify", expensiveOpLimiter, async (req, res) => {
+router.post("/projects/:id/trigger/netlify", expensiveOpLimiter, requireTrigger, async (req, res) => {
   const sig = req.get("X-Netlify-Token");
   if (!verifyWebhookSignature("netlify", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
-  const deploymentUrl = req.body?.deploy_ssl_url || req.body?.deploy_url || null;
-  res.json({ ok: true, provider: "netlify", previewUrl: deploymentUrl });
+
+  const previewUrl = req.body?.deploy_ssl_url || req.body?.deploy_url || null;
+  if (!previewUrl) return res.status(400).json({ error: "deploy_ssl_url / deploy_url missing from payload" });
+
+  if (previewUrl.length > 2048) return res.status(400).json({ error: "previewUrl exceeds maximum length (2048 characters)." });
+  const previewErr = await validateUrl(previewUrl);
+  if (previewErr) return res.status(400).json({ error: previewErr });
+
+  const { triggerProject: project, triggerToken: tokenRow } = req;
+  const { status, body } = await launchPreviewCrawl({ project, previewUrl, provider: "netlify", tokenRow });
+  res.status(status).json(body);
 });
 
 /**
