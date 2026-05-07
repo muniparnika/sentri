@@ -244,6 +244,17 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
 
   if (mode === "state") {
     // ── State-based exploration (new engine) ─────────────────────────────
+    //
+    // AUTO-002 scope note: diff-aware crawling is intentionally wired
+    // into the link-crawl branch below only. State exploration produces
+    // multiple snapshots per URL (keyed by `_stateFingerprint` — e.g.
+    // "login form blank" vs "login form with error"), so a URL→fingerprint
+    // baseline keyed on `pageUrl` alone would either collapse distinct
+    // states into one (breaking the "changed state" signal) or thrash
+    // on natural state churn (every visit looks "changed"). Extending
+    // diff-awareness to state mode requires a state-graph baseline
+    // (fingerprint→fingerprint transitions), tracked separately in
+    // ROADMAP.md and not part of the AUTO-002 acceptance criteria.
     const exploration = await exploreStates(project, run, { signal, tuning: explorerTuning });
     snapshots = exploration.snapshots;
     snapshotsByUrl = exploration.snapshotsByUrl;
@@ -388,7 +399,16 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
         // the new fingerprints as the updated baseline. Runs BEFORE the
         // generation pipeline so a generation failure doesn't roll back the
         // observed page set.
-        crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
+        //
+        // Use `mergeProjectBaselines` (not `replaceProjectBaselines`) so a
+        // partial crawl — e.g. page N fails with a transient 503 while
+        // the rest succeed — doesn't silently drop page N's baseline and
+        // force an unnecessary regen on the next run. Only URLs that the
+        // diff *explicitly* classified as removed (present before, absent
+        // now) are deleted; pages that weren't observed this crawl but
+        // weren't classified as removed (because the crawl set wasn't
+        // comprehensive) keep their existing baselines.
+        crawlBaselineRepo.mergeProjectBaselines(project.id, diff.fingerprints, diff.removedPages);
         log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
         if (Object.keys(existingBaselines).length > 0) {
           const changedSet = new Set(diff.changedPages);

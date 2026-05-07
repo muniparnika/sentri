@@ -44,5 +44,42 @@ assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-A")["https://a.com/"].fing
 assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-B")["https://b.com/"].fingerprint, "fp-b");
 assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-A")["https://b.com/"], undefined);
 
+// ── mergeProjectBaselines (partial-crawl safety) ────────────────────────────
+// AUTO-002: the merge path must upsert observed URLs, leave unobserved URLs
+// alone, and only drop URLs explicitly listed as removed.
+crawlBaselineRepo.replaceProjectBaselines("PRJ-merge", {
+  "https://m.com/": "fp-home-v1",
+  "https://m.com/about": "fp-about-v1",
+  "https://m.com/contact": "fp-contact-v1",
+});
+
+// Simulate a partial crawl: /about is updated, /contact was not re-crawled
+// (transient failure), nothing was removed.
+crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", {
+  "https://m.com/about": "fp-about-v2",
+}, []);
+const mergeMap = crawlBaselineRepo.getMapByProjectId("PRJ-merge");
+assert.equal(mergeMap["https://m.com/about"].fingerprint, "fp-about-v2", "observed URL upserted");
+assert.equal(mergeMap["https://m.com/"].fingerprint, "fp-home-v1", "unobserved URL preserved (not wiped)");
+assert.equal(mergeMap["https://m.com/contact"].fingerprint, "fp-contact-v1", "transient-failure URL preserved");
+
+// Now drop /contact explicitly via removedPageUrls
+crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", {
+  "https://m.com/": "fp-home-v2",
+}, ["https://m.com/contact"]);
+const mergeMap2 = crawlBaselineRepo.getMapByProjectId("PRJ-merge");
+assert.equal(mergeMap2["https://m.com/"].fingerprint, "fp-home-v2", "home upserted");
+assert.equal(mergeMap2["https://m.com/about"].fingerprint, "fp-about-v2", "about preserved");
+assert.equal(mergeMap2["https://m.com/contact"], undefined, "contact explicitly removed");
+
+// Merge into empty baseline behaves like first-crawl insert
+crawlBaselineRepo.mergeProjectBaselines("PRJ-fresh", { "https://f.com/": "fp-f" });
+assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-fresh")["https://f.com/"].fingerprint, "fp-f");
+
+// Empty/null fingerprints is a no-op (does not delete anything)
+crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", null);
+crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", {});
+assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-merge")["https://m.com/"].fingerprint, "fp-home-v2", "empty merge preserves existing");
+
 closeDatabase();
 console.log("crawl-baseline-repo.test.js passed");
