@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
-import { initDatabase, closeDatabase } from "../src/database/sqlite.js";
+import { getDatabase } from "../src/database/sqlite.js";
 import * as crawlBaselineRepo from "../src/database/repositories/crawlBaselineRepo.js";
 
 // AUTO-002: crawlBaselineRepo unit tests (REVIEW.md mandatory: every
 // repository module needs a dedicated tests/<module>.test.js file).
-
-initDatabase(":memory:");
+//
+// Sibling-file pattern: the singleton `getDatabase()` auto-initialises and
+// runs migrations on first call (see `metric-samples.test.js`,
+// `accessibility-repo.test.js`, etc.). We scrub the repo-specific rows at
+// both start and end so the test is idempotent when the shared DB file is
+// reused across the suite.
+const db = getDatabase();
+function resetRows() {
+  db.exec("DELETE FROM crawl_baselines WHERE projectId LIKE 'PRJ-%' OR projectId LIKE 'PRJ-merge' OR projectId LIKE 'PRJ-fresh'");
+}
+resetRows();
 
 // getByProjectId / getMapByProjectId on empty project
 assert.deepEqual(crawlBaselineRepo.getByProjectId("PRJ-empty"), []);
@@ -81,5 +90,5 @@ crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", null);
 crawlBaselineRepo.mergeProjectBaselines("PRJ-merge", {});
 assert.equal(crawlBaselineRepo.getMapByProjectId("PRJ-merge")["https://m.com/"].fingerprint, "fp-home-v2", "empty merge preserves existing");
 
-closeDatabase();
+resetRows();
 console.log("crawl-baseline-repo.test.js passed");
