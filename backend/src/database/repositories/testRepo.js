@@ -65,6 +65,36 @@ const INSERT_COLS = [
 const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
   VALUES (${INSERT_COLS.map(c => "@" + c).join(", ")})`;
 
+// ─── Tag filter helpers ──────────────────────────────────────────────────────
+
+/**
+ * Build a `tags LIKE` pattern for a single tag value, escaping the SQL LIKE
+ * metacharacters (`%`, `_`) and the escape char itself (`\`) so user-supplied
+ * tags like `"50%_off"` don't match unrelated rows. The returned pattern MUST
+ * be used with a `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+ *
+ * Tags are persisted as a JSON-encoded array, so the pattern wraps the value
+ * in `"…"` quotes to anchor on the JSON-string boundary; embedded `"` chars
+ * in the tag value are escaped with `\"` to match `JSON.stringify` output.
+ *
+ * @param {string} tag
+ * @returns {string} LIKE pattern
+ */
+function buildTagLikePattern(tag) {
+  const escaped = String(tag)
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/"/g, '\\"');
+  return `%"${escaped}"%`;
+}
+
+/** SQL fragment appended to every `tags LIKE ?` clause to honour the
+ *  backslash escapes produced by {@link buildTagLikePattern}. SQLite has no
+ *  default LIKE escape, so this is required for the metacharacter escapes
+ *  to take effect; PostgreSQL accepts the same syntax. */
+const TAG_LIKE_ESCAPE = " ESCAPE '\\'";
+
 // ─── Read queries ─────────────────────────────────────────────────────────────
 
 /**
@@ -207,10 +237,10 @@ export function countReviewQueueByProjectIds(projectIds, filters = {}) {
   // Tag filter — kept in lock-step with getAllPagedByProjectIds so the tab
   // counts reflect the same row set the paginated list shows.
   if (Array.isArray(filters.tags) && filters.tags.length > 0) {
-    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
     conditions.push(`(${tagClauses})`);
     for (const tag of filters.tags) {
-      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+      params.push(buildTagLikePattern(tag));
     }
   }
 
@@ -318,10 +348,10 @@ export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}
   // matches the canonical JSON.stringify output portably across SQLite and
   // PostgreSQL adapters — no dialect-specific JSON functions required.
   if (Array.isArray(filters.tags) && filters.tags.length > 0) {
-    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
     conditions.push(`(${tagClauses})`);
     for (const tag of filters.tags) {
-      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+      params.push(buildTagLikePattern(tag));
     }
   }
 
@@ -409,10 +439,10 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     params.push(like, like);
   }
   if (Array.isArray(filters.tags) && filters.tags.length > 0) {
-    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
     conditions.push(`(${tagClauses})`);
     for (const tag of filters.tags) {
-      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+      params.push(buildTagLikePattern(tag));
     }
   }
 

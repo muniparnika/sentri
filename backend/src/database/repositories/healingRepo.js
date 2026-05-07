@@ -31,11 +31,21 @@ function ensureStrategyVersionColumn(db) {
 /**
  * Chunk a `key LIKE` test-ID query so the OR fanout per statement is bounded.
  *
- * Each test ID expands to two LIKE clauses (raw + versioned), so a chunk size
- * of 100 caps the OR list at 200 clauses per query — well within the
- * Postgres planner's comfort zone for OR-of-LIKE expressions on large
- * workspaces. SQLite handles arbitrary OR depth, but chunking keeps both
- * adapters on the same execution path.
+ * Each (deduped) base test ID expands to two LIKE clauses (raw +
+ * `@v%`-versioned), so a chunk size of 100 caps the OR list at 200 clauses
+ * per query — well within the Postgres planner's comfort zone for OR-of-LIKE
+ * expressions on large workspaces. SQLite handles arbitrary OR depth, but
+ * chunking keeps both adapters on the same execution path.
+ *
+ * Input `testIds` are first collapsed to their **base** form (the `@vN`
+ * suffix is stripped) and de-duplicated. Without this, a list containing
+ * both `"TC-1"` and `"TC-1@v2"` would emit overlapping patterns —
+ * `TC-1@v%::%` from the first and `TC-1@v2::%` from the second — and any
+ * row like `TC-1@v2::click::submit` would match both. Per-chunk `COUNT(*)`
+ * results would then be summed across chunks and double-count rows that
+ * straddle the chunk boundary; `SELECT *` callers would see duplicate rows.
+ * Collapsing to base IDs makes the per-row match set disjoint across the
+ * entire input, regardless of chunk size.
  *
  * @param {Object} db — better-sqlite3 Database handle
  * @param {string[]} testIds
@@ -44,9 +54,16 @@ function ensureStrategyVersionColumn(db) {
  */
 const HEALING_TESTID_CHUNK = 100;
 function chunkedTestIdQuery(db, testIds, sqlFn) {
+  // Collapse to unique base IDs so versioned variants of the same test
+  // don't emit overlapping LIKE patterns (which would inflate COUNT(*)
+  // sums across chunks and yield duplicate rows on SELECT). The two
+  // patterns per base ID — `${base}::%` and `${base}@v%::%` — already
+  // cover every row that any versioned variant of the same test could
+  // match, so dropping the variants loses no data.
+  const baseIds = [...new Set(testIds.map((t) => String(t).replace(/@v\d+$/, "")))];
   const out = [];
-  for (let i = 0; i < testIds.length; i += HEALING_TESTID_CHUNK) {
-    const slice = testIds.slice(i, i + HEALING_TESTID_CHUNK);
+  for (let i = 0; i < baseIds.length; i += HEALING_TESTID_CHUNK) {
+    const slice = baseIds.slice(i, i + HEALING_TESTID_CHUNK);
     const clauses = slice.flatMap(() => ["key LIKE ?", "key LIKE ?"]).join(" OR ");
     const params = slice.flatMap((t) => [`${t}::%`, `${t}@v%::%`]);
     out.push(sqlFn(clauses, params));

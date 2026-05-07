@@ -845,16 +845,33 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
       : {};
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);
 
+  // Map the action verb onto the canonical ACTIVITY_TYPES values so the
+  // bulk path emits the same `type` literals as the single-test handlers
+  // (approve at L673, reject at L705, restore at L735). Previously this
+  // used `\`test.${action}\`` interpolation which happened to match today
+  // but reopened the `"test.approve"` vs `"test.approved"` drift class
+  // the constants were introduced to prevent.
+  const PER_TEST_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_REJECT,
+    restore: ACTIVITY_TYPES.TEST_RESTORE,
+  };
+  const BULK_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_BULK_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_BULK_REJECT,
+    restore: ACTIVITY_TYPES.TEST_BULK_RESTORE,
+  };
+
   if (updated.length) {
     for (const test of updated) {
       logActivity({ ...actor(req),
-        type: `test.${action}`, projectId: req.params.id, projectName: project.name,
+        type: PER_TEST_TYPES[action], projectId: req.params.id, projectName: project.name,
         testId: test.id, testName: test.name,
         detail: `Test ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "restored to draft"} (bulk) — "${test.name}"`,
       });
     }
     logActivity({ ...actor(req),
-      type: `test.bulk_${action}`, projectId: req.params.id, projectName: project.name,
+      type: BULK_TYPES[action], projectId: req.params.id, projectName: project.name,
       detail: `Bulk ${action} — ${updated.length} test${updated.length !== 1 ? "s" : ""}`,
     });
     // DIF-013: emit ONE bulk event (not N per-test) to keep PostHog volume

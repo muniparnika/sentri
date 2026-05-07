@@ -1124,7 +1124,7 @@ export default function Settings() {
       )}
 
       {/* ── Tab: AI Providers ── */}
-      {tab === "providers" && <>
+      {tab === "providers" && isAdmin && <>
       {/* Active provider banner */}
       {!loading && config && (
         <div className="st-provider-banner" style={{
@@ -1188,7 +1188,7 @@ export default function Settings() {
       </>}
 
       {/* ── Tab: Members ── */}
-      {tab === "members" && <MembersTab />}
+      {tab === "members" && isAdmin && <MembersTab />}
 
       {/* ── Tab: Execution (runtime defaults + system info) ── */}
       {tab === "execution" && <>
@@ -1246,7 +1246,7 @@ export default function Settings() {
       </>}
 
       {/* ── Tab: Data (data management + recycle bin) ── */}
-      {tab === "data" && <>
+      {tab === "data" && isAdmin && <>
       <SectionTitle icon={<Database size={16} color="var(--amber)" />} title="Data Management" sub="Clear in-memory data — all data is ephemeral and resets on server restart" />
       <div className="flex-col gap-md">
         <DataAction icon={<Activity size={16} />} label="Run History" sub="All crawl and test run records, including logs and results" count={sysInfo?.runs} btnLabel="Clear Runs" onAction={async () => { const r = await api.clearRuns(); await reload(); return r; }} />
