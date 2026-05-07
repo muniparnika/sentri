@@ -140,8 +140,10 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   if (!existing) return res.status(404).json({ error: "not found" });
 
   // Allow threshold-only PATCHes (from AutoApprovalPanel) to skip the
-  // name/url validation gate — those fields aren't being changed and
-  // `validateProjectPayload` would 400 on a body like `{ autoApproveThreshold }`.
+  // name/url validation gate. To keep this bypass tight, require the body
+  // to contain *only* `autoApproveThreshold` — any extra keys (e.g. an
+  // attempted `status` or `workspaceId` injection) force the request
+  // back through `validateProjectPayload` and the field whitelist below.
   // Allow threshold-only PATCHes (from AutoApprovalPanel) to skip the
   // name/url validation gate. To keep this bypass tight, require the body
   // to contain *only* `autoApproveThreshold` — any extra keys (e.g. an
