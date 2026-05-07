@@ -24,14 +24,20 @@
 
 ---
 
-## ▶ Current PR — AUTO-002
+## ▶ Current PR — AUTO-002 + AUTO-015 (bundled)
 
-**Title:** Change detection / diff-aware crawling
-**Branch:** `feat/auto-002-diff-aware-crawl`
-**Effort:** L | **Priority:** 🟢 Differentiator
-**All dependencies:** none — net-new addition layered on top of the existing crawl pipeline.
+**Title:** Change detection / diff-aware crawling + continuous test discovery on deployment events
+**Branch:** `feat/auto-002-auto-015-diff-aware-crawl`
+**Effort:** L (L + M) | **Priority:** 🟢 Differentiator
+**All dependencies:** none — both scopes are net-new on top of the existing crawl pipeline; AUTO-015 consumes AUTO-002's `changedPages[]` signal, so they ship together.
 
-> AUTO-003 + AUTO-003b ✅ shipped in PR #10 (confidence-based auto-approval with provenance, revoke, and audit-trail UI). AUTO-002 is the prerequisite for the smarter slice of AUTO-001 (risk-based test ordering — changed-pages becomes one of the inputs to `riskScore`) and AUTO-004 (test impact analysis from git diff). Promoting it now unblocks the rest of the Phase 4 queue rather than working around the missing baseline signal.
+> AUTO-003 + AUTO-003b ✅ shipped in PR #10 (confidence-based auto-approval with provenance, revoke, and audit-trail UI). This bundle is the next step in Phase 4 — AUTO-002 establishes the diff-aware baseline mechanism, AUTO-015 wires it to deployment webhooks so new pages get tests the moment they're deployed. Both are prerequisites for AUTO-001 (risk-based ordering) and AUTO-004 (git-diff impact analysis).
+
+> **Bundling rationale (per the bundling-guidance note above):** AUTO-015 is listed in `ROADMAP.md:672-685` as directly dependent on AUTO-002 ("initiate a diff-aware crawl (AUTO-002) followed by test generation for changed pages only"). Shipping AUTO-002 without its deployment-webhook consumer would leave the `changedPages[]` signal unvalidated end-to-end — the consumer is the integration test. Both items touch `crawler.js` + `routes/trigger.js` + `routes/runs.js`, so reviewing them together avoids a second round of context-building on the same pipeline surface. Effort sits at L (L + M); AUTO-015 is mostly webhook-signature verification + preview-URL extraction (Vercel / Netlify), not net-new infrastructure.
+
+**Do not split this PR.** Codex agents tend to ship the minimum viable slice; this prompt is the explicit instruction to ship both scopes together.
+
+### Scope 1 — AUTO-002 — Change detection / diff-aware crawling
 
 Sentri re-crawls the entire site on every run. An autonomous system should detect what changed since the last crawl (new pages, modified DOM, removed elements) and only regenerate tests for affected pages. `backend/src/pipeline/crawlBrowser.js` has no concept of a previous crawl baseline today — this is the difference between "run everything nightly" and "test only what changed," and it's a hard prerequisite for AUTO-004 (test impact analysis from git diff) and the smarter slice of AUTO-001 (risk-based ordering).
 
@@ -44,6 +50,23 @@ After each crawl, store a `crawl_baseline` snapshot per project (page URL → DO
 - Second crawl with no changes emits zero generation calls and completes as `completed_empty` with a `changedPages: []` annotation — no regressed tests, no wasted LLM quota.
 - Second crawl with a modified page regenerates tests only for that URL; untouched pages' approved tests survive unchanged.
 - Pages removed from the site are surfaced in the run response so reviewers can decide whether to soft-delete their tests.
+
+### Scope 2 — AUTO-015 — Continuous test discovery on deployment events
+
+> **Why this scope ships in the same PR as AUTO-002:** AUTO-002 establishes the `changedPages[]` signal. AUTO-015 is the signal's first real consumer — when a Vercel / Netlify deployment webhook fires, the trigger endpoint should initiate a diff-aware crawl against the preview URL and generate tests only for newly-added pages. Without AUTO-015 in the same PR, AUTO-002's SSE event and API surface are validated only by unit tests; shipping them together exercises the full "deploy → detect → generate → review" loop end-to-end.
+
+Crawling is manually triggered today. An autonomous system should watch for deployment events (via webhook) and automatically re-crawl changed pages, generate new tests for new features, and flag removed pages — without any human action.
+
+Extend the CI/CD trigger endpoint to accept a `triggerCrawl: true` flag alongside `changedFiles[]`. When set, initiate a diff-aware crawl (AUTO-002) followed by test generation for changed pages only. Support Vercel (`X-Vercel-Signature`) and Netlify (`X-Netlify-Token`) deployment-event webhook payloads natively so users don't hand-roll signature verification.
+
+**Files:** `backend/src/routes/trigger.js` (add `triggerCrawl` parameter and `deployment.succeeded` event handlers — extract preview URL from the provider payload and use it as the crawl's base URL override) · `backend/src/crawler.js` (accept target URLs from the AUTO-002 diff so discovery is scoped to the deployment's changed pages, not the full site) · `backend/src/utils/webhookSignature.js` (new — shared HMAC / HMAC-SHA256 signature verification for Vercel + Netlify; reuse the pattern established by the existing GitHub trigger-token verifier, not a new signing scheme) · `frontend/src/components/automation/IntegrationSnippets.jsx` (add Vercel + Netlify deployment-webhook snippets alongside the existing GitHub Actions + GitLab CI examples; document the `[no-ui]`-opt-out is irrelevant here because the consumer surface IS a UI card) · `backend/.env.example` (document `VERCEL_WEBHOOK_SECRET`, `NETLIFY_WEBHOOK_SECRET`) · `backend/tests/deployment-triggers.test.js` (signature-verification happy path + tamper rejection for both providers; `triggerCrawl` end-to-end test that seeds a project baseline, POSTs a fake Vercel payload, and asserts only the changed pages are in the run's `changedPages[]`)
+
+**Acceptance criteria:**
+- Vercel deployment webhook with a valid signature + `deployment.succeeded` state triggers a diff-aware crawl against the preview URL; the resulting run carries `changedPages[]` scoped to that deployment.
+- Netlify webhook with a valid `X-Netlify-Token` does the same against the Netlify preview URL.
+- Tampered signatures (wrong secret, body modified) return 401 before any crawl work starts — no signal exposure on invalid inputs.
+- When `triggerCrawl: false` (or absent), the existing CI/CD trigger behaviour is unchanged — no regression for projects using the token-based trigger.
+- "Last deployment run" badge appears on the project header when a deployment-triggered run completed in the last 24h (reuses the existing `<GateBadge>` positioning).
 
 <!-- ── Original AUTO-003 / AUTO-003b spec body removed on promotion (PR #10 shipped both scopes); see ROADMAP.md § Completed Work Summary. ──
 
@@ -114,17 +137,26 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 End AUTO-003 / AUTO-003b archived spec ── -->
 
-### PR checklist (AUTO-002)
+### PR checklist (AUTO-002 + AUTO-015)
 
-- [ ] Migration `0NN_crawl_baselines.sql` adds `crawl_baselines (projectId, pageUrl, fingerprint, capturedAt)` keyed on `(projectId, pageUrl)`
-- [ ] New `backend/src/pipeline/crawlDiff.js` reuses `stateFingerprint.js` hashing — no new fingerprint scheme
-- [ ] First crawl of a new project: zero baseline rows, full crawl + generate (zero behaviour change)
-- [ ] Second crawl with no changes: zero generation calls, `changedPages: []`, status `completed_empty`
-- [ ] Second crawl with a modified page: only that URL is regenerated; approved tests on untouched pages survive
-- [ ] Removed pages are surfaced in the run response so reviewers can soft-delete tests intentionally
-- [ ] `pages_changed` SSE event wired into the Test Lab live view (replaces the generic progress bar)
-- [ ] `backend/tests/crawl-diff.test.js` covers first-crawl, unchanged-skip, changed-regen, added/removed pages, empty-baseline fallback
-- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]`
+- [ ] **Both scopes shipped in one PR — do not split**
+- [ ] AUTO-002: Migration `0NN_crawl_baselines.sql` adds `crawl_baselines (projectId, pageUrl, fingerprint, capturedAt)` keyed on `(projectId, pageUrl)`
+- [ ] AUTO-002: New `backend/src/pipeline/crawlDiff.js` reuses `stateFingerprint.js` hashing — no new fingerprint scheme
+- [ ] AUTO-002: First crawl of a new project: zero baseline rows, full crawl + generate (zero behaviour change)
+- [ ] AUTO-002: Second crawl with no changes: zero generation calls, `changedPages: []`, status `completed_empty`
+- [ ] AUTO-002: Second crawl with a modified page: only that URL is regenerated; approved tests on untouched pages survive
+- [ ] AUTO-002: Removed pages are surfaced in the run response so reviewers can soft-delete tests intentionally
+- [ ] AUTO-002: `pages_changed` SSE event wired into the Test Lab live view (replaces the generic progress bar)
+- [ ] AUTO-002: `backend/tests/crawl-diff.test.js` covers first-crawl, unchanged-skip, changed-regen, added/removed pages, empty-baseline fallback
+- [ ] AUTO-015: `POST /api/v1/projects/:id/trigger` accepts `triggerCrawl: true` and optional `previewUrl`; when set, initiates an AUTO-002 diff-aware crawl before generation
+- [ ] AUTO-015: Vercel webhook handler verifies `X-Vercel-Signature` (HMAC-SHA1 over the raw body with `VERCEL_WEBHOOK_SECRET`) and extracts the preview URL from `deployment.url`
+- [ ] AUTO-015: Netlify webhook handler verifies `X-Netlify-Token` (HMAC-SHA256 with `NETLIFY_WEBHOOK_SECRET`) and extracts the preview URL from `deploy_ssl_url` / `deploy_url`
+- [ ] AUTO-015: Tampered / missing signatures return `401` **before** any crawl or generation work starts — no timing side-channel on invalid inputs
+- [ ] AUTO-015: With `triggerCrawl: false` (or absent), the existing CI/CD trigger flow is byte-identical to today — no regression for token-based triggers
+- [ ] AUTO-015: `backend/tests/deployment-triggers.test.js` covers signature happy-path, tamper rejection (both providers), and an end-to-end `triggerCrawl` test that asserts `changedPages[]` scopes to the deployment
+- [ ] AUTO-015: Integration Snippets UI card ships with copy-pasteable Vercel + Netlify webhook payloads alongside the existing GitHub / GitLab examples
+- [ ] AUTO-015: `backend/.env.example` documents `VERCEL_WEBHOOK_SECRET` + `NETLIFY_WEBHOOK_SECRET` (off by default — setting them opts the project into webhook triggers)
+- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]` (one entry per scope, grouped under appropriate Keep-a-Changelog sections)
 - [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)
 
 ---
