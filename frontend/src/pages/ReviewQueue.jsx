@@ -35,6 +35,7 @@ import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import highlightCode from "../utils/highlightCode.js";
@@ -542,7 +543,7 @@ export default function ReviewQueue() {
   useEffect(() => {
     if (!trayEnabled) { setTrayItems([]); return; }
     let cancelled = false;
-    api.getActivities({ type: "test.auto_approve", projectId: trayProject.id, limit: 200 })
+    api.getActivities({ type: ACTIVITY_TYPES.TEST_AUTO_APPROVE, projectId: trayProject.id, limit: 200 })
       .then((rows) => {
         if (cancelled) return;
         const cutoff = Date.now() - 24 * 60 * 60 * 1000;

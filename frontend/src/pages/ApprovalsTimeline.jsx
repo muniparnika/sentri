@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNotifications } from "../context/NotificationContext.jsx";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import "../styles/pages/approvals-timeline.css";
 
 /**
@@ -116,14 +117,15 @@ export default function ApprovalsTimeline() {
     // range === "all", `afterIso` is null and we omit the param.
     const after = afterIso || undefined;
     Promise.all([
-      // Activity-type literals follow the imperative `test.<verb>` convention
-      // shared by every `test.*` event in `backend/src/routes/tests.js` and
-      // `backend/src/pipeline/testPersistence.js` (create/approve/reject/
-      // restore/delete/generate/auto_approve/revoke). Don't add the past-tense
-      // `-d` suffix — readers and writers must stay in lockstep.
-      api.getActivities({ type: "test.auto_approve", projectId: filter, after, limit: pageSize }),
-      api.getActivities({ type: "test.approve",      projectId: filter, after, limit: pageSize }),
-      api.getActivities({ type: "test.revoke",       projectId: filter, after, limit: pageSize }),
+      // Activity-type literals are imported from `constants/activityTypes.js`
+      // (which mirrors `backend/src/utils/activityTypes.js`) so a typo
+      // becomes a ReferenceError rather than a silent empty-feed regression
+      // — this page previously fetched `"test.approved"` (past tense) while
+      // the backend wrote `"test.approve"`, and the human-approvals column
+      // was permanently empty. The shared constant is the fix.
+      api.getActivities({ type: ACTIVITY_TYPES.TEST_AUTO_APPROVE, projectId: filter, after, limit: pageSize }),
+      api.getActivities({ type: ACTIVITY_TYPES.TEST_APPROVE,      projectId: filter, after, limit: pageSize }),
+      api.getActivities({ type: ACTIVITY_TYPES.TEST_REVOKE,       projectId: filter, after, limit: pageSize }),
     ])
       .then(([auto, human, revokes]) => {
         if (cancelled) return;
@@ -210,13 +212,13 @@ export default function ApprovalsTimeline() {
       // to special-case it.
       const synthetic = {
         id: `local-revoke-${testId}-${Date.now()}`,
-        type: "test.revoke",
+        type: ACTIVITY_TYPES.TEST_REVOKE,
         testId,
         testName: sourceRow?.testName || null,
         projectId: sourceRow?.projectId || null,
         userName: user?.name || user?.email || null,
         createdAt: new Date().toISOString(),
-        meta: { wasAutoApproved: sourceRow?.type === "test.auto_approve" },
+        meta: { wasAutoApproved: sourceRow?.type === ACTIVITY_TYPES.TEST_AUTO_APPROVE },
       };
       setRevokeRows((prev) => [synthetic, ...prev]);
       addNotification({ title: "Approval revoked", body: "Test returned to draft." });
