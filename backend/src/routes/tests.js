@@ -39,7 +39,7 @@ import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
 import { PROVENANCE_CLEAR, humanApproval, computeStats, APPROVAL_SOURCE } from "../services/approvalService.js";
-import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";

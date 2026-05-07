@@ -14,7 +14,7 @@ import { getProviderName } from "../aiProvider.js";
 import { PROMPT_VERSION } from "./prompts/outputSchema.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { APPROVAL_SOURCE } from "../services/approvalService.js";
 
 /**

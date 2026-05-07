@@ -13,7 +13,7 @@
  * `settings.update`
  *
  * Test-review event literals are exported as `ACTIVITY_TYPES` from
- * `backend/src/utils/activityTypes.js` — prefer the constant over the
+ * `backend/src/constants/activityTypes.js` — prefer the constant over the
  * literal string at every callsite (the `"test.approve"` vs `"test.approved"`
  * mismatch with the frontend was the bug that motivated extracting them).
  */

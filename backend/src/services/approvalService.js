@@ -28,7 +28,7 @@
 
 import { countApprovalSplitByProjectId } from "../database/repositories/testRepo.js";
 import { countDistinctTestIds } from "../database/repositories/activityRepo.js";
-import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 
 /** `tests.approvalSource` enumeration. */
 export const APPROVAL_SOURCE = Object.freeze({
