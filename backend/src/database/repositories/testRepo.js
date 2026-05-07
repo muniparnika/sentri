@@ -204,6 +204,15 @@ export function countReviewQueueByProjectIds(projectIds, filters = {}) {
     const like = `%${filters.search}%`;
     params.push(like, like);
   }
+  // Tag filter — kept in lock-step with getAllPagedByProjectIds so the tab
+  // counts reflect the same row set the paginated list shows.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+    }
+  }
 
   const where = conditions.join(" AND ");
   const row = db.prepare(`
@@ -303,6 +312,18 @@ export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}
     const like = `%${filters.search}%`;
     params.push(like, like);
   }
+  // Tag filter — OR semantics across the supplied list (industry standard for
+  // tag pickers: "show tests matching ANY of these tags"). Tags are stored as
+  // a JSON-encoded array string on the row, so a `tags LIKE '%"tag"%'` probe
+  // matches the canonical JSON.stringify output portably across SQLite and
+  // PostgreSQL adapters — no dialect-specific JSON functions required.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+    }
+  }
 
   const where = conditions.join(" AND ");
   // Resolve sortBy to a fixed ORDER BY clause. The mapping is hardcoded
@@ -386,6 +407,13 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
     const like = `%${filters.search}%`;
     params.push(like, like);
+  }
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => "tags LIKE ?").join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(`%"${String(tag).replace(/"/g, '\\"')}"%`);
+    }
   }
 
   const where = conditions.join(" AND ");
