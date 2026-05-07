@@ -671,7 +671,13 @@ router.patch("/projects/:id/tests/:testId/reject", requireRole("qa_lead"), (req,
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt });
+  // AUTO-003b: clear the four provenance columns alongside `reviewStatus`
+  // so a rejected auto-approved test doesn't keep stale `approvalSource:
+  // "auto"` / `approvedBy: "auto-approver"` — the response from GET
+  // `/tests/:id` would otherwise show a rejected test that still looks
+  // auto-approved, which is a confusing audit-trail lie. Matches the
+  // restore / revoke / bulk-restore paths that also clear provenance.
+  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt, ...PROVENANCE_CLEAR });
   logActivity({ ...actor(req),
     type: ACTIVITY_TYPES.TEST_REJECT, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
@@ -804,9 +810,14 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
   // was aborted between phases, miscounting them as human-approved on the
   // approval-stats endpoint. The returned rows are re-read after the UPDATE
   // so the response reflects the persisted provenance.
+  // Reject + restore both clear provenance. Reject clears it so a rejected
+  // auto-approved test doesn't carry stale `approvalSource: "auto"` on the
+  // response (matches the single-test reject handler above); restore clears
+  // it because the test is going back to draft for re-review. Only approve
+  // writes new provenance.
   const extraFields = action === "approve"
     ? humanApproval(actor(req))
-    : action === "restore"
+    : (action === "restore" || action === "reject")
       ? PROVENANCE_CLEAR
       : {};
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);

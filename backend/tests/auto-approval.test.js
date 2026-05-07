@@ -140,6 +140,37 @@ async function main() {
     assert.equal(after.approvalSource, null);
   }
 
+  // Rejecting an auto-approved test clears provenance so the rejected row
+  // doesn't keep stale `approvalSource: "auto"` / `approvedBy: "auto-approver"`
+  // on subsequent reads — a rejected test that still looks auto-approved is
+  // a confusing audit-trail lie. Mirrors the route handler's call to
+  // `testRepo.update(id, { reviewStatus: "rejected", reviewedAt, ...PROVENANCE_CLEAR })`.
+  {
+    const run = makeRun();
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.95)], project, run);
+    const before = testRepo.getById(ids[0]);
+    assert.equal(before.reviewStatus, "approved");
+    assert.equal(before.approvalSource, "auto");
+
+    // Mirror the reject handler's exact write shape.
+    testRepo.update(ids[0], {
+      reviewStatus: "rejected",
+      reviewedAt: new Date().toISOString(),
+      approvalSource: null,
+      approvalThreshold: null,
+      approvedAt: null,
+      approvedBy: null,
+    });
+
+    const after = testRepo.getById(ids[0]);
+    assert.equal(after.reviewStatus, "rejected");
+    assert.equal(after.approvalSource, null);
+    assert.equal(after.approvalThreshold, null);
+    assert.equal(after.approvedAt, null);
+    assert.equal(after.approvedBy, null);
+  }
+
   // DISABLE_AUTO_APPROVAL kill-switch (AUTO-003b ops rollback path):
   // setting the env var forces every generated test into Draft regardless
   // of the project's `autoApproveThreshold`. The check is read per-call
