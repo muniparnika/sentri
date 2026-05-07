@@ -54,6 +54,7 @@ export default defineConfig({
             { text: 'API Testing', link: '/guide/api-testing' },
             { text: 'Test Dials', link: '/guide/test-dials' },
             { text: 'Review Workflow', link: '/guide/review-workflow' },
+            { text: 'Auto-Approval', link: '/guide/auto-approval' },
             { text: 'Self-Healing', link: '/guide/self-healing' },
             { text: 'AI Providers', link: '/guide/ai-providers' },
             { text: 'CI/CD Triggers', link: '/guide/ci-cd-triggers' },

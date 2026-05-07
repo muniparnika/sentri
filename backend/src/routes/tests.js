@@ -2,6 +2,16 @@
  * @module routes/tests
  * @description Test CRUD, AI generation, single-test run, review, bulk actions, and export. Mounted at `/api/v1` (INF-005).
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file mixes 8 concerns — CRUD, AI
+ * generation, single-test runs, review actions, approvals (revoke +
+ * approval-stats), interactive recorder, visual baselines, and exports.
+ * Splitting along those lines (`routes/approvals.js`, `routes/recorder.js`,
+ * `routes/baselines.js`, `routes/exports.js`) is sensible but should land
+ * in a dedicated PR rather than bundled with feature work — the route-
+ * order constraints below ("bulk must be declared BEFORE :testId
+ * wildcards") are easy to regress in a mechanical move. Tracked as a
+ * follow-up MNT item.
+ *
  * ### Endpoints
  * | Method   | Path                                             | Description                         |
  * |----------|--------------------------------------------------|-------------------------------------|

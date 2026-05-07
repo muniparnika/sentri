@@ -35,9 +35,36 @@ export const AUTO_APPROVER_USER = "auto-approver";
  * @param {object}   [defaults]     — fallback values for name/description/sourceUrl/pageTitle
  * @returns {string[]} array of created test IDs
  */
+/**
+ * Global kill-switch for auto-approval (AUTO-003b). Parsed once at module
+ * load from `DISABLE_AUTO_APPROVAL` — any truthy value (`"1"`, `"true"`,
+ * `"yes"`, case-insensitive) forces every generated test to land in Draft
+ * regardless of the project-level `autoApproveThreshold`.
+ *
+ * Intended for ops incidents: if an AI provider starts producing bad tests
+ * faster than reviewers can revoke them, setting this env var and
+ * restarting is a one-step rollback that doesn't require a code deploy or
+ * per-project threshold reset. Per-project thresholds stay intact and take
+ * effect again as soon as the env var is removed.
+ *
+ * Read at module scope so the check is free at persist time (no repeated
+ * `process.env` lookup). Operators changing the value must restart the
+ * backend — documented in the AUTO-003b changelog entry.
+ */
+function isAutoApprovalDisabled() {
+  const v = String(process.env.DISABLE_AUTO_APPROVAL || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+const AUTO_APPROVAL_DISABLED = isAutoApprovalDisabled();
+
 export function persistGeneratedTests(validatedTests, project, run, defaults = {}) {
   const createdTestIds = [];
-  const threshold = Number.isFinite(project?.autoApproveThreshold) ? project.autoApproveThreshold : null;
+  // Global kill-switch (DISABLE_AUTO_APPROVAL) overrides every per-project
+  // threshold — setting the env var pins `threshold = null`, which pins
+  // `autoApproved = false` below, regardless of the project's configuration.
+  const threshold = AUTO_APPROVAL_DISABLED
+    ? null
+    : (Number.isFinite(project?.autoApproveThreshold) ? project.autoApproveThreshold : null);
   for (const t of validatedTests) {
     const testId = generateTestId();
     // `confidenceScore` is 0–1 (normalized by `deduplicateTests` and the

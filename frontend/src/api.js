@@ -9,6 +9,16 @@
  * On 401 responses the stored token is cleared and the user is redirected
  * to the login page so stale sessions don't silently fail.
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file groups ~24 endpoint families
+ * into one object literal. Splitting into per-domain modules
+ * (`api/projects.js`, `api/tests.js`, `api/activities.js`, etc.) would
+ * shrink each file, surface duplicates at lint time (the previous bug
+ * where `getActivities` was defined twice would have been impossible),
+ * and let unused families tree-shake out of bundles. The split is
+ * mechanical but global — every consumer's `import { api } from "./api.js"`
+ * has to resolve to the same shape — so it deserves its own PR rather
+ * than bundling with feature work. Tracked as a follow-up MNT item.
+ *
  * @example
  * import { api } from "./api.js";
  *

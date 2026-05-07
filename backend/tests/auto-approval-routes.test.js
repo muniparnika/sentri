@@ -110,6 +110,62 @@ async function main() {
     out = await t.req(base, `/api/v1/projects/${projectId}/approval-stats`, { token: otherToken });
     assert.equal(out.res.status, 404);
 
+    // ── concurrency: two simultaneous revokes of the same test ────────────
+    // The revoke route reads `test.reviewStatus`, then issues an UPDATE.
+    // SQLite serialises writes per-connection (better-sqlite3 is fully
+    // synchronous), but at the HTTP layer two requests can still race past
+    // the read-side guard before either UPDATE lands. The 400 guard
+    // ("only approved tests can be revoked") protects against that — the
+    // second request reads `reviewStatus = 'draft'` and bails. This test
+    // pins the contract: exactly one revoke succeeds with 200, exactly
+    // one rejects with 400, no in-between states (e.g. two 200s, or a
+    // double-revoked row with conflicting provenance).
+    //
+    // Seed a fresh approved test for the race so we don't depend on the
+    // earlier test's final state.
+    const raceTestId = "TST-AUTO-RACE";
+    testRepo.create({
+      id: raceTestId,
+      projectId,
+      name: "race-target",
+      steps: [],
+      reviewStatus: "approved",
+      reviewedAt: new Date().toISOString(),
+      confidenceScore: 0.95,
+      approvalSource: "auto",
+      approvalThreshold: 0.8,
+      approvedAt: Date.now(),
+      approvedBy: "auto-approver",
+      createdAt: new Date().toISOString(),
+    });
+
+    const [a, b] = await Promise.all([
+      t.req(base, `/api/v1/tests/${raceTestId}/revoke`, { method: "POST", token }),
+      t.req(base, `/api/v1/tests/${raceTestId}/revoke`, { method: "POST", token }),
+    ]);
+    const statuses = [a.res.status, b.res.status].sort();
+    assert.deepEqual(statuses, [200, 400],
+      `concurrent revokes: expected one 200 + one 400, got ${statuses.join(", ")}`);
+
+    // Final state must be a fully cleared draft — no half-revoked row where
+    // some provenance columns kept stale values from a partial UPDATE.
+    const after = testRepo.getById(raceTestId);
+    assert.equal(after.reviewStatus, "draft");
+    assert.equal(after.approvalSource, null);
+    assert.equal(after.approvalThreshold, null);
+    assert.equal(after.approvedAt, null);
+    assert.equal(after.approvedBy, null);
+
+    // The audit log must record exactly one revoke event for the race
+    // target. A second `test.revoke` row would mean both requests passed
+    // the read-side guard and both wrote their UPDATEs — the bug we're
+    // guarding against.
+    const raceRevokes = activityRepo
+      .getFiltered({ type: "test.revoke", projectId })
+      .filter((r) => r.testId === raceTestId);
+    assert.equal(raceRevokes.length, 1,
+      `expected exactly 1 revoke activity row for race target, got ${raceRevokes.length}`);
+
     console.log("✅ auto-approval-routes: all checks passed");
   } finally {
     env.restore();
