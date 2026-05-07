@@ -338,25 +338,42 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // baselines — writing them back would silently destroy the project's
     // real fingerprint set and force a full re-generation on the next
     // production crawl.
+    // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
+    // project's CANONICAL (production) URL — not `project.url`, which the
+    // AUTO-015 trigger routes overwrite with the deployment preview URL
+    // before invoking this function. `project.canonicalUrl` is passed in
+    // from `routes/trigger.js` for preview crawls; regular crawls omit
+    // it and fall back to `project.url` (where both sides naturally match).
+    const canonicalForOriginCheck = project.canonicalUrl || project.url;
     const sameOrigin = (() => {
       try {
-        return new URL(snapshots[0]?.url || project.url).origin === new URL(project.url).origin;
+        return new URL(snapshots[0]?.url || project.url).origin === new URL(canonicalForOriginCheck).origin;
       } catch { return false; }
     })();
     if (!sameOrigin) {
       log(run, `↪️  Preview-deployment crawl detected — skipping baseline diff (preserving production baselines).`);
+    } else if (snapshots.length === 0) {
+      // Defence-in-depth: a crawl that yielded zero snapshots but passed
+      // the unreachable-target check above (e.g. auth wall, SPA with no
+      // crawlable links, Playwright silent failure) must not wipe the
+      // project's baselines. Skip the diff entirely.
+      log(run, `⚠️  Crawl returned zero snapshots — skipping baseline diff to preserve existing fingerprints.`);
     } else {
       const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
       const diff = diffCrawlSnapshots(existingBaselines, snapshots);
       run.changedPages = diff.changedPages;
       run.removedPages = diff.removedPages;
-      crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
       emitRunEvent(run.id, "pages_changed", {
         changedPages: diff.changedPages,
         removedPages: diff.removedPages,
         unchangedPages: diff.unchangedPages,
       });
       if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
+        // No-change crawl: the existing baselines are still authoritative
+        // — re-writing them with the current fingerprints is a no-op at
+        // best and a footgun at worst (see the zero-snapshot branch above,
+        // which is now separately guarded). Leave the baseline table alone
+        // and short-circuit generation.
         log(run, "🟰 No page changes detected against the previous crawl baseline.");
         snapshots = [];
         snapshotsByUrl = {};
@@ -367,6 +384,11 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
         // correct reason ("no changes" vs "AI returned empty").
         run.noChangesDetected = true;
       } else {
+        // Changes detected (or first-ever crawl for this project) — persist
+        // the new fingerprints as the updated baseline. Runs BEFORE the
+        // generation pipeline so a generation failure doesn't roll back the
+        // observed page set.
+        crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
         log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
         if (Object.keys(existingBaselines).length > 0) {
           const changedSet = new Set(diff.changedPages);

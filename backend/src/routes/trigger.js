@@ -195,7 +195,18 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
 
   runWithAbort(runId, run,
     (signal) => triggerCrawl
-      ? crawlAndGenerateTests({ ...project, url: previewUrl || project.url }, run, { signal })
+      // AUTO-002 / AUTO-015: when crawling a preview URL we overwrite
+      // `project.url` with `previewUrl`, but we MUST preserve the original
+      // production URL as `canonicalUrl` so the diff-aware baseline guard
+      // in crawler.js can detect this is a preview crawl and skip
+      // replacing the production baselines. Without this, the sameOrigin
+      // check sees preview === preview (both sides equal because project.url
+      // was already overridden) and silently destroys the real fingerprints.
+      ? crawlAndGenerateTests(
+          { ...project, url: previewUrl || project.url, canonicalUrl: project.url },
+          run,
+          { signal }
+        )
       : runTests(project, tests, run, { parallelWorkers, signal }),
     {
       onSuccess: () => {
@@ -304,7 +315,16 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow }) {
   });
 
   runWithAbort(runId, run,
-    (signal) => crawlAndGenerateTests({ ...project, url: previewUrl }, run, { signal }),
+    // AUTO-015: preserve `canonicalUrl` alongside the preview-URL override —
+    // crawler.js's sameOrigin guard needs the original project URL to
+    // detect that this is a preview crawl and skip baseline replacement.
+    // Without this, production baselines would be overwritten with
+    // preview-URL fingerprints every time a deployment webhook fires.
+    (signal) => crawlAndGenerateTests(
+      { ...project, url: previewUrl, canonicalUrl: project.url },
+      run,
+      { signal }
+    ),
     {
       onSuccess: () => logActivity({
         type: "crawl.complete",
