@@ -59,6 +59,7 @@ const INSERT_COLS = [
   "reviewedAt", "promptVersion", "modelUsed", "linkedIssueKey", "tags",
   "generatedFrom", "isApiTest", "scenario", "codeRegeneratedAt",
   "aiFixAppliedAt", "codeVersion", "workspaceId", "isStale", "flakyScore",
+  "confidenceScore", "approvalSource", "approvalThreshold", "approvedAt", "approvedBy",
 ];
 
 const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
@@ -517,23 +518,87 @@ export function hardDeleteByProjectId(projectId) {
 }
 
 /**
+ * Atomic revoke (AUTO-003b): clear `reviewStatus` + provenance ONLY IF the
+ * row is currently `approved`. Returns `true` on success, `false` if the
+ * row was already in a different state.
+ *
+ * Why a dedicated function instead of `update()`: revoke is the canonical
+ * concurrent-write target — two reviewers can hit `POST /tests/:id/revoke`
+ * at the same time, and we need exactly one to win. The route handler
+ * does a read-then-write pair (`getById` → check `reviewStatus === 'approved'`
+ * → `update`), which is safe on better-sqlite3 (synchronous, single-connection)
+ * but races on PostgreSQL where the pool can serve both reads from the same
+ * pre-revoke snapshot. Baking the check into the UPDATE's `WHERE` clause
+ * makes the operation atomic on every adapter — only the request whose
+ * UPDATE actually flips a row from `approved` to `draft` succeeds; the
+ * second request's `UPDATE … WHERE reviewStatus = 'approved'` matches zero
+ * rows and we return `false`.
+ *
+ * Caller is responsible for the 400/404 mapping: the route returns
+ * `400 "only approved tests can be revoked"` when this returns `false`,
+ * matching the existing read-then-write semantics.
+ *
+ * @param {string} id
+ * @returns {boolean} `true` if the row transitioned approved → draft.
+ */
+export function revokeApprovalIfApproved(id) {
+  const db = getDatabase();
+  const info = db.prepare(
+    `UPDATE tests SET
+       reviewStatus = 'draft',
+       reviewedAt = NULL,
+       approvalSource = NULL,
+       approvalThreshold = NULL,
+       approvedAt = NULL,
+       approvedBy = NULL
+     WHERE id = ? AND reviewStatus = 'approved' AND deletedAt IS NULL`
+  ).run(id);
+  return info.changes > 0;
+}
+
+/**
  * Bulk update review status for a list of test IDs within a project.
  * Only applies to non-deleted tests.
+ *
+ * AUTO-003b: optional `extraFields` are applied in the SAME UPDATE statement
+ * as `reviewStatus` / `reviewedAt`, inside the same transaction. This keeps
+ * `reviewStatus` and provenance columns (`approvalSource`, `approvedBy`,
+ * `approvedAt`, `approvalThreshold`) atomic — the previous two-phase pattern
+ * (bulk status update, then per-row provenance writes) could leave tests
+ * approved with null provenance if the request was aborted between phases,
+ * which would miscount as human-approved on the approval-stats endpoint.
+ *
+ * `extraFields` keys are filtered through `VALID_COLS` so caller-supplied
+ * keys can never inject column names. Values are bound via parameters.
+ *
  * @param {string[]}    testIds
  * @param {string}      projectId
  * @param {string}      reviewStatus
  * @param {string|null} reviewedAt
- * @returns {Object[]} Updated test objects.
+ * @param {Object}      [extraFields]  - Additional column→value pairs to set
+ *                                       in the same UPDATE (e.g. provenance).
+ * @returns {Object[]} Updated test objects (re-read after the UPDATE so the
+ *                     response reflects all fields, not just reviewStatus).
  */
-export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt) {
+export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt, extraFields = {}) {
   const db = getDatabase();
   const updated = [];
-  const stmt = db.prepare(
-    "UPDATE tests SET reviewStatus = ?, reviewedAt = ? WHERE id = ? AND projectId = ? AND deletedAt IS NULL"
-  );
+
+  // Filter extraFields to known columns + bake them into the UPDATE so the
+  // whole write is a single atomic statement per test. Using SET fragments
+  // built from the validated key list (not raw caller keys) keeps this safe
+  // from SQL injection — only whitelisted column names ever land in the SQL.
+  const row = testToRow(extraFields);
+  const extraEntries = Object.entries(row).filter(([k]) => VALID_COLS.has(k) && k !== "id");
+  const extraSets = extraEntries.map(([k]) => `${k} = ?`).join(", ");
+  const sql = `UPDATE tests SET reviewStatus = ?, reviewedAt = ?${extraSets ? ", " + extraSets : ""}`
+    + " WHERE id = ? AND projectId = ? AND deletedAt IS NULL";
+  const stmt = db.prepare(sql);
+  const extraValues = extraEntries.map(([, v]) => v);
+
   const txn = db.transaction(() => {
     for (const tid of testIds) {
-      const info = stmt.run(reviewStatus, reviewedAt, tid, projectId);
+      const info = stmt.run(reviewStatus, reviewedAt, ...extraValues, tid, projectId);
       if (info.changes > 0) {
         const test = getById(tid);
         if (test) updated.push(test);
@@ -652,6 +717,50 @@ export function clearStaleByProjectIds(projectIds) {
 }
 
 // ─── Counts ───────────────────────────────────────────────────────────────────
+
+/**
+ * Count tests by review status + approval source for a project (AUTO-003b).
+ *
+ * Splits approved tests into `human` (reviewer-driven) and `auto` (machine-
+ * driven) buckets based on the `approvalSource` column. Used by the project
+ * approval-stats endpoint to render the calibration line
+ * `N auto-approved · N human · N draft`.
+ *
+ * Done as a single `SUM(CASE WHEN ...)` aggregate so the query cost is
+ * O(index lookup) instead of the previous O(n) in-JS scan over every row
+ * in the project. Matches the existing {@link countByReviewStatus}
+ * pattern — both are portable across the SQLite and PostgreSQL adapters
+ * (INF-001) because they use only vanilla `CASE WHEN`, no dialect-specific
+ * JSON or date functions.
+ *
+ * `auto` matches `approvalSource = 'auto'` exactly; `human` matches
+ * `approved` with any other source (`'human'` on new rows, NULL on legacy
+ * rows approved before migration 017). This preserves the invariant
+ * `auto + human == approved` without a separate LEFT JOIN.
+ *
+ * @param {string} projectId
+ * @returns {{ human: number, auto: number, draft: number, rejected: number, total: number }}
+ */
+export function countApprovalSplitByProjectId(projectId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN reviewStatus = 'approved' AND approvalSource = 'auto'                              THEN 1 ELSE 0 END) AS auto,
+      SUM(CASE WHEN reviewStatus = 'approved' AND (approvalSource IS NULL OR approvalSource <> 'auto') THEN 1 ELSE 0 END) AS human,
+      SUM(CASE WHEN reviewStatus = 'draft'                                                             THEN 1 ELSE 0 END) AS draft,
+      SUM(CASE WHEN reviewStatus = 'rejected'                                                          THEN 1 ELSE 0 END) AS rejected,
+      COUNT(*)                                                                                                            AS total
+    FROM tests
+    WHERE projectId = ? AND deletedAt IS NULL
+  `).get(projectId);
+  return {
+    human:    row?.human    || 0,
+    auto:     row?.auto     || 0,
+    draft:    row?.draft    || 0,
+    rejected: row?.rejected || 0,
+    total:    row?.total    || 0,
+  };
+}
 
 /**
  * Count tests by review status for a project (non-deleted only).

@@ -33,12 +33,26 @@ const router = Router();
 // ─── Activities ───────────────────────────────────────────────────────────────
 
 router.get("/activities", (req, res) => {
-  const limit = parseInt(req.query.limit, 10) || 200;
+  // Cap `limit` at 1000 so a malformed client can't pull the entire table
+  // in one request — the AUTO-003b approvals timeline reads 200 at a time
+  // and pages via `offset`. The default stays 200 to keep existing callers
+  // (Settings → System activity widget, ReviewQueue auto-tray) unchanged.
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(1000, rawLimit)) : 200;
+  const rawOffset = parseInt(req.query.offset, 10);
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : undefined;
+  // `after` / `before` accept ISO-8601 strings; the repo does a lexicographic
+  // string comparison against `createdAt` (also ISO). Pass through as-is —
+  // any malformed value would simply match no rows rather than throw, and
+  // the repo doesn't trust the input for SQL (parameterised).
   const activities = activityRepo.getFiltered({
     type: req.query.type || undefined,
     projectId: req.query.projectId || undefined,
     workspaceId: req.workspaceId,
+    after: req.query.after || undefined,
+    before: req.query.before || undefined,
     limit,
+    offset,
   });
   res.json(activities);
 });

@@ -21,6 +21,7 @@ function rowToProject(row) {
     credentials: row.credentials ? JSON.parse(row.credentials) : null,
     qualityGates: row.qualityGates ? JSON.parse(row.qualityGates) : null,
     webVitalsBudgets: row.webVitalsBudgets ? JSON.parse(row.webVitalsBudgets) : null,
+    autoApproveThreshold: row.autoApproveThreshold,
   };
 }
 
@@ -34,6 +35,7 @@ function projectToRow(p) {
     qualityGates: p.qualityGates ? JSON.stringify(p.qualityGates) : null,
     webVitalsBudgets: p.webVitalsBudgets ? JSON.stringify(p.webVitalsBudgets) : null,
     createdAt: p.createdAt,
+    autoApproveThreshold: p.autoApproveThreshold ?? null,
   };
 }
 
@@ -95,8 +97,8 @@ export function create(project) {
   const row = projectToRow(project);
   row.workspaceId = project.workspaceId || null;
   db.prepare(`
-    INSERT INTO projects (id, name, url, credentials, status, qualityGates, webVitalsBudgets, createdAt, workspaceId)
-    VALUES (@id, @name, @url, @credentials, @status, @qualityGates, @webVitalsBudgets, @createdAt, @workspaceId)
+    INSERT INTO projects (id, name, url, credentials, status, qualityGates, webVitalsBudgets, createdAt, workspaceId, autoApproveThreshold)
+    VALUES (@id, @name, @url, @credentials, @status, @qualityGates, @webVitalsBudgets, @createdAt, @workspaceId, @autoApproveThreshold)
   `).run(row);
 }
 
@@ -107,7 +109,7 @@ export function create(project) {
  */
 export function update(id, fields) {
   const db = getDatabase();
-  const allowed = ["name", "url", "credentials", "status", "qualityGates", "webVitalsBudgets"];
+  const allowed = ["name", "url", "credentials", "status", "qualityGates", "webVitalsBudgets", "autoApproveThreshold"];
   const sets = [];
   const params = { id };
   for (const key of allowed) {

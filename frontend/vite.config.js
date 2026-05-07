@@ -35,6 +35,16 @@ export default defineConfig({
 
   server: {
     port: 3000,
+    // Allow Vite's dev server to serve files from the repo root. Kept
+    // permissive (`..`) so relative imports climbing above `frontend/`
+    // don't trip "file is outside server root" during local dev, even
+    // though cross-side constants now live in `frontend/src/constants/`
+    // (duplicated from `backend/src/constants/`) to keep the Docker
+    // build self-contained. Production build (Rollup) is unaffected —
+    // it just follows the import graph with no filesystem sandbox.
+    fs: {
+      allow: [".", ".."],
+    },
     proxy: {
       // SSE endpoints are long-lived streams — disable proxy timeouts so
       // http-proxy doesn't kill them after 60 s, causing ECONNRESET on the

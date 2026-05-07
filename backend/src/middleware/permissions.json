@@ -120,6 +120,14 @@
       "role": "qa_lead",
       "source": "backend/src/routes/tests.js:572"
     },
+    "POST /api/v1/tests/:testId/revoke": {
+      "role": "qa_lead",
+      "source": "backend/src/routes/tests.js"
+    },
+    "GET /api/v1/projects/:id/approval-stats": {
+      "role": "qa_lead",
+      "source": "backend/src/routes/tests.js"
+    },
     "POST /api/v1/tests/:testId/baselines/:stepNumber/accept": {
       "role": "qa_lead",
       "source": "backend/src/routes/tests.js:751"

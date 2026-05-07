@@ -9,6 +9,16 @@
  * On 401 responses the stored token is cleared and the user is redirected
  * to the login page so stale sessions don't silently fail.
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file groups ~24 endpoint families
+ * into one object literal. Splitting into per-domain modules
+ * (`api/projects.js`, `api/tests.js`, `api/activities.js`, etc.) would
+ * shrink each file, surface duplicates at lint time (the previous bug
+ * where `getActivities` was defined twice would have been impossible),
+ * and let unused families tree-shake out of bundles. The split is
+ * mechanical but global — every consumer's `import { api } from "./api.js"`
+ * has to resolve to the same shape — so it deserves its own PR rather
+ * than bundling with feature work. Tracked as a follow-up MNT item.
+ *
  * @example
  * import { api } from "./api.js";
  *
@@ -261,6 +271,39 @@ export const api = {
   rejectTest:      (projectId, testId) => req("PATCH", `/projects/${projectId}/tests/${testId}/reject`),
   /** @param {string} projectId @param {string} testId - Restore to Draft. */
   restoreTest:     (projectId, testId) => req("PATCH", `/projects/${projectId}/tests/${testId}/restore`),
+  /**
+   * Revoke an approval (auto- or human-approved) back to draft (AUTO-003b).
+   * Clears the four provenance columns (`approvalSource`, `approvalThreshold`,
+   * `approvedAt`, `approvedBy`) so a future approval writes a fresh
+   * decision-time snapshot. `qa_lead`+ on the backend.
+   * @param {string} testId
+   */
+  revokeApproval:  (testId) => req("POST", `/tests/${testId}/revoke`),
+  /**
+   * List activity-log rows, optionally filtered by `type` and/or `projectId`.
+   * Workspace-scoped on the backend (`backend/src/routes/system.js`).
+   * Used by `pages/ApprovalsTimeline.jsx` to fetch `test.auto_approve` and
+   * `test.approve` rows for the daily-grouped audit feed.
+   * @param {{ type?: string, projectId?: string, limit?: number }} [filters]
+   */
+  getActivities:   (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.type) params.set("type", filters.type);
+    if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.after) params.set("after", filters.after);
+    if (filters.before) params.set("before", filters.before);
+    if (filters.limit != null) params.set("limit", String(filters.limit));
+    if (filters.offset != null) params.set("offset", String(filters.offset));
+    const qs = params.toString();
+    return req("GET", `/activities${qs ? `?${qs}` : ""}`);
+  },
+  /**
+   * Approval-decision counts for a project (AUTO-003b) — powers the
+   * project-settings calibration line under the `autoApproveThreshold` input.
+   * @param {string} projectId
+   * @returns {Promise<{human: number, auto: number, draft: number, total: number}>}
+   */
+  getApprovalStats: (projectId) => req("GET", `/projects/${projectId}/approval-stats`),
   /**
    * Bulk update tests.
    * @param {string}   projectId
@@ -755,6 +798,11 @@ export const api = {
   getSystemInfo:   () => req("GET",    "/system"),
   /** @returns {Promise<{cleared: number}>} Clear all run history. */
   clearRuns:       () => req("DELETE", "/data/runs"),
+  // NOTE: `getActivities` is defined once above (in the Test review actions
+  // block). A duplicate definition previously lived here and silently won
+  // over the first per JS object-literal semantics, producing dead code and
+  // a subtle behaviour divergence (`filters.limit` truthy check vs
+  // `!= null`). Consolidated to a single definition — do not re-add here.
   /** @returns {Promise<{cleared: number}>} Clear activity log. */
   clearActivities: () => req("DELETE", "/data/activities"),
   /** @returns {Promise<{cleared: number}>} Clear self-healing history. */

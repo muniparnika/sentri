@@ -14,6 +14,44 @@
 /* ── Table horizontal scroll on narrow viewports ────────────────────────────── */
 /* The tests table has 9 columns — even after hiding some, the remaining        */
 /* columns can still overflow on narrow screens. Allow horizontal scroll.       */
+/* AUTO-003b: two-tone Review-status badge column. Provenance must be
+   visible at table density per NEXT.md anti-pattern list — never hover-only.
+   The hue stays in CSS (purple for auto / green for human / amber for draft)
+   so the row reads consistently with the matching filter pill. */
+.tests-review-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tests-review-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tests-review-badge__score {
+  opacity: 0.85;
+}
+
+.tests-review-badge--auto {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+
+/* Header project-filter select — matches the dimensions ReviewQueue uses
+   on its `.rq-header-select` (32px height, 0.78rem, 140px min-width) so
+   the two pages feel like the same surface. Replaces a 4-property inline
+   style block on the `<select>` (per STANDARDS.md §Styling). */
+.tests-header-select {
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
+  min-width: 140px;
+}
+
 .tests-table {
   overflow-x: auto;
 }

@@ -75,6 +75,13 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
     const { score, factors } = scoreTestWithFactors(t);
     t._quality = score;
     t._qualityFactors = factors;
+    // AUTO-003b: keep `confidenceScore` (0–1 scale) in lock-step with the
+    // re-scored `_quality` (0–100 scale) so `persistGeneratedTests` compares
+    // the post-enhancement score against `autoApproveThreshold`. Without
+    // this, `confidenceScore` would retain its pre-enhancement value set by
+    // `deduplicateTests` and a test strengthened by the assertion enhancer
+    // could miss the auto-approval threshold despite deserving to clear it.
+    t.confidenceScore = score / 100;
   }
 
   // ── Step 6b: Apply self-healing transforms ────────────────────────────

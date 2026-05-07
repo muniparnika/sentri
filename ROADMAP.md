@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `AUTO-003 + AUTO-003b` (auto-approval mechanism + trust contract) — promoted per `NEXT.md` rotation after `AUTO-017.3 + PROC-001 + PROC-003` shipped in PR #9 · **Blockers:** none remaining · **Remaining:** ~32 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-017.3 + PROC-001 + PROC-003 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard + sprint-promotion auto-prune); CAP-004 + MET-001 + PROC-002 ✅ PR #8 (self-healing dashboard + time-series metric primitive + sprint-tracker hand-off script); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8; DIF-015b Gap 2 ✅ PR #4.
+> **Current sprint:** `AUTO-002` (change detection / diff-aware crawling) — promoted per `NEXT.md` rotation after `AUTO-003 + AUTO-003b` shipped in PR #10 · **Blockers:** none remaining · **Remaining:** ~28 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-003 + AUTO-003b ✅ PR #10 (confidence-based auto-approval + provenance / revoke / audit trail); AUTO-017.3 + PROC-001 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard); CAP-004 + MET-001 ✅ PR #8 (self-healing dashboard + time-series metric primitive); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8. PROC-002 + PROC-003 (sprint-promotion automation, originally PR #8 / PR #9) reverted in PR #10 — see Completed Work Summary row.
 
 ---
 
@@ -115,8 +115,10 @@ The following items have been verified complete against the codebase and are **n
 | UI-REFACTOR-001 | `ConfigurablePanel` abstraction extracted from `QualityGatesPanel` (AUTO-012) + `WebVitalsBudgetsPanel` (AUTO-017) — ~95% structural overlap eliminated; future SLO-style config UIs (SEC-005 SSO config, DIF-008 Jira integration) ship as one-file PRs. Shipped alongside an Automation page redesign: four top-level WAI-ARIA tabs (**Triggers & Schedules** · **Quality Gates** · **Integrations** · **Snippets**) with arrow-key + Home/End navigation, per-project accordions inside each tab with live status chips (`N tokens` / `Scheduled`, `Gates configured` / `Budgets set`), and a new `frontend/src/utils/automationStatus.js` parser + module-level promise cache + pub/sub invalidation bus pinning the backend response shapes (`data.schedule.enabled`, `data.qualityGates`, `data.webVitalsBudgets`) with regression coverage in `frontend/tests/automation-status.test.js`. The legacy ProjectDetail → Settings tab is removed; Quality Gates / Web Vitals Budgets now live exclusively at `/automation`. Frontend-only — no backend, schema, route, or `permissions.json` changes. | PR #6                                                           |
 | AUTO-017.3 | Web Vitals trend charts on `ProjectQualityCard` (LCP / CLS / INP / TTFB) backed by per-run averages from `recordMetric()` in `testRunner.js` via new `GET /projects/:id/metrics` route + `useProjectMetricQuery` hook; threshold lines sourced from `project.webVitalsBudgets`. | PR #9 |
 | PROC-001 | No-orphan-routes CI guard (`.github/workflows/no-orphan-routes.yml`) — fails PRs adding `router.<method>(…)` in `backend/src/routes/*.js` without touching `frontend/src/api.js` / pages / components; `[no-ui]` PR-title opt-out. Convention documented in REVIEW.md, AGENT.md, CONTRIBUTING.md, and the PR template. | PR #9 |
-| PROC-003 | Sprint promotion auto-prune — `scripts/promote-sprint-item.mjs` extended with three idempotent transforms (`appendCompletedWorkSummary`, `decrementRemainingCounts`, `pruneShippedRoadmapEntry`) that fold the manual REVIEW.md § Sprint Tracker Hand-off steps into the script. | PR #9 |
+| ~~PROC-002~~ + ~~PROC-003~~ | **Reverted in PR #10.** Sprint-promotion automation script (`scripts/promote-sprint-item.mjs` + smoke test) and its PROC-003 auto-prune extension. The regex-based transforms had too many edge cases (bundled-id `(bundled)` suffix leakage, queue-slot vs ROADMAP.md scope-text split, drifting title formats) to be reliably automated; the canonical hand-off is now the expanded manual checklist in `REVIEW.md § Sprint Tracker Hand-off`. | PR #8 (added) / PR #10 (reverted) |
 | CAP-003 | Secret scanner gate on AI-generated Playwright tests. New `backend/src/pipeline/secretScanner.js` runs a `gitleaks`-style scan inside the validate stage (`backend/src/pipeline/testValidator.js`); built-in detectors (AWS access key IDs, JWTs, `Bearer` tokens) plus best-effort `.github/.gitleaks.toml` reuse. Matched tests are rejected, annotated with a redacted finding list (first/last 4 chars only — never plaintext), and the run is flagged via `run.secretScanBlocked = true` in `pipelineOrchestrator.js` so CI consumers can fail the build on regression. Positive + negative fixtures in `backend/tests/secret-scanner.test.js`, registered in `backend/tests/run-tests.js`. | PR #12                                                          |
+| AUTO-003 | Confidence scoring & auto-approval of low-risk tests | PR #10 |
+| AUTO-003b | Auto-approval provenance & audit trail (two-tone badges, revoke endpoint, calibration line, sidebar `🤖 N today`, ApprovalsTimeline page) | PR #10 |
 
 ---
 
@@ -127,7 +129,7 @@ The following items have been verified complete against the codebase and are **n
 | Phase 1 — Production Hardening | Security, reliability, data integrity | ✅ Complete                                                                                                                                                                            | — |
 | Phase 2 — Team & Enterprise Foundation | Auth hardening, multi-tenancy, RBAC, queues | ✅ Mostly complete — SEC-001/002/003, INF-001/002/003/004/005/006, ACL-001/002, FEA-001/002/003, ENH-036 + ENH-036b all ✅; only SEC-004 (MFA) + SEC-005 (SSO) remain, both deferred until enterprise demand | 8–10 weeks |
 | Phase 3 — AI-Native Differentiation | Visual regression, cross-browser, competitive features | 🔄 In progress — most differentiators shipped (DIF-001/002/002b/003/004/005/006/007/011/013/014/015/016 ✅ — DIF-005 embedded trace viewer shipped in PR #9); remaining: DIF-008–010, DIF-012, DIF-015b/c sub-items, INT-002 | 10–12 weeks |
-| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-005/006/007/012/013/016/016b/017/019 ✅; remaining: AUTO-001/002/003/003b/004, AUTO-008–011, AUTO-014/015, AUTO-018, AUTO-020/021 · Capabilities row (CAP-001 data-driven, CAP-002 sharding) tracked separately in Summary | 14–18 weeks |
+| Phase 4 — Autonomous Intelligence | Risk-based testing, change detection, quality gates | 🔄 In progress — AUTO-003/003b/005/006/007/012/013/016/016b/017/017.3/019 ✅; remaining: AUTO-001/002/004, AUTO-008–011, AUTO-014/015, AUTO-018, AUTO-020/021 · Capabilities row (CAP-001 data-driven, CAP-002 sharding) tracked separately in Summary | 14–18 weeks |
 | Ongoing — Maintenance & Platform Health | Healing AI, DX, exports, accessibility | 🔄 Continuous                                                                                                                                                                         | — |
 
 ---
@@ -415,7 +417,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 *Goal: Advance Sentri beyond triggered QA into a genuinely autonomous system that makes intelligent decisions about what to test, when to test, and what failures mean. Items in this phase are post-Phase 3 and can be prioritised individually based on customer demand.*
 
-> **Note:** Several Phase 4 items have already shipped opportunistically alongside other work and appear in the Completed Work Summary above — `AUTO-005` (test retry, PR #2), `AUTO-006` (network conditions, PR #3), `AUTO-007` (geolocation/locale/timezone, PR #94), `AUTO-012` (SLA / quality gate enforcement — full backend + UI + CI consumer docs, PR #2), `AUTO-013` (stale test detection, PR #99), `AUTO-016` backend slice (axe-core scan + persistence, PR #121), `AUTO-016b` (frontend `CrawlView` accessibility panel + dashboard "Top Accessibility Offenders" rollup, PR #1), `AUTO-017` (Web Vitals performance budgets, PR #8), and `AUTO-019` (per-test run diffing, PR #10). The remaining items are scoped here and ready to start; the immediate next sprint target is the combined recorder PR (`DIF-015b Gap 3` + `DIF-015c Gap 1`) tracked in `NEXT.md`.
+> **Note:** Several Phase 4 items have already shipped opportunistically alongside other work and appear in the Completed Work Summary above — `AUTO-003` + `AUTO-003b` (confidence-based auto-approval + provenance / audit trail, PR #10), `AUTO-005` (test retry, PR #2), `AUTO-006` (network conditions, PR #3), `AUTO-007` (geolocation/locale/timezone, PR #94), `AUTO-012` (SLA / quality gate enforcement — full backend + UI + CI consumer docs, PR #2), `AUTO-013` (stale test detection, PR #99), `AUTO-016` backend slice (axe-core scan + persistence, PR #121), `AUTO-016b` (frontend `CrawlView` accessibility panel + dashboard "Top Accessibility Offenders" rollup, PR #1), `AUTO-017` (Web Vitals performance budgets, PR #8), `AUTO-017.3` (Web Vitals trend charts, PR #9), and `AUTO-019` (per-test run diffing, PR #10). The remaining items are scoped here and ready to start; the immediate next sprint target is `AUTO-002` (change detection / diff-aware crawling) tracked in `NEXT.md`.
 
 ---
 
@@ -497,90 +499,6 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ---
 
-### AUTO-003 — Confidence scoring and auto-approval of low-risk tests 🟢 Differentiator
-
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Competitive Gap Analysis
-
-**Problem:** Every generated test requires manual approval (`reviewStatus: 'draft'`). For truly autonomous operation, the system should auto-approve tests above a confidence threshold. A quality score already exists in `deduplicator.js:226-272` but is never used for approval decisions.
-
-**Fix:** Expose the quality score as `tests.confidenceScore`. Add a per-project `autoApproveThreshold` setting (default: disabled). On generation, auto-approve tests above the threshold. Log auto-approvals in the activity trail. Add a "review auto-approved tests" filter in the Tests page.
-
-**Files to change:**
-- `backend/src/pipeline/deduplicator.js` — expose quality score as `confidenceScore`
-- `backend/src/pipeline/testPersistence.js` — auto-approve logic
-- `backend/src/routes/projects.js` — `autoApproveThreshold` project setting
-- `frontend/src/pages/Tests.jsx` — auto-approved filter badge
-
-**Dependencies:** None
-
----
-
-### AUTO-003b — Auto-approval provenance & audit trail 🟢 Differentiator
-
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Follow-on from AUTO-003 (PR #7 review thread on `review-queue` branch — clear approval ownership for human vs auto)
-
-**Problem:** AUTO-003 ships the *mechanism* (auto-approve above a confidence threshold) but not the *trust contract* around it. Without explicit provenance, an approved test can't tell a reviewer **who** approved it (human vs `auto-approver`), **why** (judgment vs score X above threshold Y), or **how to revoke it**. The first time auto-approval ships a bad test, trust in the entire system collapses unless reviewers can scan a table and see at a glance which approvals were machine-made and one-click reverse them. AUTO-003's scope deliberately stops at "tests above threshold are persisted as `approved` + activity row written" — it does not add the provenance columns, the two-tone badge, the revoke endpoint, or the calibration feedback loop in project settings.
-
-**Fix:**
-
-*Data model — combine into the AUTO-003 migration if it hasn't shipped, otherwise new migration. Critical: persist `approvalThreshold` at decision time, not just a flag, so the audit can flag historical approvals that would no longer pass after a threshold raise.*
-
-```sql
-ALTER TABLE tests ADD COLUMN approvalSource TEXT;     -- 'human' | 'auto' | null
-ALTER TABLE tests ADD COLUMN approvalThreshold REAL;  -- threshold value at decision time
-ALTER TABLE tests ADD COLUMN approvedAt INTEGER;      -- epoch ms
-ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approver'
-```
-
-*Backend:*
-- Populate the four provenance columns on every approval path (auto + human) in `backend/src/pipeline/testPersistence.js`.
-- Write one `activities` row per auto-approval (`userName: "auto-approver"`, `meta: { score, threshold }`). No batching.
-- New `GET /api/v1/projects/:id/approval-stats` — counts (human / auto / draft) + 7-day revert rate for the calibration line.
-- New `POST /api/v1/tests/:id/revoke` — moves an approved test (auto or human) back to `draft`, writes an activity row, clears `approvedAt` / `approvedBy`. Register both routes in `permissions.json`.
-
-*Frontend (the "scannable at table density, never hover-only" rule applies to all of these):*
-- `Tests.jsx` — replace the single "Approved" badge with a two-tone column: 🤖 `Auto · 0.91` (purple) vs 👤 `Human · alice` (green) vs 📝 `Draft · 0.62` (amber). ⚠ overlay on auto-approved rows whose first run failed (the calibration safety net). New filter pill row: `All | Human-approved | Auto-approved | Draft`. **Do not** merge auto + human under one green badge.
-- `Tests.jsx` "Auto-approved" filter — default sort: lowest confidence first; required column: first-run pass rate; bulk action: "Send back to draft for review".
-- `ReviewQueue.jsx` — render a "Last 24h auto-approvals" tray above the draft list when auto-approval is enabled, so reviewers can spot-audit yesterday's auto-batch in 30 seconds.
-- Test header (likely `RunDetail.jsx` or `TestDetail.jsx`) — full provenance line + **Revoke to draft** button. Auto: `🤖 Auto-approved · score 0.91 · threshold 0.85 · 2h ago · [Revoke to draft]`. Human: `👤 Approved by @alice · 1d ago · [Revoke to draft]`. **The Revoke button is the single non-negotiable affordance** — auto-approval is only trustworthy if it is reversible in one click.
-- `ProjectDetail.jsx` — header aggregate: `24 tests · 18 human · 6 auto · 0 drafts`. Do not clutter per-run rows.
-- `Sidebar.jsx` — second badge alongside the draft count: `[3 drafts] [🤖 12 auto today]`. Hiding auto-activity makes the system feel idle when it's working.
-- Project Settings (`ProjectQualityCard` post-PR #6) — inline calibration line under the threshold input: `Last 7 days: 42 auto-approved, 3 reverted by humans (7%).` Heuristic surfaced as helper text: <5% → may be too high; 5–10% → healthy; >10% → tighten. First-time enablement guard: one-time modal showing "last 30 generated tests would have been auto-approved at this threshold — sample these before enabling."
-- New per-project Approvals timeline: daily groups (`🤖 12 auto-approved (avg score 0.89)` / `👤 @alice approved 3, rejected 1`). Click a batch → expanded list with per-test score, threshold-at-time, and per-test revoke action. Compliance bar: "who approved this test?" must be one click away six months later.
-
-**Files to change:**
-- New migration `0NN_test_approval_provenance.sql` — four provenance columns
-- `backend/src/pipeline/testPersistence.js` — populate provenance on both approval paths
-- New `backend/src/routes/approvalStats.js` (or extend `routes/projects.js`) — `GET /:id/approval-stats`
-- `backend/src/routes/tests.js` — `POST /:id/revoke`
-- `backend/src/middleware/permissions.json` — register both new routes
-- `frontend/src/api.js` — `getApprovalStats(projectId)`, `revokeApproval(testId)`
-- `frontend/src/pages/Tests.jsx` — two-tone badge column, source-filter pills, first-run-failed warning
-- `frontend/src/pages/ReviewQueue.jsx` — last-24h auto-approval tray
-- `frontend/src/pages/ProjectDetail.jsx` — header aggregate counts
-- `frontend/src/components/layout/Sidebar.jsx` — second `🤖 N auto today` badge
-- `frontend/src/pages/RunDetail.jsx` (or `TestDetail.jsx`) — provenance line + Revoke button
-- `frontend/src/components/automation/ProjectQualityCard.jsx` — calibration line + first-time-enable preview modal
-- New `frontend/src/pages/ApprovalsTimeline.jsx`
-- `backend/tests/auto-approval.test.js` (extend) — provenance persistence, activity row with score+threshold, revoke flow (auto→draft, human→draft), first-run-failed flag in API
-- New `frontend/tests/approval-provenance.test.jsx` — filter pill partitions human vs auto, Revoke button hits the right endpoint and updates the row
-- `docs/changelog.md` — `### Added` entry once shipped
-- `REVIEW.md` — new convention: auto-approval surfaces must show provenance
-
-**Acceptance criteria:**
-- Every auto-approval writes an `activities` row with `userName: "auto-approver"`, score, and threshold-at-time.
-- The four provenance columns are populated on every approval (auto and human); `approvalThreshold` reflects the value at decision time, not the current project setting.
-- `Tests.jsx` visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft in the table without hover.
-- Auto-approved tests with a failed first run surface a ⚠ icon in `Tests.jsx` and the auto-approved filter view.
-- `POST /tests/:id/revoke` returns the test to `draft` for both auto- and human-approved tests, and writes an activity row.
-- Sidebar shows `🤖 N auto today` alongside the draft count when N > 0.
-- First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting the setting.
-
-**Anti-patterns to reject in review:** merging auto + human under one "Approved" badge · provenance only on hover/tooltip · silent first-enable with no preview · skipping the activity row · shipping without the Revoke button · hiding the auto-count from the sidebar.
-
-**Dependencies:** AUTO-003 (provides `confidenceScore` + `autoApproveThreshold` that this item builds on)
-
----
 
 ### AUTO-004 — Test impact analysis from git diff / deployment webhook 🟢 Differentiator
 
@@ -890,9 +808,9 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 
 **Sentri's unique strengths:** Self-hosted + AI generation + human review queue + multi-provider LLM + standalone Playwright export (✅ DIF-006). No competitor offers all five together. BearQ narrows the AI generation gap but remains SaaS-only with no self-hosted option or LLM provider choice.
 
-**Critical gaps to close next:** AUTO-003 + AUTO-003b (auto-approval + provenance — current PR) · AUTO-002 (change detection) · AUTO-001 (risk-based test selection) · INT-002 (GitHub PR check comments)
+**Critical gaps to close next:** AUTO-002 (change detection — current PR) · AUTO-001 (risk-based test selection) · INT-002 (GitHub PR check comments) · AUTO-004 (test impact analysis from git diff)
 
-> **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · PROC-002 · UI-REFACTOR-001.
+> **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · UI-REFACTOR-001.
 
 ---
 
@@ -905,20 +823,29 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 4 | 4 | 0 | 0 | — |
 | Differentiators | 22 | 16 | 0 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6) |
-| Autonomous Intelligence | 26 | 10 | 0 | 16 | AUTO-001/002/003/003b/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
+| Autonomous Intelligence | 26 | 14 | 0 | 12 | AUTO-001/002/004/008–011/014/015/018/020/021/022 |
 | Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
-| Process automation | 3 | 3 | 0 | 0 | — |
+| Process automation | 1 | 1 | 0 | 0 | — |
 | Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
-| **Totals** | **83** | **51** | **0** | **32** | |
+| **Totals** | **81** | **53** | **0** | **28** | |
 
-**Total tracked items:** 83 across 9 categories — **51 complete** (61%), **0 in current PR**, **32 remaining**
+<!--
+  PR #10 ledger reconciliation (AUTO-003 + AUTO-003b ship + PROC-002/003 revert):
+    - AUTO-003 + AUTO-003b ship: Autonomous Intelligence Done +2 / Pending −2.
+    - PROC-002 + PROC-003 revert: Process automation Total −2 / Done −2 (the
+      items themselves are gone from the ledger, not just unshipped).
+    - Net Totals impact: Total 83 → 81, Done 55 → 53, Pending unchanged at 28.
+    - Narrative line: matches the Totals row exactly. Treat Totals as
+      authoritative; if the narrative ever drifts, update it from Totals.
+-->
+**Total tracked items:** 81 across 9 categories — **53 complete** (65%), **0 in current PR**, **28 remaining**
 
 **Blockers (must ship before team deployment):** All resolved. ✅
 
-**Recommended PR order (next after current bundle ships):**
-`AUTO-003` + `AUTO-003b` (auto-approval mechanism + trust contract — they're the last missing piece of the "autonomous" positioning) → `AUTO-002` (change-detection; hard prerequisite for AUTO-001 and AUTO-004) → `AUTO-001` (risk-based test selection — the narrative capstone for Phase 4).
+**Recommended PR order (next after AUTO-002 ships):**
+`AUTO-002` (current PR — change-detection; hard prerequisite for AUTO-001 and AUTO-004) → `AUTO-001` (risk-based test selection, consumes AUTO-002's `changedPages` signal) → `AUTO-004` (test impact analysis from git diff — the narrative capstone for Phase 4).
 
-**Lowest effort / highest immediate value after the current bundle:**
+**Lowest effort / highest immediate value:**
 `INT-002` (M — GitHub PR check comments) · `DIF-012` (L — multi-environment, high enterprise-demand) · `MNT-004` (L — fixtures, complements CAP-001).
 
 ---

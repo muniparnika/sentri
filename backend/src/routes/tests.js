@@ -2,6 +2,16 @@
  * @module routes/tests
  * @description Test CRUD, AI generation, single-test run, review, bulk actions, and export. Mounted at `/api/v1` (INF-005).
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file mixes 8 concerns — CRUD, AI
+ * generation, single-test runs, review actions, approvals (revoke +
+ * approval-stats), interactive recorder, visual baselines, and exports.
+ * Splitting along those lines (`routes/approvals.js`, `routes/recorder.js`,
+ * `routes/baselines.js`, `routes/exports.js`) is sensible but should land
+ * in a dedicated PR rather than bundled with feature work — the route-
+ * order constraints below ("bulk must be declared BEFORE :testId
+ * wildcards") are easy to regress in a mechanical move. Tracked as a
+ * follow-up MNT item.
+ *
  * ### Endpoints
  * | Method   | Path                                             | Description                         |
  * |----------|--------------------------------------------------|-------------------------------------|
@@ -28,6 +38,8 @@ import { Router } from "express";
 import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
+import { PROVENANCE_CLEAR, humanApproval, computeStats, APPROVAL_SOURCE } from "../services/approvalService.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
@@ -624,9 +636,18 @@ router.patch("/projects/:id/tests/:testId/approve", requireRole("qa_lead"), (req
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "approved", reviewedAt });
-  logActivity({ ...actor(req),
-    type: "test.approve", projectId: req.params.id, projectName: project.name,
+  // AUTO-003b: populate provenance columns on human approvals too so the
+  // approval-stats counter and audit trail carry full decision-time data.
+  // `humanApproval()` returns the four provenance fields keyed to this
+  // actor — see backend/src/services/approvalService.js for the contract.
+  const actorInfo = actor(req);
+  testRepo.update(test.id, {
+    reviewStatus: "approved",
+    reviewedAt,
+    ...humanApproval(actorInfo),
+  });
+  logActivity({ ...actorInfo,
+    type: ACTIVITY_TYPES.TEST_APPROVE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test approved — "${test.name}"`,
   });
@@ -650,9 +671,15 @@ router.patch("/projects/:id/tests/:testId/reject", requireRole("qa_lead"), (req,
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt });
+  // AUTO-003b: clear the four provenance columns alongside `reviewStatus`
+  // so a rejected auto-approved test doesn't keep stale `approvalSource:
+  // "auto"` / `approvedBy: "auto-approver"` — the response from GET
+  // `/tests/:id` would otherwise show a rejected test that still looks
+  // auto-approved, which is a confusing audit-trail lie. Matches the
+  // restore / revoke / bulk-restore paths that also clear provenance.
+  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt, ...PROVENANCE_CLEAR });
   logActivity({ ...actor(req),
-    type: "test.reject", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_REJECT, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test rejected — "${test.name}"`,
   });
@@ -673,13 +700,71 @@ router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
-  testRepo.update(test.id, { reviewStatus: "draft", reviewedAt: null });
+  // AUTO-003b: clear the four provenance columns alongside reviewStatus/reviewedAt
+  // via the shared `PROVENANCE_CLEAR` shape so this stays in lock-step with
+  // bulk restore + revoke (see backend/src/services/approvalService.js).
+  testRepo.update(test.id, {
+    reviewStatus: "draft",
+    reviewedAt: null,
+    ...PROVENANCE_CLEAR,
+  });
   logActivity({ ...actor(req),
-    type: "test.restore", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_RESTORE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test restored to draft — "${test.name}"`,
   });
   res.json(testRepo.getById(test.id));
+});
+
+// POST /api/v1/tests/:testId/revoke (AUTO-003b)
+//
+// Revoke an approved test (auto- or human-approved) back to draft. Clears
+// the provenance columns so a future approval writes a fresh decision-time
+// snapshot, and emits an activity row so the audit trail records who pulled
+// the test back. Workspace-scoped via the test's parent project (ACL-001).
+router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
+  const test = testRepo.getById(req.params.testId);
+  if (!test) return res.status(404).json({ error: "not found" });
+  const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  // Capture the previous source from the snapshot read above for the audit
+  // row's `meta.wasAutoApproved` flag. By the time the UPDATE runs the row
+  // has been cleared, so we can't read provenance off the post-state.
+  const previousSource = test.approvalSource;
+  // AUTO-003b: atomic check-and-update — `revokeApprovalIfApproved` bakes
+  // the `reviewStatus = 'approved'` predicate into the UPDATE's WHERE clause
+  // so two concurrent revokes can't both succeed. Returns `false` when the
+  // row was already in a different state (e.g. another reviewer revoked
+  // first); we map that to the same 400 the previous read-then-check path
+  // produced. This stays correct on PostgreSQL pools where read snapshots
+  // could otherwise let both requests pass the read-side guard.
+  if (!testRepo.revokeApprovalIfApproved(test.id)) {
+    return res.status(400).json({ error: "only approved tests can be revoked" });
+  }
+  logActivity({ ...actor(req),
+    type: ACTIVITY_TYPES.TEST_REVOKE, projectId: project.id, projectName: project.name,
+    testId: test.id, testName: test.name,
+    detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE.AUTO ? "auto-approved" : "human-approved"})`,
+    // `wasAutoApproved` lets the project approval-stats handler compute the
+    // 7-day revert rate without correlating testIds across activity types
+    // — see GET /api/v1/projects/:id/approval-stats below.
+    meta: { wasAutoApproved: previousSource === APPROVAL_SOURCE.AUTO },
+  });
+  res.json(testRepo.getById(test.id));
+});
+
+// GET /api/v1/projects/:id/approval-stats (AUTO-003b)
+//
+// Returns approval-decision counts (human / auto / draft) plus a 7-day
+// revert rate, used by the project-settings calibration line under the
+// `autoApproveThreshold` input.
+router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
+  // Aggregation lives in `services/approvalService.js` — keeping the route
+  // handler thin lets the service be reused (e.g. a future workspace-wide
+  // rollup) and keeps the test surface focused on auth/HTTP shape vs. logic.
+  res.json(computeStats(project.id));
 });
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
@@ -713,7 +798,29 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
 
   const statusMap = { approve: "approved", reject: "rejected", restore: "draft" };
   const reviewedAt = action === "restore" ? null : new Date().toISOString();
-  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
+  // AUTO-003b: bulk approve must populate provenance, and bulk restore must
+  // clear it. Reuse the same `humanApproval()` / `PROVENANCE_CLEAR` shapes
+  // the single-test handlers use (services/approvalService.js) so all four
+  // approve/restore paths stay byte-identical.
+  //
+  // Provenance is passed through `bulkUpdateReviewStatus` so it lands in the
+  // SAME UPDATE statement as `reviewStatus`/`reviewedAt`, inside the same
+  // transaction. A two-phase pattern (status update, then per-row provenance
+  // writes) could leave tests approved with null provenance if the request
+  // was aborted between phases, miscounting them as human-approved on the
+  // approval-stats endpoint. The returned rows are re-read after the UPDATE
+  // so the response reflects the persisted provenance.
+  // Reject + restore both clear provenance. Reject clears it so a rejected
+  // auto-approved test doesn't carry stale `approvalSource: "auto"` on the
+  // response (matches the single-test reject handler above); restore clears
+  // it because the test is going back to draft for re-review. Only approve
+  // writes new provenance.
+  const extraFields = action === "approve"
+    ? humanApproval(actor(req))
+    : (action === "restore" || action === "reject")
+      ? PROVENANCE_CLEAR
+      : {};
+  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);
 
   if (updated.length) {
     for (const test of updated) {

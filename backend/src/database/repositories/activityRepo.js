@@ -12,8 +12,8 @@ import { getDatabase } from "../sqlite.js";
 export function create(activity) {
   const db = getDatabase();
   db.prepare(`
-    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName, workspaceId)
-    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName, @workspaceId)
+    INSERT INTO activities (id, type, projectId, projectName, testId, testName, detail, status, createdAt, userId, userName, workspaceId, meta)
+    VALUES (@id, @type, @projectId, @projectName, @testId, @testName, @detail, @status, @createdAt, @userId, @userName, @workspaceId, @meta)
   `).run({
     id: activity.id,
     type: activity.type,
@@ -27,7 +27,28 @@ export function create(activity) {
     userId: activity.userId || null,
     userName: activity.userName || null,
     workspaceId: activity.workspaceId || null,
+    // `meta` is JSON-encoded TEXT (migration 018) so callers can pass a plain
+    // object; readers below re-parse it. Null when absent so the column is
+    // genuinely empty rather than the string "null".
+    meta: activity.meta != null ? JSON.stringify(activity.meta) : null,
   });
+}
+
+/**
+ * Re-parse the JSON `meta` column into a plain object for callers. Tolerant
+ * of legacy rows where the column is null/empty/non-JSON — those rows
+ * predate migration 018 and surface as `meta: null`.
+ * @param {Object} row
+ * @returns {Object}
+ */
+function hydrate(row) {
+  if (!row) return row;
+  if (typeof row.meta === "string" && row.meta.length > 0) {
+    try { row.meta = JSON.parse(row.meta); } catch { row.meta = null; }
+  } else if (row.meta === undefined) {
+    row.meta = null;
+  }
+  return row;
 }
 
 /**
@@ -36,7 +57,7 @@ export function create(activity) {
  */
 export function getAll() {
   const db = getDatabase();
-  return db.prepare("SELECT * FROM activities ORDER BY createdAt DESC").all();
+  return db.prepare("SELECT * FROM activities ORDER BY createdAt DESC").all().map(hydrate);
 }
 
 /**
@@ -52,14 +73,34 @@ export function getAllAsDict() {
 
 /**
  * Get filtered activities.
+ *
+ * `after` / `before` accept ISO-8601 strings (matching the column's storage
+ * format). The comparison is lexicographic on ISO strings, which is correct
+ * for the YYYY-MM-DDTHH:MM:SS.sssZ shape `Date.toISOString()` produces.
+ *
+ * `offset` pairs with `limit` for cursor-style "Load more" — clients pass
+ * the count of rows they've already rendered. Combined with the default
+ * `ORDER BY createdAt DESC`, this gives a stable forward window even
+ * when new rows arrive between fetches (the ordering key is the row's
+ * own timestamp, so a new row only shifts the cursor on the *first*
+ * page, not subsequent pages).
+ *
  * @param {Object} [filters]
  * @param {string} [filters.type]
  * @param {string} [filters.projectId]
  * @param {string} [filters.workspaceId] — Scope to workspace (ACL-001).
+ * @param {string} [filters.after]       — ISO timestamp; only rows with
+ *   `createdAt >= after` are returned. Powers the AUTO-003b approvals
+ *   timeline date-range picker (This week / Last 30 days / Custom).
+ * @param {string} [filters.before]      — ISO timestamp; only rows with
+ *   `createdAt < before` are returned. Pairs with `after` for bounded
+ *   ranges; either bound is optional.
  * @param {number} [filters.limit=200]
+ * @param {number} [filters.offset]      — Skip the first N rows of the
+ *   result set; used by paginated UIs (Load more) to fetch the next page.
  * @returns {Object[]}
  */
-export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
+export function getFiltered({ type, projectId, workspaceId, after, before, limit, offset } = {}) {
   const db = getDatabase();
   let sql = "SELECT * FROM activities WHERE 1=1";
   const params = [];
@@ -75,9 +116,96 @@ export function getFiltered({ type, projectId, workspaceId, limit } = {}) {
     sql += " AND projectId = ?";
     params.push(projectId);
   }
+  if (after) {
+    sql += " AND createdAt >= ?";
+    params.push(after);
+  }
+  if (before) {
+    sql += " AND createdAt < ?";
+    params.push(before);
+  }
   sql += " ORDER BY createdAt DESC LIMIT ?";
   params.push(limit || 200);
-  return db.prepare(sql).all(...params);
+  if (Number.isFinite(offset) && offset > 0) {
+    sql += " OFFSET ?";
+    params.push(offset);
+  }
+  return db.prepare(sql).all(...params).map(hydrate);
+}
+
+/**
+ * Count `DISTINCT testId` across activity rows matching the filter (AUTO-003b).
+ *
+ * Used by the approval-stats 7-day revert-rate calculation, which asks
+ * *"how many distinct tests were auto-approved in the window?"* and
+ * *"how many distinct tests were revoked in the window?"* — set sizes,
+ * not row counts, because a test that auto-approved twice in the window
+ * should still count as one.
+ *
+ * Previously computed by fetching up to 10,000 rows via `getFiltered`
+ * and building two `Set`s in JS; at ~1 KB per row that's ~10 MB of
+ * transferred data per project per call. This query returns a single
+ * integer, and the `activities(type, projectId, createdAt)` access
+ * pattern is index-friendly on both adapters.
+ *
+ * The `metaIsAutoApproved` filter matches the JSON-encoded flag
+ * `meta.wasAutoApproved = true` via a portable `LIKE` on the serialised
+ * `meta` TEXT column (migration 018). LIKE is case-sensitive on SQLite
+ * and case-insensitive on PostgreSQL (the adapter rewrites LIKE→ILIKE)
+ * — fine here because `logActivity` always writes the lowercase
+ * `"wasAutoApproved":true` shape, so case-variation isn't possible on
+ * real data. Using LIKE instead of `json_extract` keeps the query
+ * portable across the SQLite/PostgreSQL adapters without a dialect
+ * branch (INF-001).
+ *
+ * @param {Object} filters
+ * @param {string} filters.type                   — required, exact match on `activities.type`.
+ * @param {string} [filters.projectId]            — scope to project.
+ * @param {string} [filters.workspaceId]          — scope to workspace (ACL).
+ * @param {string} [filters.after]                — ISO timestamp lower bound (inclusive).
+ * @param {string} [filters.before]               — ISO timestamp upper bound (exclusive).
+ * @param {boolean} [filters.metaIsAutoApproved]  — match rows whose `meta`
+ *   column encodes `{ ..., "wasAutoApproved": true }`. Used to filter revoke
+ *   rows down to "was the revoked test originally auto-approved?" without
+ *   reading 10k rows into memory.
+ * @returns {number} Count of distinct non-null `testId` values among matching rows.
+ */
+export function countDistinctTestIds({ type, projectId, workspaceId, after, before, metaIsAutoApproved } = {}) {
+  const db = getDatabase();
+  let sql = "SELECT COUNT(DISTINCT testId) AS cnt FROM activities WHERE testId IS NOT NULL";
+  const params = [];
+  if (type) {
+    sql += " AND type = ?";
+    params.push(type);
+  }
+  if (projectId) {
+    sql += " AND projectId = ?";
+    params.push(projectId);
+  }
+  if (workspaceId) {
+    sql += " AND workspaceId = ?";
+    params.push(workspaceId);
+  }
+  if (after) {
+    sql += " AND createdAt >= ?";
+    params.push(after);
+  }
+  if (before) {
+    sql += " AND createdAt < ?";
+    params.push(before);
+  }
+  if (metaIsAutoApproved) {
+    // Portable JSON-in-TEXT probe. Matches the exact substring
+    // `"wasAutoApproved":true` (no spaces — `JSON.stringify` omits them)
+    // so the filter is stable across both adapters. A dialect-specific
+    // `json_extract(meta, '$.wasAutoApproved') = 1` would be nicer on
+    // SQLite but breaks on PostgreSQL (`jsonb_extract_path` / `->>`),
+    // and the LIKE is already bounded by the indexed `type + projectId`
+    // predicates above.
+    sql += " AND meta LIKE ?";
+    params.push('%"wasAutoApproved":true%');
+  }
+  return db.prepare(sql).get(...params)?.cnt || 0;
 }
 
 /**

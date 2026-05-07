@@ -29,6 +29,8 @@ import {
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import useReviewQueueQuery, { useReviewQueueCounts, invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
+import useAutoApprovalsQuery from "../hooks/queries/useAutoApprovalsQuery.js";
+import { invalidateAutoApprovalsCache } from "../queryClient.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { userHasRole } from "../utils/roles.js";
@@ -524,6 +526,30 @@ export default function ReviewQueue() {
   // Clear selection when tab changes
   useEffect(() => { setSelected(new Set()); }, [tab]);
 
+  // ── AUTO-003b: Last 24h auto-approvals tray ─────────────────────────────────
+  // One-line strip above the Draft list listing tests auto-approved in the
+  // last 24h, with their confidence-score chips. Only rendered when:
+  //   - we're on the Draft tab (it belongs to the review-inbox context)
+  //   - a single project is selected AND that project has
+  //     `autoApproveThreshold` configured (i.e. auto-approval is *on*; the
+  //     tray would otherwise be permanently empty noise on projects that
+  //     never auto-approve)
+  //
+  // Shares the `useAutoApprovalsQuery` hook with the sidebar badge — one
+  // cache, one in-flight request when both are mounted, and a revoke
+  // anywhere invalidates both via `invalidateAutoApprovalsCache()`. The
+  // 24h window is hook-side (`scope: "24h"`) so there's no client-side
+  // time filter to keep in step with the server's `after` bound.
+  const trayProject = projectId !== "all" ? projMap[projectId] : null;
+  const trayEnabled = !!trayProject && trayProject.autoApproveThreshold != null && tab === "draft";
+  const trayQuery = useAutoApprovalsQuery({
+    scope:     "24h",
+    projectId: trayProject?.id,
+    enabled:   trayEnabled,
+    limit:     200,
+  });
+  const trayItems = trayEnabled ? (trayQuery.data || []) : [];
+
   const activeTest    = useMemo(() => visibleTests.find(t => t.id === activeTestId) ?? null, [visibleTests, activeTestId]);
   const activeProject = activeTest ? projMap[activeTest.projectId] : null;
   const activeIdx     = useMemo(() => visibleTests.findIndex(t => t.id === activeTestId), [visibleTests, activeTestId]);
@@ -665,6 +691,11 @@ export default function ReviewQueue() {
 
     invalidateReviewQueueCache();
     invalidateProjectDataCache();
+    // AUTO-003b: bulk-restore can send auto-approved tests back to draft,
+    // which changes what the sidebar badge and tray should show. Invalidate
+    // here so both surfaces refresh on the next render without waiting for
+    // the 60s background tick. Cheap no-op for non-restore bulk actions.
+    invalidateAutoApprovalsCache();
     setSelected(new Set());
     setActionLoading(null);
   }
@@ -888,6 +919,53 @@ export default function ReviewQueue() {
                   {selected.size === visibleTests.length ? "Deselect all" : "Select all"}
                 </span>
               </label>
+            )}
+
+            {/* AUTO-003b: 24h auto-approvals tray. Renders only when the
+                selected project has auto-approval enabled and we're on the
+                Draft tab. Score chips reuse `qualityColor()` for the same
+                visual encoding as the per-test quality chips below. */}
+            {trayEnabled && trayItems.length > 0 && (
+              <div
+                className="rq-auto-tray"
+                role="region"
+                aria-label="Auto-approvals in the last 24 hours"
+              >
+                <span className="rq-auto-tray__label">
+                  🤖 {trayItems.length} auto-approved (24h):
+                </span>
+                {trayItems.slice(0, 20).map((a) => {
+                  const score = a.meta?.score;
+                  const score100 = typeof score === "number" ? Math.round(score <= 1 ? score * 100 : score) : null;
+                  const clickable = !!a.testId;
+                  return (
+                    <button
+                      key={a.id}
+                      className={`rq-auto-tray__chip${clickable ? " rq-auto-tray__chip--clickable" : ""}`}
+                      onClick={() => clickable && navigate(`/tests/${a.testId}`)}
+                      disabled={!clickable}
+                      title={a.testName ? `${a.testName} — ${a.detail}` : a.detail}
+                    >
+                      <span className="rq-auto-tray__chip-name">
+                        {a.testName ? cleanTestName(a.testName) : a.testId || "test"}
+                      </span>
+                      {score100 != null && (
+                        // Value-driven colour stays inline per the
+                        // `.rq-quality-chip` precedent in review-queue.css.
+                        <span
+                          className="rq-auto-tray__chip-score"
+                          style={{ color: qualityColor(score100) }}
+                        >
+                          Q:{score100}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                {trayItems.length > 20 && (
+                  <span className="rq-auto-tray__overflow">+{trayItems.length - 20} more</span>
+                )}
+              </div>
             )}
 
             {/* Test rows */}
