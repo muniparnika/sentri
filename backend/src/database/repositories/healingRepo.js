@@ -28,6 +28,49 @@ function ensureStrategyVersionColumn(db) {
   _migrated = true;
 }
 
+/**
+ * Chunk a `key LIKE` test-ID query so the OR fanout per statement is bounded.
+ *
+ * Each (deduped) base test ID expands to two LIKE clauses (raw +
+ * `@v%`-versioned), so a chunk size of 100 caps the OR list at 200 clauses
+ * per query — well within the Postgres planner's comfort zone for OR-of-LIKE
+ * expressions on large workspaces. SQLite handles arbitrary OR depth, but
+ * chunking keeps both adapters on the same execution path.
+ *
+ * Input `testIds` are first collapsed to their **base** form (the `@vN`
+ * suffix is stripped) and de-duplicated. Without this, a list containing
+ * both `"TC-1"` and `"TC-1@v2"` would emit overlapping patterns —
+ * `TC-1@v%::%` from the first and `TC-1@v2::%` from the second — and any
+ * row like `TC-1@v2::click::submit` would match both. Per-chunk `COUNT(*)`
+ * results would then be summed across chunks and double-count rows that
+ * straddle the chunk boundary; `SELECT *` callers would see duplicate rows.
+ * Collapsing to base IDs makes the per-row match set disjoint across the
+ * entire input, regardless of chunk size.
+ *
+ * @param {Object} db — better-sqlite3 Database handle
+ * @param {string[]} testIds
+ * @param {Function} sqlFn — `(clauses, params) => any` invoked per chunk; return value collected into the result array.
+ * @returns {Array} per-chunk results in input order
+ */
+const HEALING_TESTID_CHUNK = 100;
+function chunkedTestIdQuery(db, testIds, sqlFn) {
+  // Collapse to unique base IDs so versioned variants of the same test
+  // don't emit overlapping LIKE patterns (which would inflate COUNT(*)
+  // sums across chunks and yield duplicate rows on SELECT). The two
+  // patterns per base ID — `${base}::%` and `${base}@v%::%` — already
+  // cover every row that any versioned variant of the same test could
+  // match, so dropping the variants loses no data.
+  const baseIds = [...new Set(testIds.map((t) => String(t).replace(/@v\d+$/, "")))];
+  const out = [];
+  for (let i = 0; i < baseIds.length; i += HEALING_TESTID_CHUNK) {
+    const slice = baseIds.slice(i, i + HEALING_TESTID_CHUNK);
+    const clauses = slice.flatMap(() => ["key LIKE ?", "key LIKE ?"]).join(" OR ");
+    const params = slice.flatMap((t) => [`${t}::%`, `${t}@v%::%`]);
+    out.push(sqlFn(clauses, params));
+  }
+  return out;
+}
+
 export function set(key, entry) {
   const db = getDatabase();
   ensureStrategyVersionColumn(db);
@@ -135,15 +178,26 @@ export function getByTestIds(testIds) {
   if (!testIds || testIds.length === 0) return [];
   const db = getDatabase();
   ensureStrategyVersionColumn(db);
-  const clauses = [];
-  const params = [];
-  for (const tid of testIds) {
-    clauses.push("key LIKE ?", "key LIKE ?");
-    params.push(`${tid}::%`, `${tid}@v%::%`);
+  // Chunk the OR fanout, then concat. We re-sort the merged result so
+  // `strategyVersion ASC NULLS FIRST` semantics hold across chunk boundaries
+  // — callers rely on this ordering to dedupe via "later-row-wins".
+  const chunks = chunkedTestIdQuery(db, testIds, (clauses, params) =>
+    db.prepare(
+      `SELECT * FROM healing_history WHERE ${clauses} ORDER BY strategyVersion ASC NULLS FIRST`
+    ).all(...params)
+  );
+  const rows = chunks.flat();
+  if (chunks.length > 1) {
+    rows.sort((a, b) => {
+      const av = a.strategyVersion;
+      const bv = b.strategyVersion;
+      if (av === bv) return 0;
+      if (av === null || av === undefined) return -1;
+      if (bv === null || bv === undefined) return 1;
+      return av - bv;
+    });
   }
-  return db.prepare(
-    `SELECT * FROM healing_history WHERE ${clauses.join(" OR ")} ORDER BY strategyVersion ASC NULLS FIRST`
-  ).all(...params);
+  return rows;
 }
 
 /**
@@ -170,13 +224,10 @@ export function deleteByTestIds(testIds) {
 export function countByTestIds(testIds) {
   if (!testIds || testIds.length === 0) return 0;
   const db = getDatabase();
-  const clauses = [];
-  const params = [];
-  for (const tid of testIds) {
-    clauses.push("key LIKE ?", "key LIKE ?");
-    params.push(`${tid}::%`, `${tid}@v%::%`);
-  }
-  return db.prepare(`SELECT COUNT(*) as cnt FROM healing_history WHERE ${clauses.join(" OR ")}`).get(...params).cnt;
+  const counts = chunkedTestIdQuery(db, testIds, (clauses, params) =>
+    db.prepare(`SELECT COUNT(*) as cnt FROM healing_history WHERE ${clauses}`).get(...params).cnt
+  );
+  return counts.reduce((a, b) => a + b, 0);
 }
 
 /**
@@ -187,13 +238,10 @@ export function countByTestIds(testIds) {
 export function countSuccessesByTestIds(testIds) {
   if (!testIds || testIds.length === 0) return 0;
   const db = getDatabase();
-  const clauses = [];
-  const params = [];
-  for (const tid of testIds) {
-    clauses.push("key LIKE ?", "key LIKE ?");
-    params.push(`${tid}::%`, `${tid}@v%::%`);
-  }
-  return db.prepare(
-    `SELECT COUNT(*) as cnt FROM healing_history WHERE (${clauses.join(" OR ")}) AND strategyIndex >= 0 AND succeededAt IS NOT NULL`
-  ).get(...params).cnt;
+  const counts = chunkedTestIdQuery(db, testIds, (clauses, params) =>
+    db.prepare(
+      `SELECT COUNT(*) as cnt FROM healing_history WHERE (${clauses}) AND strategyIndex >= 0 AND succeededAt IS NOT NULL`
+    ).get(...params).cnt
+  );
+  return counts.reduce((a, b) => a + b, 0);
 }

@@ -80,6 +80,7 @@ const files = [
   "tests/auto-approval-routes.test.js",
   "tests/crawl-diff.test.js",
   "tests/deployment-triggers.test.js",
+  "tests/pr11-fixes.test.js",
 ];
 
 let passed = 0;

@@ -261,6 +261,94 @@ test("filtered query last page has the remainder", () => {
   assert.equal(r.meta.hasMore, false);
 });
 
+// ── Tag filter (PR #11 — escapes LIKE metacharacters) ──────────────────────
+
+console.log("\n🧪 getAllPagedByProjectIds — tag filter");
+
+// Add tag-tagged fixtures so we can isolate tag matches without colliding
+// with the existing seven baseline rows. `_tag_` prefix so the assertions
+// below can search by name to confirm the right rows came back.
+const tA_tag_smoke    = makeTest(projA.id, { name: "_tag_ smoke",     tags: ["smoke"] });
+const tA_tag_critical = makeTest(projA.id, { name: "_tag_ critical",  tags: ["critical", "p0"] });
+const tA_tag_percent  = makeTest(projA.id, { name: "_tag_ percent",   tags: ["50%_off"] });
+const tA_tag_quoted   = makeTest(projA.id, { name: "_tag_ quoted",    tags: ['needs "review"'] });
+const tA_tag_under    = makeTest(projA.id, { name: "_tag_ under",     tags: ["a_b"] });
+const tA_tag_plain_a  = makeTest(projA.id, { name: "_tag_ plain a",   tags: ["aXb"] });   // would match "a_b" without escape
+const tA_tag_plain_b  = makeTest(projA.id, { name: "_tag_ plain b",   tags: ["50-off"] }); // would match "50%off" without escape
+
+for (const t of [tA_tag_smoke, tA_tag_critical, tA_tag_percent, tA_tag_quoted, tA_tag_under, tA_tag_plain_a, tA_tag_plain_b]) {
+  testRepo.create(t);
+}
+
+test("single tag filter matches rows tagged with that exact value", () => {
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: ["smoke"] });
+  // Only tA_tag_smoke carries the literal "smoke" tag.
+  assert.equal(r.meta.total, 1);
+  assert.equal(r.data[0].id, tA_tag_smoke.id);
+});
+
+test("multiple tags use OR semantics (any match wins)", () => {
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: ["smoke", "critical"] });
+  // Both tA_tag_smoke and tA_tag_critical should appear.
+  const ids = new Set(r.data.map(t => t.id));
+  assert.ok(ids.has(tA_tag_smoke.id),    "smoke tag row should be returned");
+  assert.ok(ids.has(tA_tag_critical.id), "critical tag row should be returned");
+  assert.equal(r.meta.total, 2);
+});
+
+test("empty tags array is treated as no filter (every row returned)", () => {
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: [] });
+  // Same total as the unfiltered baseline + the 7 tag fixtures = 14.
+  assert.equal(r.meta.total, 14);
+});
+
+test("`%` in a tag is escaped — does NOT match an unrelated literal value", () => {
+  // Without escape, the LIKE pattern `%"50%off"%` would also match the row
+  // whose tag is "50-off" (the `%` between "50" and "off" acts as a wildcard).
+  // With escape, only the exact "50%_off" value matches.
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: ["50%_off"] });
+  assert.equal(r.meta.total, 1, "should only match the literal 50%_off tag");
+  assert.equal(r.data[0].id, tA_tag_percent.id);
+});
+
+test("`_` in a tag is escaped — does NOT match an unrelated literal value", () => {
+  // Without escape, `%"a_b"%` would match the row whose tag is "aXb"
+  // (the `_` matches any single char). With escape, only "a_b" matches.
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: ["a_b"] });
+  assert.equal(r.meta.total, 1, "should only match the literal a_b tag");
+  assert.equal(r.data[0].id, tA_tag_under.id);
+});
+
+test('embedded `"` in a tag value matches the JSON-escaped form', () => {
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, { tags: ['needs "review"'] });
+  assert.equal(r.meta.total, 1);
+  assert.equal(r.data[0].id, tA_tag_quoted.id);
+});
+
+test("tag filter combines with reviewStatus correctly", () => {
+  // All tag fixtures are drafts by default, so this should match the same
+  // single row as the "smoke" filter alone — proving the AND between tags
+  // and reviewStatus, not just the tag clause in isolation.
+  const r = testRepo.getAllPagedByProjectIds(allIds, 1, 50, {
+    tags: ["smoke"], reviewStatus: "draft",
+  });
+  assert.equal(r.meta.total, 1);
+  assert.equal(r.data[0].id, tA_tag_smoke.id);
+});
+
+test("countReviewQueueByProjectIds applies the tag filter (tab counts stay in sync)", () => {
+  const counts = testRepo.countReviewQueueByProjectIds(allIds, { tags: ["smoke", "critical"] });
+  // Both fixtures are drafts → draft=2, total=2.
+  assert.equal(counts.draft, 2);
+  assert.equal(counts.total, 2);
+});
+
+test("getByProjectIdPaged also applies the escaped tag filter", () => {
+  const r = testRepo.getByProjectIdPaged(projA.id, 1, 50, { tags: ["50%_off"] });
+  assert.equal(r.meta.total, 1, "single-project tag filter must escape % too");
+  assert.equal(r.data[0].id, tA_tag_percent.id);
+});
+
 // ── Summary ─────────────────────────────────────────────────────────────────
 
 console.log(`\n  ${passed} passed, ${failed} failed`);

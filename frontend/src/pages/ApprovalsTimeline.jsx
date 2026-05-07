@@ -332,12 +332,12 @@ export default function ApprovalsTimeline() {
           <div className="at-summary__stat">
             <div className="at-summary__label">Health</div>
             <div className="at-summary__value">
-              <span className={
+              <span className={`at-summary__health-badge ${
                 summary.health === "good" ? "badge badge-green"
                 : summary.health === "warn" ? "badge badge-amber"
                 : summary.health === "bad"  ? "badge badge-red"
                 : "badge badge-gray"
-              } style={{ fontSize: "0.85rem", padding: "3px 10px" }}>
+              }`}>
                 {summary.health === "good" ? "Healthy"
                   : summary.health === "warn" ? "Caution"
                   : summary.health === "bad"  ? "Review needed"
@@ -393,7 +393,7 @@ export default function ApprovalsTimeline() {
                     {/* Avg score chip on auto batches — inline so it stays in
                         the toggle row next to the headline count. */}
                     {isAuto && batch.rows.some((r) => Number.isFinite(r?.meta?.score)) && (
-                      <span className="badge badge-gray" style={{ fontSize: "0.68rem" }}>
+                      <span className="badge badge-gray at-batch__avg-badge">
                         avg {avgScore(batch.rows)}
                       </span>
                     )}

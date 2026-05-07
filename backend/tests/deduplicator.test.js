@@ -673,6 +673,56 @@ test("factor IDs are stable — known IDs are present in output", () => {
   }
 });
 
+// ── 8. normalizeQualityToConfidence — 0–100 score → 0–1 confidence ──────────
+//
+// Single source of truth for the AUTO-003b auto-approval threshold check.
+// Previously the `/100` normalization was inlined in three places; these
+// tests lock down the contract so future refactors can't reintroduce drift.
+
+import { normalizeQualityToConfidence } from "../src/pipeline/deduplicator.js";
+
+console.log("\n📊  normalizeQualityToConfidence — quality (0–100) → confidence (0–1)");
+
+test("0 quality → 0 confidence", () => {
+  assert.equal(normalizeQualityToConfidence(0), 0);
+});
+
+test("50 quality → 0.5 confidence", () => {
+  assert.equal(normalizeQualityToConfidence(50), 0.5);
+});
+
+test("100 quality → 1 confidence", () => {
+  assert.equal(normalizeQualityToConfidence(100), 1);
+});
+
+test("values above 100 clamp to 1 (defensive — rubric should never exceed 100)", () => {
+  assert.equal(normalizeQualityToConfidence(150), 1);
+});
+
+test("negative values clamp to 0", () => {
+  assert.equal(normalizeQualityToConfidence(-25), 0);
+});
+
+test("NaN coerces to 0 (Number.isFinite guard)", () => {
+  assert.equal(normalizeQualityToConfidence(NaN), 0);
+});
+
+test("Infinity coerces to 0 (Number.isFinite guard)", () => {
+  assert.equal(normalizeQualityToConfidence(Infinity), 0);
+  assert.equal(normalizeQualityToConfidence(-Infinity), 0);
+});
+
+test("undefined coerces to 0", () => {
+  assert.equal(normalizeQualityToConfidence(undefined), 0);
+});
+
+test("output is always within [0, 1]", () => {
+  for (const q of [-5, 0, 1, 50, 99, 100, 101, 500, NaN, Infinity, undefined, null]) {
+    const c = normalizeQualityToConfidence(q);
+    assert.ok(c >= 0 && c <= 1, `confidence must be in [0,1] for input ${q}; got ${c}`);
+  }
+});
+
 // ── Results ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${"─".repeat(50)}`);

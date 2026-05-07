@@ -65,6 +65,53 @@ const INSERT_COLS = [
 const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
   VALUES (${INSERT_COLS.map(c => "@" + c).join(", ")})`;
 
+// ─── Tag filter helpers ──────────────────────────────────────────────────────
+
+/**
+ * Build a `tags LIKE` pattern for a single tag value, escaping the SQL LIKE
+ * metacharacters (`%`, `_`) and the escape char itself (`\`) so user-supplied
+ * tags like `"50%_off"` don't match unrelated rows. The returned pattern MUST
+ * be used with a `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+ *
+ * Tags are persisted as a JSON-encoded array, so the pattern wraps the value
+ * in `"…"` quotes to anchor on the JSON-string boundary; embedded `"` chars
+ * in the tag value are escaped with `\"` to match `JSON.stringify` output.
+ *
+ * @param {string} tag
+ * @returns {string} LIKE pattern
+ */
+function buildTagLikePattern(tag) {
+  // Two-stage encoding:
+  //   1. Mirror what `JSON.stringify` does to the tag value when it's
+  //      persisted into the `tags` TEXT column — `"` and `\` get
+  //      backslash-escaped, so a tag value `needs "review"` is stored
+  //      on disk as the bytes `needs \"review\"`.
+  //   2. Then escape SQL LIKE metacharacters (`%`, `_`) and the LIKE
+  //      escape char itself (`\`) so user-supplied tags like `"50%_off"`
+  //      don't match unrelated rows. The output MUST be used with a
+  //      `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+  //
+  // Order matters: stage 1 must run BEFORE stage 2's `\` escape, so the
+  // backslashes introduced by JSON-encoding get themselves escaped for
+  // the LIKE engine. Otherwise a JSON-stored `\"` in the row would only
+  // match a pattern of `\"` in the SQL, but ESCAPE='\\' would consume
+  // that backslash and leave just `"`, missing the row entirely.
+  const jsonEncoded = String(tag)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g,  '\\"');
+  const likeEscaped = jsonEncoded
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g,  "\\%")
+    .replace(/_/g,  "\\_");
+  return `%"${likeEscaped}"%`;
+}
+
+/** SQL fragment appended to every `tags LIKE ?` clause to honour the
+ *  backslash escapes produced by {@link buildTagLikePattern}. SQLite has no
+ *  default LIKE escape, so this is required for the metacharacter escapes
+ *  to take effect; PostgreSQL accepts the same syntax. */
+const TAG_LIKE_ESCAPE = " ESCAPE '\\'";
+
 // ─── Read queries ─────────────────────────────────────────────────────────────
 
 /**
@@ -204,6 +251,15 @@ export function countReviewQueueByProjectIds(projectIds, filters = {}) {
     const like = `%${filters.search}%`;
     params.push(like, like);
   }
+  // Tag filter — kept in lock-step with getAllPagedByProjectIds so the tab
+  // counts reflect the same row set the paginated list shows.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
+  }
 
   const where = conditions.join(" AND ");
   const row = db.prepare(`
@@ -303,6 +359,18 @@ export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}
     const like = `%${filters.search}%`;
     params.push(like, like);
   }
+  // Tag filter — OR semantics across the supplied list (industry standard for
+  // tag pickers: "show tests matching ANY of these tags"). Tags are stored as
+  // a JSON-encoded array string on the row, so a `tags LIKE '%"tag"%'` probe
+  // matches the canonical JSON.stringify output portably across SQLite and
+  // PostgreSQL adapters — no dialect-specific JSON functions required.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
+  }
 
   const where = conditions.join(" AND ");
   // Resolve sortBy to a fixed ORDER BY clause. The mapping is hardcoded
@@ -386,6 +454,13 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
     const like = `%${filters.search}%`;
     params.push(like, like);
+  }
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
   }
 
   const where = conditions.join(" AND ");
