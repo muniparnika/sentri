@@ -287,6 +287,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Health badge inside the summary callout — slightly larger than the
+   default .badge so it reads as the headline stat in its cell. */
+.at-summary__health-badge {
+  font-size: 0.85rem;
+  padding: 3px 10px;
+}
+
+/* Avg-score chip rendered inline on auto batches — smaller than .badge
+   defaults so it sits visually subordinate to the batch headline. */
+.at-batch__avg-badge {
+  font-size: 0.68rem;
+}
+
 /* ── Responsive: 600px ────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
   .at-summary {
