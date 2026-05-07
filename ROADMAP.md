@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `AUTO-003 + AUTO-003b` (auto-approval mechanism + trust contract) — promoted per `NEXT.md` rotation after `AUTO-017.3 + PROC-001 + PROC-003` shipped in PR #9 · **Blockers:** none remaining · **Remaining:** ~32 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-017.3 + PROC-001 + PROC-003 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard + sprint-promotion auto-prune); CAP-004 + MET-001 + PROC-002 ✅ PR #8 (self-healing dashboard + time-series metric primitive + sprint-tracker hand-off script); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8; DIF-015b Gap 2 ✅ PR #4.
+> **Current sprint:** `AUTO-002` (auto-approval mechanism + trust contract) — promoted per `NEXT.md` rotation after `AUTO-017.3 + PROC-001 + PROC-003` shipped in PR #9 · **Blockers:** none remaining · **Remaining:** ~32 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-017.3 + PROC-001 + PROC-003 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard + sprint-promotion auto-prune); CAP-004 + MET-001 + PROC-002 ✅ PR #8 (self-healing dashboard + time-series metric primitive + sprint-tracker hand-off script); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8; DIF-015b Gap 2 ✅ PR #4.
 
 ---
 
@@ -117,6 +117,8 @@ The following items have been verified complete against the codebase and are **n
 | PROC-001 | No-orphan-routes CI guard (`.github/workflows/no-orphan-routes.yml`) — fails PRs adding `router.<method>(…)` in `backend/src/routes/*.js` without touching `frontend/src/api.js` / pages / components; `[no-ui]` PR-title opt-out. Convention documented in REVIEW.md, AGENT.md, CONTRIBUTING.md, and the PR template. | PR #9 |
 | PROC-003 | Sprint promotion auto-prune — `scripts/promote-sprint-item.mjs` extended with three idempotent transforms (`appendCompletedWorkSummary`, `decrementRemainingCounts`, `pruneShippedRoadmapEntry`) that fold the manual REVIEW.md § Sprint Tracker Hand-off steps into the script. | PR #9 |
 | CAP-003 | Secret scanner gate on AI-generated Playwright tests. New `backend/src/pipeline/secretScanner.js` runs a `gitleaks`-style scan inside the validate stage (`backend/src/pipeline/testValidator.js`); built-in detectors (AWS access key IDs, JWTs, `Bearer` tokens) plus best-effort `.github/.gitleaks.toml` reuse. Matched tests are rejected, annotated with a redacted finding list (first/last 4 chars only — never plaintext), and the run is flagged via `run.secretScanBlocked = true` in `pipelineOrchestrator.js` so CI consumers can fail the build on regression. Positive + negative fixtures in `backend/tests/secret-scanner.test.js`, registered in `backend/tests/run-tests.js`. | PR #12                                                          |
+| AUTO-003 | Confidence scoring & auto-approval of low-risk tests + provenance / audit trail | PR #10 |
+| AUTO-003b (bundled) | Confidence scoring & auto-approval of low-risk tests + provenance / audit trail | PR #10 |
 
 ---
 
@@ -497,23 +499,6 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 ---
 
-### AUTO-003 — Confidence scoring and auto-approval of low-risk tests 🟢 Differentiator
-
-**Status:** 🔲 Planned | **Effort:** M | **Source:** Competitive Gap Analysis
-
-**Problem:** Every generated test requires manual approval (`reviewStatus: 'draft'`). For truly autonomous operation, the system should auto-approve tests above a confidence threshold. A quality score already exists in `deduplicator.js:226-272` but is never used for approval decisions.
-
-**Fix:** Expose the quality score as `tests.confidenceScore`. Add a per-project `autoApproveThreshold` setting (default: disabled). On generation, auto-approve tests above the threshold. Log auto-approvals in the activity trail. Add a "review auto-approved tests" filter in the Tests page.
-
-**Files to change:**
-- `backend/src/pipeline/deduplicator.js` — expose quality score as `confidenceScore`
-- `backend/src/pipeline/testPersistence.js` — auto-approve logic
-- `backend/src/routes/projects.js` — `autoApproveThreshold` project setting
-- `frontend/src/pages/Tests.jsx` — auto-approved filter badge
-
-**Dependencies:** None
-
----
 
 ### AUTO-003b — Auto-approval provenance & audit trail 🟢 Differentiator
 
@@ -905,11 +890,11 @@ ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approve
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 4 | 4 | 0 | 0 | — |
 | Differentiators | 22 | 16 | 0 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6) |
-| Autonomous Intelligence | 26 | 10 | 0 | 16 | AUTO-001/002/003/003b/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
+| Autonomous Intelligence | 26 | 12 | 0 | 14 | AUTO-001/002/003/003b/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
 | Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
 | Process automation | 3 | 3 | 0 | 0 | — |
 | Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
-| **Totals** | **83** | **51** | **0** | **32** | |
+| **Totals** | **83** | **53** | **0** | **30** | |
 
 **Total tracked items:** 83 across 9 categories — **51 complete** (61%), **0 in current PR**, **32 remaining**
 
