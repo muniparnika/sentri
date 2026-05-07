@@ -74,6 +74,13 @@ import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
  * @param {object} run - mutable run record
  * @param {object[]} snapshots - normalised snapshots (with synthetic .url for state mode)
  * @param {string} mode - "crawl" | "state"
+ * @param {object} [opts]
+ * @param {(snap: object) => string} [opts.fingerprintOf]
+ *   Forwarded to `diffCrawlSnapshots`. State mode supplies a function that
+ *   returns a pre-computed fingerprint so the composite `url#fp=<fp>` key
+ *   doesn't feed back into `fingerprintState`'s URL-derived computation
+ *   (which would make every state-mode re-crawl look "changed" — the
+ *   bug AUTO-002b's first round shipped with).
  * @returns {{
  *   noChanges: boolean,
  *   changedSet: Set<string>|null,
@@ -83,7 +90,7 @@ import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
  *    changedSet is the set of keys (URLs or composite keys) that changed; the
  *    caller decides whether to filter `snapshots[]` against it.
  */
-function runDiffAwareBaseline(project, run, snapshots, mode) {
+function runDiffAwareBaseline(project, run, snapshots, mode, opts = {}) {
   // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
   // project's CANONICAL (production) URL — not `project.url`, which the
   // AUTO-015 trigger routes overwrite with the deployment preview URL
@@ -108,7 +115,7 @@ function runDiffAwareBaseline(project, run, snapshots, mode) {
   }
 
   const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
-  const diff = diffCrawlSnapshots(existingBaselines, snapshots);
+  const diff = diffCrawlSnapshots(existingBaselines, snapshots, opts);
   run.changedPages = diff.changedPages;
   run.removedPages = diff.removedPages;
   emitRunEvent(run.id, "pages_changed", {
@@ -350,20 +357,31 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     throwIfAborted(signal);
 
     // AUTO-002b: diff-aware baseline for state mode.
-    // We synthesise a composite key per state (`originalUrl#fp=<fp>`) and
-    // pass adapted snapshots to the shared diff helper. The original
-    // snapshots aren't mutated — only the diff sees the composite key.
-    // This works because diffCrawlSnapshots keys snapshots by `.url` and
-    // only reads `.elements` via `buildPageFingerprint` (which is
-    // deterministic on shape, not URL).
+    //
+    // We synthesise a composite key per state (`originalUrl#fp=<fp>`) so
+    // distinct states at the same URL (login blank vs login with errors)
+    // track as separate baseline rows. But we must NOT let the diff
+    // helper re-derive fingerprints from the composite-keyed snapshots —
+    // `fingerprintState()` includes `snap.url` in its hash, so feeding
+    // it a `url#fp=<fp>` URL would produce a different fingerprint than
+    // the one originally computed (and stored as the suffix of the
+    // composite key). Every re-crawl would then look "changed".
+    //
+    // Instead, we extract the pre-computed fingerprint directly from the
+    // composite-key suffix and pass it through `fingerprintOf`. The
+    // baseline stores it; the next run's diff compares apples to apples.
     if (snapshots.length > 0) {
+      const fpMap = exploration.stateGraph?.snapshotsByFp;
       const stateKeyed = snapshots.map((snap) => {
-        const fp = exploration.stateGraph?.snapshotsByFp
-          ? [...exploration.stateGraph.snapshotsByFp.entries()].find(([, s]) => s === snap)?.[0]
-          : null;
-        return fp ? { ...snap, url: `${snap.url}#fp=${fp}` } : snap;
+        const fp = fpMap ? [...fpMap.entries()].find(([, s]) => s === snap)?.[0] : null;
+        return fp ? { ...snap, url: `${snap.url}#fp=${fp}`, _stateFp: fp } : snap;
       });
-      const stateDiff = runDiffAwareBaseline(project, run, stateKeyed, "state");
+      const stateDiff = runDiffAwareBaseline(project, run, stateKeyed, "state", {
+        // Pull the pre-computed fingerprint off the snapshot rather than
+        // recomputing — the composite-key URL would otherwise feed back
+        // into `fingerprintState` and falsely flip every state to changed.
+        fingerprintOf: (snap) => snap._stateFp || snap.url,
+      });
       if (stateDiff.noChanges) {
         // Short-circuit: nothing changed, skip generation entirely.
         snapshots = [];

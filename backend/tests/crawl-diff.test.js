@@ -93,43 +93,50 @@ assert.equal(allRemoved.unchangedPages.length, 0);
 // This is what makes the baseline comparison work across crawls.
 assert.equal(buildPageFingerprint(home), buildPageFingerprint({ ...home }), "fingerprint is deterministic");
 
-// ── Scenario 8: state-explorer composite-key baselines (AUTO-002b) ─────────
-// State mode keys baselines by `originalUrl#fp=<fingerprint>` so distinct
-// states at the same URL (login blank vs login with errors) are tracked
-// as separate rows. The diff function itself doesn't know about composite
-// keys — it just keys on `.url`, so this scenario verifies that whatever
-// caller-side key strategy is used, the diff logic respects it.
-const loginBlank = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }] };
-const loginErr = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }, { tag: "div", text: "Invalid password" }] };
+// ── Scenario 8: fingerprintOf override (AUTO-002b state-mode integration) ─────
+// State mode (in `backend/src/crawler.js`) keys baselines by a composite
+// `originalUrl#fp=<fingerprint>` so distinct states at the same URL (login
+// blank vs login with errors) track as separate rows. To prevent the
+// composite URL from feeding back into `fingerprintState()`'s URL-derived
+// hash (which would falsely flip every re-crawl to "changed"), the caller
+// passes a `fingerprintOf` override that pulls a pre-computed fingerprint
+// off the snapshot. This scenario verifies the override path; the full
+// composite-key integration is exercised in `crawler.js` directly.
 
-// Compose state-mode keys: same URL, different fingerprints → two distinct rows.
-const blankKeyed = { ...loginBlank, url: `${loginBlank.url}#fp=${buildPageFingerprint(loginBlank)}` };
-const errKeyed = { ...loginErr, url: `${loginErr.url}#fp=${buildPageFingerprint(loginErr)}` };
+// Snapshots carry a pre-computed fingerprint via `_stateFp`. The override
+// trusts the caller — it does NOT re-hash from `snap.elements`.
+const stateA = { url: "key-a", _stateFp: "fp-a", elements: [{ tag: "input" }] };
+const stateB = { url: "key-b", _stateFp: "fp-b", elements: [{ tag: "input" }, { tag: "div" }] };
+const fpOverride = { fingerprintOf: (s) => s._stateFp };
 
-// First crawl — both states are added.
-const stateFirstDiff = diffCrawlSnapshots({}, [blankKeyed, errKeyed]);
-assert.equal(stateFirstDiff.addedPages.length, 2, "state mode: both states added on first crawl");
-assert.notEqual(blankKeyed.url, errKeyed.url, "composite keys differentiate states at the same base URL");
+// First crawl — both states are added (no baseline).
+const overrideFirst = diffCrawlSnapshots({}, [stateA, stateB], fpOverride);
+assert.equal(overrideFirst.addedPages.length, 2, "fingerprintOf: both states added on first crawl");
+assert.equal(overrideFirst.fingerprints["key-a"], "fp-a", "fingerprintOf: caller-supplied fingerprint flows into result");
+assert.equal(overrideFirst.fingerprints["key-b"], "fp-b");
 
-// Second crawl — same states, no change.
-const stateBaseline = {
-  [blankKeyed.url]: { fingerprint: buildPageFingerprint(loginBlank) },
-  [errKeyed.url]: { fingerprint: buildPageFingerprint(loginErr) },
+// Second crawl with the same pre-computed fingerprints — no change.
+// This is the critical regression case: without the override, the default
+// `buildPageFingerprint(stateA)` would re-hash from `stateA.url` and
+// produce a different fingerprint than `"fp-a"`, so the diff would
+// (incorrectly) classify the URL as "changed".
+const overrideBaseline = {
+  "key-a": { fingerprint: "fp-a" },
+  "key-b": { fingerprint: "fp-b" },
 };
-const stateNoChange = diffCrawlSnapshots(stateBaseline, [blankKeyed, errKeyed]);
-assert.deepEqual(stateNoChange.changedPages, [], "state mode: no-change crawl returns empty changedPages");
-assert.equal(stateNoChange.unchangedPages.length, 2);
+const overrideNoChange = diffCrawlSnapshots(overrideBaseline, [stateA, stateB], fpOverride);
+assert.deepEqual(overrideNoChange.changedPages, [], "fingerprintOf no-change: changedPages is empty");
+assert.equal(overrideNoChange.unchangedPages.length, 2, "fingerprintOf no-change: both states unchanged");
 
-// Third crawl — only the error state changed (e.g. error message changed).
-const loginErr2 = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }, { tag: "div", text: "Account locked" }] };
-const errKeyed2 = { ...loginErr2, url: `${loginErr2.url}#fp=${buildPageFingerprint(loginErr2)}` };
-// Note: errKeyed2 has a NEW composite key (different fingerprint) — so it
-// looks like an *added* state plus a *removed* state to the diff. This is
-// the correct semantics for state mode: a state with new content is a
-// new state, and the old fingerprint becomes "removed".
-const stateDelta = diffCrawlSnapshots(stateBaseline, [blankKeyed, errKeyed2]);
-assert.ok(stateDelta.addedPages.includes(errKeyed2.url), "state mode: state with new content → added");
-assert.ok(stateDelta.removedPages.includes(errKeyed.url), "state mode: state with old content → removed");
-assert.ok(stateDelta.unchangedPages.includes(blankKeyed.url), "state mode: untouched state stays unchanged");
+// Third crawl — stateB's pre-computed fingerprint changes (state mutated).
+const stateBmutated = { url: "key-b", _stateFp: "fp-b-v2", elements: [{ tag: "input" }, { tag: "span" }] };
+const overrideDelta = diffCrawlSnapshots(overrideBaseline, [stateA, stateBmutated], fpOverride);
+assert.deepEqual(overrideDelta.changedOnlyPages, ["key-b"], "fingerprintOf: only the changed state is in changedOnly");
+assert.deepEqual(overrideDelta.unchangedPages, ["key-a"], "fingerprintOf: untouched state stays unchanged");
+
+// Default behaviour (no override) is still URL-derived — link-crawl mode
+// is unaffected by the new opts parameter.
+const defaultDiff = diffCrawlSnapshots(samePrev, sameSnapshots);
+assert.deepEqual(defaultDiff.changedPages, [], "default fingerprint path: no regression for link-crawl mode");
 
 console.log("crawl-diff.test.js passed");

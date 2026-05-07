@@ -29,18 +29,28 @@ export function buildPageFingerprint(snapshot) {
  *   current URL is classified as added.
  * @param {Array<{url: string}>|null|undefined} currentSnapshots
  *   Raw snapshots from the crawl. `null` / `undefined` → no URLs.
+ * @param {object} [opts]
+ * @param {(snap: object) => string} [opts.fingerprintOf]
+ *   AUTO-002b: optional override for fingerprint computation. State-mode
+ *   callers pass a function that returns a pre-computed fingerprint
+ *   keyed off the original snapshot identity, because the default
+ *   `buildPageFingerprint` recomputes from `snap.url` — which would
+ *   embed the composite `url#fp=<fp>` key in the new fingerprint and
+ *   make every state-mode re-crawl look "changed". Link-crawl callers
+ *   omit this and get the default URL-derived fingerprint.
  * @returns {{changedPages: string[], addedPages: string[], changedOnlyPages: string[], removedPages: string[], unchangedPages: string[], fingerprints: Record<string,string>}}
  */
-export function diffCrawlSnapshots(previousByUrl, currentSnapshots) {
+export function diffCrawlSnapshots(previousByUrl, currentSnapshots, opts = {}) {
   // Accept null/undefined for both inputs. `previousByUrl` is read with
   // bracket-access below, which throws on null; the `|| {}` normalisation
   // keeps the function contract documented (and matches the existing
   // `Object.keys(previousByUrl || {})` on the removed-pages branch).
   const prev = previousByUrl || {};
+  const fpOf = typeof opts.fingerprintOf === "function" ? opts.fingerprintOf : buildPageFingerprint;
 
   const currentByUrl = new Map();
   for (const snapshot of currentSnapshots || []) {
-    currentByUrl.set(snapshot.url, buildPageFingerprint(snapshot));
+    currentByUrl.set(snapshot.url, fpOf(snapshot));
   }
 
   const added = [];
