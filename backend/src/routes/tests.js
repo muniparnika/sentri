@@ -673,7 +673,7 @@ router.patch("/projects/:id/tests/:testId/reject", requireRole("qa_lead"), (req,
   const reviewedAt = new Date().toISOString();
   testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt });
   logActivity({ ...actor(req),
-    type: "test.reject", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_REJECT, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test rejected — "${test.name}"`,
   });
@@ -794,11 +794,22 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
   // the single-test handlers use (services/approvalService.js) so all four
   // approve/restore paths stay byte-identical — the previous bug where
   // single-restore drifted from bulk-restore is impossible to recreate now.
+  //
+  // The merge into `updated` after each loop is deliberate: `bulkUpdateReviewStatus`
+  // returns rows snapshotted BEFORE the provenance writes, so without this
+  // the response would ship stale `approvalSource: null` / `approvedBy: null`
+  // values to the client even though the DB has the correct provenance.
   if (updated.length && action === "approve") {
     const provenance = humanApproval(actor(req));
-    for (const t of updated) testRepo.update(t.id, provenance);
+    for (let i = 0; i < updated.length; i++) {
+      testRepo.update(updated[i].id, provenance);
+      updated[i] = { ...updated[i], ...provenance };
+    }
   } else if (updated.length && action === "restore") {
-    for (const t of updated) testRepo.update(t.id, PROVENANCE_CLEAR);
+    for (let i = 0; i < updated.length; i++) {
+      testRepo.update(updated[i].id, PROVENANCE_CLEAR);
+      updated[i] = { ...updated[i], ...PROVENANCE_CLEAR };
+    }
   }
 
   if (updated.length) {

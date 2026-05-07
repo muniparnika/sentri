@@ -26,18 +26,18 @@ If the user asks for… read only this section:
 | "Run / write all happy paths" | [Golden E2E Happy Path](#-golden-e2e-happy-path-must-pass-before-release) | 241–342 |
 | "Write Playwright tests for the deployed app" | [Canonical UI test shape](#canonical-ui-test-shape--emit-this-by-default) + [Tests Page §3](#-tests-page) | 95–109, 430–467 |
 | "Write an API test" | [Tests Page §4](#-tests-page) + [API Test Imports](#-api-test-imports-openapi-har-plain-english-api) | 430–467, 1108–1124 |
-| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 578–600 |
-| "Record a test" | [Recorder](#-recorder) | 470–510 |
-| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 514–536 |
-| "Review / approve / reject drafts" | [Review Queue](#-review-queue) | 540–574 |
-| "Auto-approve tests / revoke / calibration" | [Auto-Approval](#-auto-approval-auto-003b) | 578–640 |
-| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 604–651 |
-| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 655–685 |
-| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 746–762 |
+| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 650–673 |
+| "Record a test" | [Recorder](#-recorder) | 474–515 |
+| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 518–541 |
+| "Review / approve / reject drafts" | [Review Queue](#-review-queue) | 544–579 |
+| "Auto-approve tests / revoke / calibration" | [Auto-Approval](#-auto-approval-auto-003b) | 582–647 |
+| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 676–724 |
+| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 727–758 |
+| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 818–835 |
 | "Verify permissions" | [`permissions.json`](./backend/src/middleware/permissions.json) **(canonical, read this, not prose)** | — |
-| "Verify security / authorization" | [Security](#-security) | 925–952 |
-| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 1032–1076 |
-| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1230–1263 |
+| "Verify security / authorization" | [Security](#-security) | 997–1025 |
+| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 1104–1149 |
+| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1306–1339 |
 
 ### Section index (line ranges, for `sed -n 'A,Bp'` / partial reads)
 
@@ -47,36 +47,36 @@ authentication:      { lines: 356-381 }
 workspaces:          { lines: 384-401 }
 projects:            { lines: 404-427 }
 tests-page:          { lines: 430-467 }
-recorder:            { lines: 470-510 }
-runs:                { lines: 514-536 }
-review-queue:        { lines: 540-574 }     # NEW (PR #7)
-auto-approval:       { lines: 578-640 }     # NEW (AUTO-003b)
-ai-fix:              { lines: 578-600 }
-test-code-editing:   { lines: 604-651 }
-automation:          { lines: 655-685 }
-quality-gates:       { lines: 689-743 }     # NEW (AUTO-012)
-visual-testing:      { lines: 746-762 }
-dashboard:           { lines: 766-784 }
-ai-chat:             { lines: 788-817 }
-settings:            { lines: 821-838 }
-account-gdpr:        { lines: 842-851 }
-email-verification:  { lines: 855-862 }
-recycle-bin:         { lines: 866-875 }
-audit-log:           { lines: 879-887 }
-notifications:       { lines: 891-921 }
-security:            { lines: 925-952 }
-reports-pdf:         { lines: 956-971 }
-system-diagnostics:  { lines: 975-984 }
-new-project:         { lines: 988-999 }
-runs-list:           { lines: 1003-1013 }
-project-detail:      { lines: 1017-1028 }
-bulk-actions:        { lines: 1032-1076 }
-modals:              { lines: 1080-1104 }
-api-test-imports:    { lines: 1108-1123 }
-onboarding:          { lines: 1127-1136 }
-demo-mode:           { lines: 1140-1151 }
-settings-data-tab:   { lines: 1155-1169 }
-workspace-switcher:  { lines: 1173-1181 }
+recorder:            { lines: 474-515 }
+runs:                { lines: 518-541 }
+review-queue:        { lines: 544-579 }     # NEW (PR #7)
+auto-approval:       { lines: 582-647 }     # NEW (AUTO-003b)
+ai-fix:              { lines: 650-673 }
+test-code-editing:   { lines: 676-724 }
+automation:          { lines: 727-758 }
+quality-gates:       { lines: 761-815 }     # NEW (AUTO-012)
+visual-testing:      { lines: 818-835 }
+dashboard:           { lines: 838-856 }
+ai-chat:             { lines: 860-889 }
+settings:            { lines: 893-910 }
+account-gdpr:        { lines: 914-924 }
+email-verification:  { lines: 927-934 }
+recycle-bin:         { lines: 938-948 }
+audit-log:           { lines: 951-959 }
+notifications:       { lines: 963-994 }
+security:            { lines: 997-1025 }
+reports-pdf:         { lines: 1028-1043 }
+system-diagnostics:  { lines: 1047-1056 }
+new-project:         { lines: 1060-1071 }
+runs-list:           { lines: 1075-1086 }
+project-detail:      { lines: 1089-1101 }
+bulk-actions:        { lines: 1104-1149 }
+modals:              { lines: 1152-1180 }
+api-test-imports:    { lines: 1184-1199 }
+onboarding:          { lines: 1203-1212 }
+demo-mode:           { lines: 1216-1227 }
+settings-data-tab:   { lines: 1231-1245 }
+workspace-switcher:  { lines: 1249-1257 }
 
 # Meta sections
 golden-happy-path:       { lines: 241-342 }

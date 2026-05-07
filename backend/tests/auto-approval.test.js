@@ -30,16 +30,18 @@ function makeProject(overrides = {}) {
   return project;
 }
 
-// `confidenceScore` is on the same 0–100 scale as the deduplicator's
-// `scoreTestWithFactors().score` output (`backend/src/pipeline/deduplicator.js`),
-// which is what flows into `tests.confidenceScore` in production. Tests that
-// hard-coded 0–1 fractions (0.4, 0.9, 0.95) silently stayed below the
-// threshold-comparison codepath because the real pipeline never produces
-// values < 1 — the auto-approval branch was effectively untested. Use 0–100
-// values here and matching thresholds so the comparison exercises the same
-// scale the production pipeline uses.
+// `confidenceScore` is on the 0–1 scale in production: the deduplicator
+// normalises `scoreTestWithFactors().score` (0–100) via `quality / 100` at
+// `backend/src/pipeline/deduplicator.js:334`, and the route validates
+// `autoApproveThreshold` to `(0, 1]` at `backend/src/routes/projects.js:162`.
+// Use the production scale here so the test would catch a regression that
+// removes the `/ 100` normalisation — a 0–100 score against a 0–1 threshold
+// would auto-approve every test, and these assertions exist to lock that
+// invariant. `_quality` is kept on its native 0–100 scale (matches what
+// `scoreTest()` actually produces) so the fallback path in
+// `testPersistence.js:78` is also exercised correctly.
 function makeTest(confidenceScore) {
-  return { name: "Generated", steps: ["step"], confidenceScore, _quality: confidenceScore };
+  return { name: "Generated", steps: ["step"], confidenceScore, _quality: confidenceScore * 100 };
 }
 
 async function main() {
@@ -48,7 +50,7 @@ async function main() {
   {
     const run = makeRun();
     const project = makeProject({ autoApproveThreshold: null });
-    const ids = persistGeneratedTests([makeTest(95)], project, run);
+    const ids = persistGeneratedTests([makeTest(0.95)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "draft");
     assert.equal(saved.approvalSource, null);
@@ -56,20 +58,20 @@ async function main() {
 
   {
     const run = makeRun();
-    const project = makeProject({ autoApproveThreshold: 80 });
-    const ids = persistGeneratedTests([makeTest(40)], project, run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.4)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "draft");
   }
 
   {
     const run = makeRun();
-    const project = makeProject({ autoApproveThreshold: 80 });
-    const ids = persistGeneratedTests([makeTest(90)], project, run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.9)], project, run);
     const saved = testRepo.getById(ids[0]);
     assert.equal(saved.reviewStatus, "approved");
     assert.equal(saved.approvalSource, "auto");
-    assert.equal(saved.approvalThreshold, 80);
+    assert.equal(saved.approvalThreshold, 0.8);
     assert.equal(saved.approvedBy, "auto-approver");
     const activities = activityRepo.getFiltered({ type: "test.auto_approve", projectId: project.id });
     assert.ok(activities.some((a) => a.testId === ids[0] && a.userName === "auto-approver"));
@@ -82,8 +84,8 @@ async function main() {
   // a sibling integration test once the supertest harness is wired in.
   {
     const run = makeRun();
-    const project = makeProject({ autoApproveThreshold: 80 });
-    const ids = persistGeneratedTests([makeTest(95)], project, run);
+    const project = makeProject({ autoApproveThreshold: 0.8 });
+    const ids = persistGeneratedTests([makeTest(0.95)], project, run);
     const before = testRepo.getById(ids[0]);
     assert.equal(before.reviewStatus, "approved");
     assert.equal(before.approvalSource, "auto");
@@ -122,7 +124,7 @@ async function main() {
   {
     const run = makeRun();
     const project = makeProject({ autoApproveThreshold: null });
-    const ids = persistGeneratedTests([makeTest(50)], project, run);
+    const ids = persistGeneratedTests([makeTest(0.5)], project, run);
     // Simulate a human approval (mirrors PATCH /projects/:id/tests/:testId/approve).
     testRepo.update(ids[0], { reviewStatus: "approved", reviewedAt: new Date().toISOString() });
     testRepo.update(ids[0], {

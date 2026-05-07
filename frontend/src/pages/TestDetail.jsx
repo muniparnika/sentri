@@ -137,6 +137,13 @@ export default function TestDetail() {
     api.revokeApproval(testId).then(() => {
       invalidateAutoApprovalsCache();
       return load();
+    }).catch(() => {
+      // Refetch on failure so the UI shows the real server-side state
+      // (e.g. another user may have revoked first → 400 "only approved
+      // tests can be revoked"). Without this, the armed state clears but
+      // the test data isn't refreshed, leaving the user thinking the
+      // revoke succeeded when it didn't.
+      load();
     });
   }
 
