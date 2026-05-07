@@ -295,13 +295,10 @@ function verifyWebhookSignature(provider, rawBody, signatureHeader) {
  * (b) authenticated the trigger token via requireTrigger, and (c) validated
  * `previewUrl` via SSRF guard.
  *
- * TODO(AUTO-015b): emit a "deployment-run" marker on the run record (or via
- * an activity-log type like `crawl.start.deployment`) so the frontend can
- * render the "Last deployment run" badge on the project header
- * (NEXT.md:69 acceptance criterion). Today the run row carries no signal
- * distinguishing webhook-launched crawls from manually-triggered ones, so
- * the badge cannot be rendered without a backend change. Filed for
- * follow-up; the AUTO-015 backend integration itself is functional.
+ * AUTO-015b: emits a dedicated `crawl.start.deployment` activity row (see
+ * below) alongside the standard `crawl.start`, so the "Last deployment run"
+ * badge on the project header can distinguish webhook-launched crawls from
+ * manually-triggered ones via the activity log without a schema change.
  */
 async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dialsConfig }) {
   // AUTO-002 / AUTO-015: derive crawl options from optional dialsConfig in the
@@ -342,6 +339,13 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dia
 
   if (tokenRow) webhookTokenRepo.touch(tokenRow.id);
 
+  // AUTO-015 / AUTO-015b: log the standard `crawl.start` so dashboard
+  // counters treat this like any other crawl, PLUS a dedicated
+  // `crawl.start.deployment` marker so the "Last deployment run" badge
+  // on the project header (NEXT.md:69) can distinguish webhook-launched
+  // runs from manually-triggered ones without a schema change. The
+  // `meta` payload carries the provider + preview URL + runId for the
+  // badge query in `GET /projects/:id/last-deployment-run`.
   logActivity({
     type: "crawl.start",
     projectId: project.id,
@@ -349,6 +353,15 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dia
     workspaceId: project.workspaceId,
     detail: `${provider} deployment webhook — crawl ${previewUrl}`,
     status: "running",
+  });
+  logActivity({
+    type: "crawl.start.deployment",
+    projectId: project.id,
+    projectName: project.name,
+    workspaceId: project.workspaceId,
+    detail: `${provider} deployment — ${previewUrl}`,
+    status: "running",
+    meta: { provider, previewUrl, runId },
   });
 
   runWithAbort(runId, run,
