@@ -787,30 +787,24 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
 
   const statusMap = { approve: "approved", reject: "rejected", restore: "draft" };
   const reviewedAt = action === "restore" ? null : new Date().toISOString();
-  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
-
   // AUTO-003b: bulk approve must populate provenance, and bulk restore must
   // clear it. Reuse the same `humanApproval()` / `PROVENANCE_CLEAR` shapes
   // the single-test handlers use (services/approvalService.js) so all four
-  // approve/restore paths stay byte-identical — the previous bug where
-  // single-restore drifted from bulk-restore is impossible to recreate now.
+  // approve/restore paths stay byte-identical.
   //
-  // The merge into `updated` after each loop is deliberate: `bulkUpdateReviewStatus`
-  // returns rows snapshotted BEFORE the provenance writes, so without this
-  // the response would ship stale `approvalSource: null` / `approvedBy: null`
-  // values to the client even though the DB has the correct provenance.
-  if (updated.length && action === "approve") {
-    const provenance = humanApproval(actor(req));
-    for (let i = 0; i < updated.length; i++) {
-      testRepo.update(updated[i].id, provenance);
-      updated[i] = { ...updated[i], ...provenance };
-    }
-  } else if (updated.length && action === "restore") {
-    for (let i = 0; i < updated.length; i++) {
-      testRepo.update(updated[i].id, PROVENANCE_CLEAR);
-      updated[i] = { ...updated[i], ...PROVENANCE_CLEAR };
-    }
-  }
+  // Provenance is passed through `bulkUpdateReviewStatus` so it lands in the
+  // SAME UPDATE statement as `reviewStatus`/`reviewedAt`, inside the same
+  // transaction. A two-phase pattern (status update, then per-row provenance
+  // writes) could leave tests approved with null provenance if the request
+  // was aborted between phases, miscounting them as human-approved on the
+  // approval-stats endpoint. The returned rows are re-read after the UPDATE
+  // so the response reflects the persisted provenance.
+  const extraFields = action === "approve"
+    ? humanApproval(actor(req))
+    : action === "restore"
+      ? PROVENANCE_CLEAR
+      : {};
+  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);
 
   if (updated.length) {
     for (const test of updated) {

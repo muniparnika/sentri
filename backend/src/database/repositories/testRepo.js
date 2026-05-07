@@ -520,21 +520,46 @@ export function hardDeleteByProjectId(projectId) {
 /**
  * Bulk update review status for a list of test IDs within a project.
  * Only applies to non-deleted tests.
+ *
+ * AUTO-003b: optional `extraFields` are applied in the SAME UPDATE statement
+ * as `reviewStatus` / `reviewedAt`, inside the same transaction. This keeps
+ * `reviewStatus` and provenance columns (`approvalSource`, `approvedBy`,
+ * `approvedAt`, `approvalThreshold`) atomic — the previous two-phase pattern
+ * (bulk status update, then per-row provenance writes) could leave tests
+ * approved with null provenance if the request was aborted between phases,
+ * which would miscount as human-approved on the approval-stats endpoint.
+ *
+ * `extraFields` keys are filtered through `VALID_COLS` so caller-supplied
+ * keys can never inject column names. Values are bound via parameters.
+ *
  * @param {string[]}    testIds
  * @param {string}      projectId
  * @param {string}      reviewStatus
  * @param {string|null} reviewedAt
- * @returns {Object[]} Updated test objects.
+ * @param {Object}      [extraFields]  - Additional column→value pairs to set
+ *                                       in the same UPDATE (e.g. provenance).
+ * @returns {Object[]} Updated test objects (re-read after the UPDATE so the
+ *                     response reflects all fields, not just reviewStatus).
  */
-export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt) {
+export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt, extraFields = {}) {
   const db = getDatabase();
   const updated = [];
-  const stmt = db.prepare(
-    "UPDATE tests SET reviewStatus = ?, reviewedAt = ? WHERE id = ? AND projectId = ? AND deletedAt IS NULL"
-  );
+
+  // Filter extraFields to known columns + bake them into the UPDATE so the
+  // whole write is a single atomic statement per test. Using SET fragments
+  // built from the validated key list (not raw caller keys) keeps this safe
+  // from SQL injection — only whitelisted column names ever land in the SQL.
+  const row = testToRow(extraFields);
+  const extraEntries = Object.entries(row).filter(([k]) => VALID_COLS.has(k) && k !== "id");
+  const extraSets = extraEntries.map(([k]) => `${k} = ?`).join(", ");
+  const sql = `UPDATE tests SET reviewStatus = ?, reviewedAt = ?${extraSets ? ", " + extraSets : ""}`
+    + " WHERE id = ? AND projectId = ? AND deletedAt IS NULL";
+  const stmt = db.prepare(sql);
+  const extraValues = extraEntries.map(([, v]) => v);
+
   const txn = db.transaction(() => {
     for (const tid of testIds) {
-      const info = stmt.run(reviewStatus, reviewedAt, tid, projectId);
+      const info = stmt.run(reviewStatus, reviewedAt, ...extraValues, tid, projectId);
       if (info.changes > 0) {
         const test = getById(tid);
         if (test) updated.push(test);
