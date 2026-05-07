@@ -17,6 +17,7 @@
  */
 
 import { Router } from "express";
+import crypto from "node:crypto";
 import * as runRepo from "../database/repositories/runRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as webhookTokenRepo from "../database/repositories/webhookTokenRepo.js";
@@ -25,6 +26,7 @@ import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
 import { resolveDialsConfig } from "../testDials.js";
 import { runTests } from "../testRunner.js";
+import { crawlAndGenerateTests } from "../crawler.js";
 import { classifyError } from "../utils/errorClassifier.js";
 import { expensiveOpLimiter, signRunArtifacts } from "../middleware/appSetup.js";
 import { requireTrigger } from "../middleware/authenticate.js";
@@ -135,14 +137,13 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
     });
   }
 
-  // ── 5. Guard: approved tests must exist ──────────────────────────────
+  const triggerCrawl = req.body?.triggerCrawl === true;
+  const previewUrl = typeof req.body?.previewUrl === "string" ? req.body.previewUrl : null;
   const allTests = testRepo.getByProjectId(project.id);
   const tests = allTests.filter((t) => t.reviewStatus === "approved");
-  if (!allTests.length) {
-    return res.status(400).json({ error: "No tests found — crawl first." });
-  }
-  if (!tests.length) {
-    return res.status(400).json({ error: "No approved tests — review generated tests before triggering." });
+  if (!triggerCrawl) {
+    if (!allTests.length) return res.status(400).json({ error: "No tests found — crawl first." });
+    if (!tests.length) return res.status(400).json({ error: "No approved tests — review generated tests before triggering." });
   }
 
   // ── 6. Create and start the run ──────────────────────────────────────
@@ -150,16 +151,16 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   const run = {
     id: runId,
     projectId: project.id,
-    type: "test_run",
+    type: triggerCrawl ? "crawl" : "test_run",
     status: "running",
     startedAt: new Date().toISOString(),
     logs: [],
     results: [],
     passed: 0,
     failed: 0,
-    total: tests.length,
+    total: triggerCrawl ? 0 : tests.length,
     parallelWorkers,
-    testQueue: tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
+    testQueue: triggerCrawl ? [] : tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
     workspaceId: project.workspaceId || null,
   };
   runRepo.create(run);
@@ -177,7 +178,9 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   });
 
   runWithAbort(runId, run,
-    (signal) => runTests(project, tests, run, { parallelWorkers, signal }),
+    (signal) => triggerCrawl
+      ? crawlAndGenerateTests({ ...project, url: previewUrl || project.url }, run, { signal })
+      : runTests(project, tests, run, { parallelWorkers, signal }),
     {
       onSuccess: () => {
         logActivity({
@@ -228,6 +231,29 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   const statusUrl = `${proto}://${host}/api/v1/projects/${project.id}/trigger/runs/${runId}`;
 
   res.status(202).json({ runId, statusUrl });
+});
+
+function verifyWebhookSignature(provider, body, signatureHeader) {
+  const secret = provider === "vercel" ? process.env.VERCEL_WEBHOOK_SECRET : process.env.NETLIFY_WEBHOOK_SECRET;
+  if (!secret) return false;
+  const payload = JSON.stringify(body || {});
+  const algo = provider === "vercel" ? "sha1" : "sha256";
+  const expected = crypto.createHmac(algo, secret).update(payload).digest("hex");
+  return signatureHeader === expected || signatureHeader === `${algo}=${expected}`;
+}
+
+router.post("/projects/:id/trigger/vercel", expensiveOpLimiter, async (req, res) => {
+  const sig = req.get("X-Vercel-Signature");
+  if (!verifyWebhookSignature("vercel", req.body, sig)) return res.status(401).json({ error: "invalid signature" });
+  const deploymentUrl = req.body?.deployment?.url;
+  res.json({ ok: true, provider: "vercel", previewUrl: deploymentUrl ? `https://${deploymentUrl.replace(/^https?:\/\//, "")}` : null });
+});
+
+router.post("/projects/:id/trigger/netlify", expensiveOpLimiter, async (req, res) => {
+  const sig = req.get("X-Netlify-Token");
+  if (!verifyWebhookSignature("netlify", req.body, sig)) return res.status(401).json({ error: "invalid signature" });
+  const deploymentUrl = req.body?.deploy_ssl_url || req.body?.deploy_url || null;
+  res.json({ ok: true, provider: "netlify", previewUrl: deploymentUrl });
 });
 
 /**

@@ -43,6 +43,8 @@ import { setStep } from "./utils/pipelineState.js";
 import { classifyError } from "./utils/errorClassifier.js";
 import { structuredLog } from "./utils/logFormatter.js";
 import * as runRepo from "./database/repositories/runRepo.js";
+import * as crawlBaselineRepo from "./database/repositories/crawlBaselineRepo.js";
+import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
 
 /**
  * setStep is imported from utils/pipelineState.js — shared with pipelineOrchestrator.js.
@@ -288,6 +290,21 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     snapshots = crawlResult.snapshots;
     snapshotsByUrl = crawlResult.snapshotsByUrl;
     apiEndpoints = crawlResult.apiEndpoints || [];
+    const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
+    const diff = diffCrawlSnapshots(existingBaselines, snapshots);
+    run.changedPages = diff.changedPages;
+    run.removedPages = diff.removedPages;
+    crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
+    emitRunEvent(run.id, "pages_changed", {
+      changedPages: diff.changedPages,
+      removedPages: diff.removedPages,
+      unchangedPages: diff.unchangedPages,
+    });
+    if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
+      log(run, "🟰 No page changes detected against the previous crawl baseline.");
+    } else {
+      log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
+    }
 
     // ── Early failure: unreachable target ────────────────────────────────
     // If the crawl produced zero pages AND every navigation attempt failed
