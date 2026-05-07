@@ -37,10 +37,10 @@ function ensureStrategyVersionColumn(db) {
  * workspaces. SQLite handles arbitrary OR depth, but chunking keeps both
  * adapters on the same execution path.
  *
- * @param {import("better-sqlite3").Database} db
+ * @param {Object} db — better-sqlite3 Database handle
  * @param {string[]} testIds
- * @param {(clauses: string, params: string[]) => any} sqlFn — invoked per chunk; return value collected into the result array.
- * @returns {any[]} per-chunk results in input order
+ * @param {Function} sqlFn — `(clauses, params) => any` invoked per chunk; return value collected into the result array.
+ * @returns {Array} per-chunk results in input order
  */
 const HEALING_TESTID_CHUNK = 100;
 function chunkedTestIdQuery(db, testIds, sqlFn) {
