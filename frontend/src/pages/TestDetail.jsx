@@ -8,7 +8,7 @@ import {
   Link2, Tag, Clipboard, Wand2, MoreHorizontal,
 } from "lucide-react";
 import { api } from "../api.js";
-import { queryClient, testQueryKeys } from "../queryClient.js";
+import { queryClient, testQueryKeys, invalidateAutoApprovalsCache } from "../queryClient.js";
 import { useTestDetailQuery } from "../hooks/queries/useTestDetailQuery.js";
 const DiffView    = lazy(() => import("../components/ai/DiffView.jsx"));
 const AiFixPanel  = lazy(() => import("../components/ai/AiFixPanel.jsx"));
@@ -131,7 +131,13 @@ export default function TestDetail() {
     }
     clearTimeout(revokeArmTimerRef.current);
     setRevokeArmed(false);
-    api.revokeApproval(testId).then(load);
+    // Invalidate the shared auto-approvals cache after the revoke lands so
+    // the sidebar badge + ReviewQueue tray refresh on next render rather
+    // than waiting for the 60s background tick.
+    api.revokeApproval(testId).then(() => {
+      invalidateAutoApprovalsCache();
+      return load();
+    });
   }
 
   useEffect(() => {

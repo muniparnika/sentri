@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
@@ -8,7 +8,7 @@ import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
-import { ACTIVITY_TYPES } from "../../../../shared/activityTypes.js";
+import useAutoApprovalsQuery from "../../hooks/queries/useAutoApprovalsQuery.js";
 
 // Review Queue intentionally has no sidebar entry — it's reached via the
 // "Review Drafts" quick-action card on the Tests page (`Tests.jsx`), which
@@ -82,36 +82,19 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
 
   // ── AUTO-003b: live "🤖 N auto today" badge on the Approvals nav entry ────
   // NEXT.md:97 lists this badge as an acceptance criterion (and "hiding the
-  // auto-count from the sidebar" as a rejection criterion). The count
-  // sources from the activity log filtered to `test.auto_approve` rows
-  // created since local-midnight. Today, not 24h, because the badge reads
-  // as "today's auto-approvals" — a reviewer arriving in the morning wants
-  // to see what fired overnight, not a rolling window. The activity feed
-  // is workspace-scoped on the backend, so this honours ACL automatically.
+  // auto-count from the sidebar" as a rejection criterion). The count is
+  // workspace-scoped `test.auto_approve` activity rows since local-midnight.
+  // Today, not 24h, because the badge reads as "today's auto-approvals" —
+  // a reviewer arriving in the morning wants to see what fired overnight.
   //
-  // Refresh cadence: once on mount + every 60s. The endpoint is cheap
-  // (indexed `(type, workspaceId, createdAt)` + a small LIMIT) and 60s is
-  // far below the rate at which a busy project would generate enough new
-  // auto-approvals for the badge to feel stale. Failures are silent — the
-  // badge just doesn't render.
-  const [autoTodayCount, setAutoTodayCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    function fetchCount() {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      api.getActivities({
-        type:  ACTIVITY_TYPES.TEST_AUTO_APPROVE,
-        after: startOfDay.toISOString(),
-        limit: 1000,
-      })
-        .then((rows) => { if (!cancelled) setAutoTodayCount((rows || []).length); })
-        .catch(() => { /* non-fatal — badge just doesn't render */ });
-    }
-    fetchCount();
-    const t = setInterval(fetchCount, 60_000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
+  // Uses the shared `useAutoApprovalsQuery` hook (TanStack Query) so the
+  // same cache powers the ReviewQueue tray; mounting both surfaces at once
+  // is still one network request, and revoke mutations bust both via
+  // `invalidateAutoApprovalsCache()`. Fetches once on mount, refreshes on
+  // window-focus + every 60s as a safety net, fails silently (badge just
+  // doesn't render on error).
+  const autoTodayQuery = useAutoApprovalsQuery({ scope: "today" });
+  const autoTodayCount = (autoTodayQuery.data || []).length;
 
   // Force-expand the dropdown closed when the sidebar collapses to a rail —
   // the dropdown is anchored to the wide-mode workspace switcher and would

@@ -29,13 +29,14 @@ import {
 import { api } from "../api.js";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData.js";
 import useReviewQueueQuery, { useReviewQueueCounts, invalidateReviewQueueCache } from "../hooks/queries/useReviewQueueQuery.js";
+import useAutoApprovalsQuery from "../hooks/queries/useAutoApprovalsQuery.js";
+import { invalidateAutoApprovalsCache } from "../queryClient.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { userHasRole } from "../utils/roles.js";
 import { cleanTestName } from "../utils/formatTestName.js";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { testTypeBadgeClass, testTypeLabel } from "../utils/testTypeLabels.js";
-import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 import { ReviewBadge, StatusBadge } from "../components/shared/TestBadges.jsx";
 import ModalShell from "../components/shared/ModalShell.jsx";
 import highlightCode from "../utils/highlightCode.js";
@@ -533,29 +534,21 @@ export default function ReviewQueue() {
   //     `autoApproveThreshold` configured (i.e. auto-approval is *on*; the
   //     tray would otherwise be permanently empty noise on projects that
   //     never auto-approve)
-  // Sourced from `GET /activities?type=test.auto_approve&projectId=…` and
-  // filtered client-side to `createdAt >= now - 24h`. Server caps `limit`
-  // at 200; 24h of auto-approvals on a single project sits comfortably
-  // below that for any realistic threshold.
+  //
+  // Shares the `useAutoApprovalsQuery` hook with the sidebar badge — one
+  // cache, one in-flight request when both are mounted, and a revoke
+  // anywhere invalidates both via `invalidateAutoApprovalsCache()`. The
+  // 24h window is hook-side (`scope: "24h"`) so there's no client-side
+  // time filter to keep in step with the server's `after` bound.
   const trayProject = projectId !== "all" ? projMap[projectId] : null;
   const trayEnabled = !!trayProject && trayProject.autoApproveThreshold != null && tab === "draft";
-  const [trayItems, setTrayItems] = useState([]);
-  useEffect(() => {
-    if (!trayEnabled) { setTrayItems([]); return; }
-    let cancelled = false;
-    api.getActivities({ type: ACTIVITY_TYPES.TEST_AUTO_APPROVE, projectId: trayProject.id, limit: 200 })
-      .then((rows) => {
-        if (cancelled) return;
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-        setTrayItems((rows || []).filter((r) => new Date(r.createdAt).getTime() >= cutoff));
-      })
-      .catch(() => { /* non-fatal — tray just won't render */ });
-    return () => { cancelled = true; };
-    // Re-fetch when the active project changes or when the review-queue
-    // cache invalidates (e.g. after a revoke), via reviewQuery.dataUpdatedAt
-    // which changes whenever the underlying tests refetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trayEnabled, trayProject?.id, reviewQuery.dataUpdatedAt]);
+  const trayQuery = useAutoApprovalsQuery({
+    scope:     "24h",
+    projectId: trayProject?.id,
+    enabled:   trayEnabled,
+    limit:     200,
+  });
+  const trayItems = trayEnabled ? (trayQuery.data || []) : [];
 
   const activeTest    = useMemo(() => visibleTests.find(t => t.id === activeTestId) ?? null, [visibleTests, activeTestId]);
   const activeProject = activeTest ? projMap[activeTest.projectId] : null;
@@ -698,6 +691,11 @@ export default function ReviewQueue() {
 
     invalidateReviewQueueCache();
     invalidateProjectDataCache();
+    // AUTO-003b: bulk-restore can send auto-approved tests back to draft,
+    // which changes what the sidebar badge and tray should show. Invalidate
+    // here so both surfaces refresh on the next render without waiting for
+    // the 60s background tick. Cheap no-op for non-restore bulk actions.
+    invalidateAutoApprovalsCache();
     setSelected(new Set());
     setActionLoading(null);
   }

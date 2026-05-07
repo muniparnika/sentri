@@ -73,6 +73,27 @@ export const reviewQueueQueryKeys = {
   counts: (params) => ["reviewQueue", "counts", params],
 };
 
+/**
+ * AUTO-003b: auto-approval activity feed keys. Powers both the sidebar
+ * "🤖 N auto today" badge and the ReviewQueue's 24h tray — one shared
+ * cache means the two surfaces agree on the same number and a revoke
+ * anywhere invalidates both at once.
+ *
+ * The `scope` param lets callers distinguish different time windows
+ * (`today` = since local-midnight for the sidebar; `24h` = rolling
+ * 24 hours for the tray) without them stepping on each other's cache.
+ * `projectId` is included so a per-project tray doesn't clobber the
+ * workspace-wide badge query.
+ */
+export const autoApprovalsQueryKeys = {
+  root: ["autoApprovals"],
+  /**
+   * @param {{scope: "today"|"24h", projectId?: string}} params
+   * @returns {Array}
+   */
+  activity: (params) => ["autoApprovals", "activity", params],
+};
+
 export const automationStatusQueryKeys = {
   root: ["automationStatus"],
   /**
@@ -163,4 +184,20 @@ export function invalidateRunCache(runId) {
  */
 export function invalidateSettingsCache() {
   return queryClient.invalidateQueries({ queryKey: settingsQueryKeys.root });
+}
+
+/**
+ * Bust every auto-approval activity query (all scopes, all projects). Call
+ * after any mutation that changes the set of `test.auto_approve` /
+ * `test.revoke` rows — the sidebar badge and the ReviewQueue tray then
+ * re-fetch on the next render.
+ *
+ * Scoped to the `autoApprovals` root, so revoke-from-ApprovalsTimeline,
+ * bulk-restore-from-ReviewQueue, and any future mutation all converge on
+ * one invalidation call.
+ *
+ * @returns {Promise<void>} See {@link invalidateDashboardCache}.
+ */
+export function invalidateAutoApprovalsCache() {
+  return queryClient.invalidateQueries({ queryKey: autoApprovalsQueryKeys.root });
 }

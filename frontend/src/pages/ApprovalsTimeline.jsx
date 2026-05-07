@@ -6,6 +6,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { useNotifications } from "../context/NotificationContext.jsx";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
 import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
+import { invalidateAutoApprovalsCache } from "../queryClient.js";
 import "../styles/pages/approvals-timeline.css";
 
 /**
@@ -221,6 +222,10 @@ export default function ApprovalsTimeline() {
         meta: { wasAutoApproved: sourceRow?.type === ACTIVITY_TYPES.TEST_AUTO_APPROVE },
       };
       setRevokeRows((prev) => [synthetic, ...prev]);
+      // Bust the shared auto-approvals cache so the sidebar badge + the
+      // ReviewQueue tray reflect this revoke on their next render, without
+      // waiting for the 60s background tick.
+      invalidateAutoApprovalsCache();
       addNotification({ title: "Approval revoked", body: "Test returned to draft." });
     } catch (err) {
       addNotification({ title: "Revoke failed", body: err?.message || "Failed to revoke approval." });
