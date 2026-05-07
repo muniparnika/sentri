@@ -36,33 +36,40 @@ export const AUTO_APPROVER_USER = "auto-approver";
  * @returns {string[]} array of created test IDs
  */
 /**
- * Global kill-switch for auto-approval (AUTO-003b). Parsed once at module
- * load from `DISABLE_AUTO_APPROVAL` — any truthy value (`"1"`, `"true"`,
+ * Global kill-switch for auto-approval (AUTO-003b). Read on every persist
+ * call from `DISABLE_AUTO_APPROVAL` — any truthy value (`"1"`, `"true"`,
  * `"yes"`, case-insensitive) forces every generated test to land in Draft
  * regardless of the project-level `autoApproveThreshold`.
  *
  * Intended for ops incidents: if an AI provider starts producing bad tests
- * faster than reviewers can revoke them, setting this env var and
- * restarting is a one-step rollback that doesn't require a code deploy or
- * per-project threshold reset. Per-project thresholds stay intact and take
- * effect again as soon as the env var is removed.
+ * faster than reviewers can revoke them, setting this env var is a
+ * one-step rollback that doesn't require a code deploy or per-project
+ * threshold reset. Per-project thresholds stay intact and take effect
+ * again as soon as the env var is removed.
  *
- * Read at module scope so the check is free at persist time (no repeated
- * `process.env` lookup). Operators changing the value must restart the
- * backend — documented in the AUTO-003b changelog entry.
+ * The check runs per-call (one string compare and a `process.env` read,
+ * neither measurable at the persist hot path) so operators don't have to
+ * restart the backend to flip the switch — and so test fixtures can drive
+ * the behaviour by mutating `process.env` between cases. Matches the
+ * convention used by other env-var gates in the codebase (e.g.
+ * `ALLOW_PRIVATE_URLS` in `routes/system.js`).
+ *
+ * Exported so the test suite can call it directly without round-tripping
+ * through `persistGeneratedTests`.
  */
-function isAutoApprovalDisabled() {
+export function isAutoApprovalDisabled() {
   const v = String(process.env.DISABLE_AUTO_APPROVAL || "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
 }
-const AUTO_APPROVAL_DISABLED = isAutoApprovalDisabled();
 
 export function persistGeneratedTests(validatedTests, project, run, defaults = {}) {
   const createdTestIds = [];
   // Global kill-switch (DISABLE_AUTO_APPROVAL) overrides every per-project
   // threshold — setting the env var pins `threshold = null`, which pins
   // `autoApproved = false` below, regardless of the project's configuration.
-  const threshold = AUTO_APPROVAL_DISABLED
+  // Read per-call (not cached at module scope) so operators can flip the
+  // switch without restarting the backend.
+  const threshold = isAutoApprovalDisabled()
     ? null
     : (Number.isFinite(project?.autoApproveThreshold) ? project.autoApproveThreshold : null);
   for (const t of validatedTests) {

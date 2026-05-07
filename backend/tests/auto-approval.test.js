@@ -140,6 +140,69 @@ async function main() {
     assert.equal(after.approvalSource, null);
   }
 
+  // DISABLE_AUTO_APPROVAL kill-switch (AUTO-003b ops rollback path):
+  // setting the env var forces every generated test into Draft regardless
+  // of the project's `autoApproveThreshold`. The check is read per-call
+  // (not cached at module load) so a test fixture can drive both branches
+  // by mutating `process.env` between cases. Restore the original value
+  // at the end so subsequent test files in the same `node` process aren't
+  // poisoned with a leftover kill-switch state.
+  {
+    const original = process.env.DISABLE_AUTO_APPROVAL;
+    try {
+      // Sanity check: with the kill-switch unset, a high-confidence test
+      // above the threshold IS auto-approved (this is the AUTO-003 default).
+      delete process.env.DISABLE_AUTO_APPROVAL;
+      const baselineRun = makeRun();
+      const baselineProject = makeProject({ autoApproveThreshold: 0.8 });
+      const baselineIds = persistGeneratedTests([makeTest(0.95)], baselineProject, baselineRun);
+      assert.equal(testRepo.getById(baselineIds[0]).reviewStatus, "approved");
+
+      // Kill-switch on: same project, same high-confidence test, lands as draft.
+      // Cover all three documented truthy values to prove the parser
+      // (`"1"` / `"true"` / `"yes"`, case-insensitive per testPersistence.js)
+      // is what gates the behaviour.
+      for (const truthy of ["1", "true", "TRUE", "yes"]) {
+        process.env.DISABLE_AUTO_APPROVAL = truthy;
+        const run = makeRun();
+        const project = makeProject({ autoApproveThreshold: 0.8 });
+        const ids = persistGeneratedTests([makeTest(0.95)], project, run);
+        const saved = testRepo.getById(ids[0]);
+        assert.equal(saved.reviewStatus, "draft", `kill-switch=${truthy} should force draft`);
+        assert.equal(saved.approvalSource, null, `kill-switch=${truthy} should clear approvalSource`);
+        // No `test.auto_approve` activity row should be written when the
+        // kill-switch is on — the audit trail must not record approvals
+        // that didn't happen.
+        const activities = activityRepo.getFiltered({ type: "test.auto_approve", projectId: project.id });
+        assert.equal(
+          activities.filter((a) => a.testId === ids[0]).length,
+          0,
+          `kill-switch=${truthy} should not write a test.auto_approve activity row`,
+        );
+      }
+
+      // Falsy / unset values let auto-approval proceed normally.
+      // `"false"` and `"0"` are explicitly NOT in the truthy list per the
+      // parser; verify they don't accidentally trip the gate.
+      for (const falsy of ["", "false", "0", "no"]) {
+        process.env.DISABLE_AUTO_APPROVAL = falsy;
+        const run = makeRun();
+        const project = makeProject({ autoApproveThreshold: 0.8 });
+        const ids = persistGeneratedTests([makeTest(0.95)], project, run);
+        assert.equal(
+          testRepo.getById(ids[0]).reviewStatus,
+          "approved",
+          `kill-switch=${JSON.stringify(falsy)} should NOT block auto-approval`,
+        );
+      }
+    } finally {
+      // Restore the original env var so this test doesn't leak state into
+      // the next test file in `run-tests.js`.
+      if (original === undefined) delete process.env.DISABLE_AUTO_APPROVAL;
+      else process.env.DISABLE_AUTO_APPROVAL = original;
+    }
+  }
+
   console.log("✅ auto-approval passed");
 }
 
