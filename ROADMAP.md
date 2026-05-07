@@ -823,12 +823,26 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 | Access Control | 2 | 2 | 0 | 0 | — |
 | Platform Features | 4 | 4 | 0 | 0 | — |
 | Differentiators | 22 | 16 | 0 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6) |
-| Autonomous Intelligence | 26 | 14 | 0 | 12 | AUTO-001/002/004/008–011/014/015/018/020/021/022; CAP-001, CAP-002 |
+| Autonomous Intelligence | 26 | 14 | 0 | 12 | AUTO-001/002/004/008–011/014/015/018/020/021/022 |
 | Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
 | Process automation | 3 | 3 | 0 | 0 | — |
 | Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
 | **Totals** | **83** | **55** | **0** | **28** | |
 
+<!--
+  PR #10 ledger reconciliation (AUTO-003 + AUTO-003b):
+    - Per-row impact:    Autonomous Intelligence  Done +2 / Pending −2.
+    - Totals row:        Done 53 → 55, Pending 30 → 28 (matches the +2 / −2 ship).
+    - Narrative line:    advanced from `51 complete / 32 remaining` to
+                         `55 complete / 28 remaining` — that's a +4 / −4 swing
+                         on a +2 / −2 ship because the pre-PR narrative was
+                         already two ships behind the live Totals row
+                         (Totals had been kept current by `promote-sprint-item.mjs`
+                         on PR #9; the prose underneath drifted). Reconciling
+                         the two in this PR brings them back into agreement.
+                         The next agent should treat Totals as authoritative
+                         and only update the narrative from it.
+-->
 **Total tracked items:** 83 across 9 categories — **55 complete** (66%), **0 in current PR**, **28 remaining**
 
 **Blockers (must ship before team deployment):** All resolved. ✅
