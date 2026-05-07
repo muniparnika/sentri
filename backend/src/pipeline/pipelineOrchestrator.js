@@ -10,7 +10,7 @@
  */
 
 import { throwIfAborted } from "../utils/abortHelper.js";
-import { deduplicateTests, deduplicateAcrossRuns, scoreTestWithFactors } from "./deduplicator.js";
+import { deduplicateTests, deduplicateAcrossRuns, scoreTestWithFactors, normalizeQualityToConfidence } from "./deduplicator.js";
 import { enhanceTests } from "./assertionEnhancer.js";
 import { validateTest } from "./testValidator.js";
 import { applyHealingTransforms } from "../selfHealing.js";
@@ -81,7 +81,7 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
     // this, `confidenceScore` would retain its pre-enhancement value set by
     // `deduplicateTests` and a test strengthened by the assertion enhancer
     // could miss the auto-approval threshold despite deserving to clear it.
-    t.confidenceScore = score / 100;
+    t.confidenceScore = normalizeQualityToConfidence(score);
   }
 
   // ── Step 6b: Apply self-healing transforms ────────────────────────────

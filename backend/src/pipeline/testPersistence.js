@@ -16,6 +16,7 @@ import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { APPROVAL_SOURCE } from "../services/approvalService.js";
+import { normalizeQualityToConfidence } from "./deduplicator.js";
 
 /**
  * Pseudo-user attributed to machine-made approvals in `tests.approvedBy` and
@@ -82,7 +83,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
     // activates. `threshold` is validated to (0, 1] on the route.
     const confidenceScore = Number.isFinite(t?.confidenceScore)
       ? t.confidenceScore
-      : ((t._quality || 0) / 100);
+      : normalizeQualityToConfidence(t?._quality);
     const autoApproved = threshold !== null && confidenceScore >= threshold;
     // approvedAt is epoch ms (INTEGER per migration 017 + NEXT.md spec) so the
     // approvals timeline can do straight arithmetic ranges; reviewedAt stays
