@@ -28,9 +28,7 @@ import { Router } from "express";
 import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
-import * as activityRepo from "../database/repositories/activityRepo.js";
-import { APPROVAL_SOURCE_AUTO } from "../pipeline/testPersistence.js";
-import { PROVENANCE_CLEAR, humanApproval, computeStats } from "../services/approvalService.js";
+import { PROVENANCE_CLEAR, humanApproval, computeStats, APPROVAL_SOURCE } from "../services/approvalService.js";
 import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
@@ -725,11 +723,11 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
   logActivity({ ...actor(req),
     type: ACTIVITY_TYPES.TEST_REVOKE, projectId: project.id, projectName: project.name,
     testId: test.id, testName: test.name,
-    detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE_AUTO ? "auto-approved" : "human-approved"})`,
+    detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE.AUTO ? "auto-approved" : "human-approved"})`,
     // `wasAutoApproved` lets the project approval-stats handler compute the
     // 7-day revert rate without correlating testIds across activity types
     // — see GET /api/v1/projects/:id/approval-stats below.
-    meta: { wasAutoApproved: previousSource === APPROVAL_SOURCE_AUTO },
+    meta: { wasAutoApproved: previousSource === APPROVAL_SOURCE.AUTO },
   });
   res.json(testRepo.getById(test.id));
 });

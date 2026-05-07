@@ -15,6 +15,7 @@ import { PROMPT_VERSION } from "./prompts/outputSchema.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
+import { APPROVAL_SOURCE } from "../services/approvalService.js";
 
 /**
  * Pseudo-user attributed to machine-made approvals in `tests.approvedBy` and
@@ -24,9 +25,6 @@ import { ACTIVITY_TYPES } from "../../../shared/activityTypes.js";
  * constant rather than re-typing the string.
  */
 export const AUTO_APPROVER_USER = "auto-approver";
-
-/** `tests.approvalSource` values. */
-export const APPROVAL_SOURCE_AUTO = "auto";
 
 /**
  * Write validated test objects into SQLite and update the run record.
@@ -86,7 +84,7 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
       // All generated tests start as draft — humans must approve before regression
       reviewStatus: autoApproved ? "approved" : "draft",
       reviewedAt,
-      approvalSource: autoApproved ? APPROVAL_SOURCE_AUTO : null,
+      approvalSource: autoApproved ? APPROVAL_SOURCE.AUTO : null,
       approvalThreshold: autoApproved ? threshold : null,
       approvedAt,
       approvedBy: autoApproved ? AUTO_APPROVER_USER : null,

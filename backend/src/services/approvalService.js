@@ -54,8 +54,10 @@ export const PROVENANCE_CLEAR = Object.freeze({
  * Build the provenance fields for a human approval, attributed to `actorInfo`.
  * The threshold is always null for human approvals (no threshold was consulted).
  *
- * @param {{userName?: string|null, userId?: string|null}} actorInfo
- * @returns {{approvalSource: "human", approvalThreshold: null, approvedAt: number, approvedBy: string|null}}
+ * @param {Object} actorInfo                — caller identity from `actor(req)`.
+ * @param {string} [actorInfo.userName]     — preferred attribution.
+ * @param {string} [actorInfo.userId]       — fallback when userName is unset.
+ * @returns {Object} `{ approvalSource, approvalThreshold, approvedAt, approvedBy }`.
  */
 export function humanApproval(actorInfo) {
   return {
@@ -83,11 +85,7 @@ export function humanApproval(actorInfo) {
  * revokes than auto-approvals in the window can't render "117% revert rate".
  *
  * @param {string} projectId
- * @returns {{
- *   human: number, auto: number, draft: number, rejected: number,
- *   total: number, revertRate7d: number,
- *   autoApprovals7d: number, reverts7d: number,
- * }}
+ * @returns {Object} `{ human, auto, draft, rejected, total, revertRate7d, autoApprovals7d, reverts7d }` — all `number`.
  */
 export function computeStats(projectId) {
   // ── Status counts ──────────────────────────────────────────────────────────
