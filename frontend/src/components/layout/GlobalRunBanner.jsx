@@ -7,7 +7,7 @@
  * AI run was previously invisible outside Test Lab.
  *
  * Reads from the shared TanStack Query cache via `useProjectData({ fetchTests:
- * false, fetchProjects: false })` so we don't fire any new HTTP requests —
+ * false, fetchRuns: true })` so we don't fire any new HTTP requests —
  * the runs list is already in cache for the sidebar / dashboard / TestLab
  * Queue tab. Hidden when:
  *   - no generation run is active, or
@@ -40,10 +40,10 @@ export default function GlobalRunBanner() {
     return m ? m[1] : null;
   })();
 
-  // Only need runs; skip tests + projects to keep this lightweight. The
-  // shared cache means this hook does not trigger new requests when other
-  // pages are also reading runs.
-  const { allRuns } = useProjectData({ fetchTests: false, fetchProjects: false });
+  // Only need runs; skip tests to keep this lightweight. The shared cache
+  // means this hook does not trigger new requests when other pages are
+  // also reading runs.
+  const { allRuns } = useProjectData({ fetchTests: false, fetchRuns: true });
   const activeRuns = (allRuns || []).filter(isGenerationRun);
 
   if (activeRuns.length === 0) return null;
