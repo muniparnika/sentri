@@ -31,8 +31,22 @@ Scope details here.
 
 ## ⏭ Queue (next 4 PRs after current)
 
-### 2 · AUTO-100
-Details.
+### 1 · AUTO-100 — Do the bar thing
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** ROADMAP.md Phase 4
+
+This entry will be promoted to Current PR — its body must show up under the
+new "Current PR" heading verbatim, and the queue slot must be removed.
+
+**Files:** backend/src/bar.js · backend/tests/bar.test.js
+
+**Acceptance criteria:**
+- Bar thing happens.
+- Sibling AUTO-101 slot survives + renumbers from \`### 2\` to \`### 1\`.
+
+### 2 · AUTO-101 — Sibling that should renumber
+**Effort:** S | **Priority:** 🔵 Medium | **Dependencies:** none
+
+Body of the sibling — must remain in the queue, but renumbered from slot 2 to slot 1.
 
 ## ✅ Recently completed
 
@@ -169,8 +183,62 @@ assert.match(
   "Sibling ### entry must survive the prune"
 );
 
-// 8. PROC-003: re-running the script is idempotent (no double-row in the
-//    Completed Work Summary table, no further decrement of Summary stats).
+// 8. New transform: Current PR body now reflects the promoted slot's spec
+//    text (heading-only rewrite was the prior failure mode that left
+//    AUTO-099's prose under an AUTO-100 heading).
+const currentPrBlock = next.match(/## ▶ Current PR — AUTO-100[\s\S]*?(?=\n## )/);
+assert.ok(currentPrBlock, "Current PR section must exist");
+assert.match(
+  currentPrBlock[0],
+  /\*\*Title:\*\*\s+Do the bar thing/,
+  "Current PR title must come from the queue slot",
+);
+assert.match(
+  currentPrBlock[0],
+  /\*\*Branch:\*\*\s+`feat\/auto-100`/,
+  "Branch slug must be derived from promoted id",
+);
+assert.match(
+  currentPrBlock[0],
+  /Bar thing happens\./,
+  "Acceptance criteria from queue must appear in Current PR body",
+);
+assert.ok(
+  !/Scope details here\./.test(currentPrBlock[0]),
+  "Prior PR's scope text must be replaced (not left under the new heading)",
+);
+assert.match(
+  currentPrBlock[0],
+  /AUTO-099 ✅ shipped in PR #999/,
+  "Hand-off breadcrumb must reference the shipped item + PR number",
+);
+assert.match(
+  currentPrBlock[0],
+  /### PR checklist \(AUTO-100\)/,
+  "Fresh PR checklist must be rendered for the promoted item",
+);
+
+// 9. New transform: promoted slot is excised from the queue + survivors
+//    renumbered. Slot 2 must shift to slot 1; queue header count drops.
+const queueBlock = next.match(/## ⏭ Queue[\s\S]*?(?=\n## )/);
+assert.ok(queueBlock, "Queue section must still exist");
+assert.ok(
+  !/### \d+ · AUTO-100 —/.test(queueBlock[0]),
+  "Promoted slot must be removed from the queue",
+);
+assert.match(
+  queueBlock[0],
+  /### 1 · AUTO-101 —/,
+  "Sibling must renumber from slot 2 to slot 1",
+);
+assert.match(
+  queueBlock[0],
+  /## ⏭ Queue \(next 1 PR after current\)/,
+  "Queue header count must update from 4 → 1 (one slot survived after promotion)",
+);
+
+// 10. PROC-003: re-running the script is idempotent (no double-row in the
+//     Completed Work Summary table, no further decrement of Summary stats).
 execSync(`node scripts/promote-sprint-item.mjs 999 AUTO-100 --root="${sandbox}"`, { stdio: "pipe" });
 const roadmap2 = fs.readFileSync(path.join(sandbox, "ROADMAP.md"), "utf8");
 const auto099Rows = (roadmap2.match(/\|\s*AUTO-099\s*\|/g) || []).length;

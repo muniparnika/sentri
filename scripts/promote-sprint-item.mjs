@@ -4,17 +4,32 @@
  *
  * Automates the NEXT.md / ROADMAP.md / docs/changelog.md hand-off after a PR
  * ships, per REVIEW.md § Sprint Tracker Hand-off. Given the shipped PR number
- * and the queue-slot-2 item id to promote, the script:
+ * and a queue-slot item id to promote, the script:
  *
- *   1. Parses NEXT.md to extract the Current PR block + recently-completed
- *      table.
- *   2. Moves the Current PR into the top row of "Recently completed" (cap 3)
- *      and rewrites the "Current PR" heading to point at the promoted item.
- *   3. Appends a one-line "promoted by script" marker to docs/changelog.md
+ *   1. Parses NEXT.md to extract the Current PR id (stripping `(bundled)` /
+ *      similar parenthetical suffixes from the heading so the canonical id
+ *      flows into Recently-completed + Completed Work Summary).
+ *   2. Moves the shipped Current PR into the top row of "Recently completed"
+ *      (cap 3).
+ *   3. Locates the matching `### N · <id> — <title>` slot in `## ⏭ Queue`
+ *      and uses its body to rewrite the Current PR section in-place —
+ *      heading, title, branch (slug-built from the id), effort/priority
+ *      meta-line carried over verbatim, prose body, and a fresh
+ *      `### PR checklist` template. Falls through to a heading-only rewrite
+ *      with a `console.warn` when no matching queue slot exists (ad-hoc
+ *      promotions or hand-edited NEXT.md files).
+ *   4. Removes the now-promoted slot from the queue and renumbers the
+ *      survivors so `### 1 · …`, `### 2 · …`, … stay contiguous; updates
+ *      the `## ⏭ Queue (next N PRs after current)` header count.
+ *   5. Appends a one-line "promoted by script" marker to docs/changelog.md
  *      **inside the `## [Unreleased]` section** — NOT at the bottom of the
  *      file (which falls inside a released version and corrupts history).
- *   4. Updates the fast-path "Current sprint:" line in ROADMAP.md so the
+ *   6. Updates the fast-path "Current sprint:" line in ROADMAP.md so the
  *      top-of-file pointer matches the newly-promoted item.
+ *   7. Appends per-id rows to ROADMAP.md `## Completed Work Summary`,
+ *      decrements the `## Summary` per-category Pending count + bumps Done,
+ *      recomputes the Totals row, and prunes detailed `### <ID> — …`
+ *      sections for shipped items (PROC-003 transforms, all idempotent).
  *
  * By design this is a conservative transform: it preserves every existing
  * line it doesn't explicitly rewrite, so diffs are minimal and easy to
@@ -58,12 +73,24 @@ const CHANGELOG_PATH = path.join(root, "docs/changelog.md");
 /**
  * Extracts the Current PR item id (e.g. "CAP-004 + MET-001 + PROC-002") and
  * title from a "## ▶ Current PR — <id>" heading.
+ *
+ * Strips trailing parenthetical suffixes like `" (bundled)"` from the heading
+ * — those are reader hints, not part of the canonical item id. Without this
+ * the Recently-completed row + Completed Work Summary table end up with
+ * `AUTO-003b (bundled)` style ids that drift from the rest of the ledger
+ * (e.g. `splitBundledIds` would produce `["AUTO-003", "AUTO-003b (bundled)"]`
+ * and `pruneShippedRoadmapEntry`'s regex never matches the suffixed form).
  */
 function parseCurrentPr(nextMd) {
   const heading = nextMd.match(/^##\s+▶\s+Current PR\s+—\s+(.+)$/m);
   const titleLine = nextMd.match(/^\*\*Title:\*\*\s+(.+)$/m);
+  const rawId = heading ? heading[1].trim() : "unknown";
+  // Drop a trailing `(…)` suffix attached after a space — keeps the id
+  // canonical while preserving inner-bundle `+` joins (e.g.
+  // `"AUTO-003 + AUTO-003b (bundled)"` → `"AUTO-003 + AUTO-003b"`).
+  const id = rawId.replace(/\s*\([^)]*\)\s*$/, "").trim();
   return {
-    id: heading ? heading[1].trim() : "unknown",
+    id,
     title: titleLine ? titleLine[1].trim() : "(title not found)",
   };
 }
@@ -118,6 +145,155 @@ function rewriteCurrentPrHeading(nextMd, newId) {
     /^##\s+▶\s+Current PR\s+—\s+.+$/m,
     `## ▶ Current PR — ${newId}`
   );
+}
+
+/**
+ * Find the queue-slot block matching `nextItemId` and return:
+ *   - `block`: the slot's body (everything between its `### N · <id> — <title>`
+ *     heading and the next `### ` / `## ` heading), trimmed
+ *   - `title`: the title text from the heading (e.g. "Change detection / …")
+ *   - `start` / `end`: byte offsets covering the heading + body (used by
+ *     `removeQueueSlot` so the slot can be excised after promotion)
+ *   - `slotNumber`: the `N` from `### N · …` (used to drive renumbering)
+ *
+ * Returns `null` when the queue doesn't have a slot matching `nextItemId`,
+ * which makes `replaceCurrentPrBody` fall through to a heading-only rewrite —
+ * the previous behaviour, preserved as a safety net for ids that aren't in
+ * the queue (e.g. ad-hoc promotions or hand-edited NEXT.md files).
+ *
+ * The `id` match is loose (`startsWith`) so a queue heading like
+ * `### 1 · AUTO-002 — Change detection / diff-aware crawling` matches both
+ * the bare `AUTO-002` id and a future bundled form like `AUTO-002 + …`.
+ */
+function findQueueSlot(nextMd, nextItemId) {
+  const queueMarker = nextMd.indexOf("## ⏭ Queue");
+  if (queueMarker < 0) return null;
+  const queueRegion = nextMd.slice(queueMarker);
+  // Match `### N · <id> — <title>` where <id> is the full target id.
+  // Escape regex metachars in the id so the lookup is literal-safe.
+  const escaped = nextItemId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headingRe = new RegExp(`^### (\\d+) · (${escaped})\\s+—\\s+(.+)$`, "m");
+  const match = queueRegion.match(headingRe);
+  if (!match) return null;
+  const headingStartInRegion = match.index;
+  const slotNumber = Number(match[1]);
+  const title = match[3].trim();
+  // Body extends from the end of the heading line until the next `### ` /
+  // `## ` heading or end-of-file.
+  const headingEndInRegion = headingStartInRegion + match[0].length;
+  const tail = queueRegion.slice(headingEndInRegion);
+  const nextHeadingRel = tail.search(/\n##(?:#)? /);
+  const bodyEndInRegion = nextHeadingRel < 0
+    ? queueRegion.length
+    : headingEndInRegion + nextHeadingRel + 1; // +1 keeps the trailing newline
+  return {
+    block: queueRegion.slice(headingStartInRegion + match[0].length, bodyEndInRegion).trim(),
+    title,
+    slotNumber,
+    start: queueMarker + headingStartInRegion,
+    end: queueMarker + bodyEndInRegion,
+  };
+}
+
+/**
+ * Replace everything between the `## ▶ Current PR …` heading and the next
+ * `## ` section with a freshly-rendered scope block sourced from the queue
+ * slot. Without this, the previous handler only flipped the heading and left
+ * the prior PR's scope text in place — agents reading NEXT.md after a
+ * promotion would see "Current PR — AUTO-002" with AUTO-003's files /
+ * acceptance criteria below it.
+ *
+ * The rendered block keeps the same shape NEXT.md uses for hand-authored
+ * Current PR sections (Title / Effort / Priority / dependencies, then prose,
+ * then the spec body verbatim from the queue), so a human can still hand-edit
+ * the result without re-templating.
+ *
+ * If `slot` is null (id not found in the queue — e.g. a hand-rolled
+ * promotion), this is a no-op so the caller's heading rewrite still applies.
+ */
+function replaceCurrentPrBody(nextMd, newId, slot, prevShipped, prevPrNum) {
+  if (!slot) return nextMd;
+
+  // Pull the metadata line (e.g. `**Effort:** L | **Priority:** 🟢 …`) and
+  // the dependencies / source line out of the queue body — those are the
+  // only structured fields the queue carries that map cleanly to the
+  // Current PR header. The remainder is the spec body and copies verbatim.
+  // Queue heading lines look like:
+  //   **Effort:** L | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** ROADMAP.md Phase 4 (AUTO-002)
+  const metaMatch = slot.block.match(/^\*\*Effort:\*\*[^\n]+/m);
+  const metaLine = metaMatch ? metaMatch[0] : "";
+  // Body = everything *except* the meta line — drop it so we don't render it twice.
+  const body = metaLine ? slot.block.replace(metaLine, "").trim() : slot.block;
+
+  // Render the new Current PR section. The "promoted from queue slot N"
+  // breadcrumb makes the hand-off auditable in `git log -p NEXT.md`.
+  const rendered = [
+    `## ▶ Current PR — ${newId}`,
+    "",
+    `**Title:** ${slot.title}`,
+    `**Branch:** \`feat/${newId.toLowerCase().replace(/[^a-z0-9]+/g, "-")}\``,
+    metaLine || "**Effort:** TBD | **Priority:** TBD",
+    "",
+    `> ${prevShipped.id} ✅ shipped in PR #${prevPrNum}. ${newId} promoted from queue slot ${slot.slotNumber} per \`NEXT.md\` rotation.`,
+    "",
+    body,
+    "",
+    `### PR checklist (${newId})`,
+    "",
+    "- [ ] Acceptance criteria above are all met",
+    "- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]`",
+    "- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)",
+    "",
+  ].join("\n");
+
+  // Replace the existing Current PR section: from `## ▶ Current PR` heading
+  // up to (but not including) the next `## ` heading at column 0.
+  const currentStart = nextMd.indexOf("## ▶ Current PR");
+  if (currentStart < 0) return nextMd;
+  const tail = nextMd.slice(currentStart + "## ▶ Current PR".length);
+  const nextSectionRel = tail.search(/\n## (?!▶)/);
+  if (nextSectionRel < 0) return nextMd;
+  const currentEnd = currentStart + "## ▶ Current PR".length + nextSectionRel + 1;
+  return nextMd.slice(0, currentStart) + rendered + nextMd.slice(currentEnd);
+}
+
+/**
+ * Remove the promoted slot from the queue and renumber the surviving slots
+ * so the queue header `## ⏭ Queue (next N PRs after current)` and slot
+ * numbering stay accurate. Without this, `NEXT.md` ends up with the
+ * promoted item duplicated (once as Current PR, once at slot N in the
+ * queue) — exactly the failure mode that triggered this fix.
+ *
+ * Idempotent: if the slot doesn't exist (e.g. ad-hoc promotion not
+ * sourced from the queue), this is a no-op.
+ */
+function removeQueueSlot(nextMd, slot) {
+  if (!slot) return nextMd;
+  const after = nextMd.slice(0, slot.start) + nextMd.slice(slot.end);
+  // Renumber slots: any `### N · ` → `### (N-1) · ` for N > slot.slotNumber.
+  // Walk all slot headings inside the queue region and rewrite in-order so
+  // a slot-3 below the deletion becomes slot-2.
+  const queueStart = after.indexOf("## ⏭ Queue");
+  if (queueStart < 0) return after;
+  const head = after.slice(0, queueStart);
+  let queue = after.slice(queueStart);
+  queue = queue.replace(
+    /^### (\d+) · /gm,
+    (_m, n) => {
+      const num = Number(n);
+      // Slots numbered above the deleted one shift down by 1; slots
+      // numbered below it stay put. The deleted slot itself is already
+      // gone, so we never see its `n` here.
+      return `### ${num > slot.slotNumber ? num - 1 : num} · `;
+    },
+  );
+  // Update the header count: count surviving `### N · ` headings.
+  const slotCount = (queue.match(/^### \d+ · /gm) || []).length;
+  queue = queue.replace(
+    /^## ⏭ Queue \(next \d+ PRs? after current\)$/m,
+    `## ⏭ Queue (next ${slotCount} PR${slotCount === 1 ? "" : "s"} after current)`,
+  );
+  return head + queue;
 }
 
 /** Insert a bullet under `## [Unreleased]` — never at the file's end. */
@@ -324,8 +500,28 @@ let shipped = { id: "unknown", title: "(title not found)" };
 if (fs.existsSync(NEXT_PATH)) {
   let next = fs.readFileSync(NEXT_PATH, "utf8");
   shipped = parseCurrentPr(next);
+  // Find the queue slot BEFORE we rewrite anything, so the offsets we
+  // capture for `removeQueueSlot` still point at the unmutated buffer.
+  const slot = findQueueSlot(next, nextItemId);
+  if (!slot) {
+    console.warn(
+      `[promote] queue slot for "${nextItemId}" not found — Current PR body will keep prior scope text. ` +
+      `Add a "### N · ${nextItemId} — <title>" entry under "## ⏭ Queue" before promoting, or hand-edit NEXT.md after.`,
+    );
+  }
   next = updateRecentlyCompleted(next, prNumber, shipped);
+  // `replaceCurrentPrBody` is the body-rewrite that the prior heading-only
+  // `rewriteCurrentPrHeading` couldn't do — it pulls the spec from the
+  // queue slot and slots it under the new "Current PR" heading. When `slot`
+  // is null this is a no-op and we fall through to the heading-only path
+  // (preserving the previous behaviour for ad-hoc promotions).
+  next = replaceCurrentPrBody(next, nextItemId, slot, shipped, prNumber);
+  // Heading rewrite still runs for the `slot === null` fall-through case;
+  // when `replaceCurrentPrBody` already wrote the section the regex below
+  // simply matches the freshly-written heading and re-writes it identically.
   next = rewriteCurrentPrHeading(next, nextItemId);
+  // Excise the now-promoted slot from the queue + renumber survivors.
+  next = removeQueueSlot(next, slot);
   fs.writeFileSync(NEXT_PATH, next);
 }
 
