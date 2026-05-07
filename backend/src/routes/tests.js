@@ -721,15 +721,20 @@ router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
   if (!test) return res.status(404).json({ error: "not found" });
   const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
-  if (test.reviewStatus !== "approved") {
+  // Capture the previous source from the snapshot read above for the audit
+  // row's `meta.wasAutoApproved` flag. By the time the UPDATE runs the row
+  // has been cleared, so we can't read provenance off the post-state.
+  const previousSource = test.approvalSource;
+  // AUTO-003b: atomic check-and-update — `revokeApprovalIfApproved` bakes
+  // the `reviewStatus = 'approved'` predicate into the UPDATE's WHERE clause
+  // so two concurrent revokes can't both succeed. Returns `false` when the
+  // row was already in a different state (e.g. another reviewer revoked
+  // first); we map that to the same 400 the previous read-then-check path
+  // produced. This stays correct on PostgreSQL pools where read snapshots
+  // could otherwise let both requests pass the read-side guard.
+  if (!testRepo.revokeApprovalIfApproved(test.id)) {
     return res.status(400).json({ error: "only approved tests can be revoked" });
   }
-  const previousSource = test.approvalSource;
-  testRepo.update(test.id, {
-    reviewStatus: "draft",
-    reviewedAt: null,
-    ...PROVENANCE_CLEAR,
-  });
   logActivity({ ...actor(req),
     type: ACTIVITY_TYPES.TEST_REVOKE, projectId: project.id, projectName: project.name,
     testId: test.id, testName: test.name,

@@ -518,6 +518,45 @@ export function hardDeleteByProjectId(projectId) {
 }
 
 /**
+ * Atomic revoke (AUTO-003b): clear `reviewStatus` + provenance ONLY IF the
+ * row is currently `approved`. Returns `true` on success, `false` if the
+ * row was already in a different state.
+ *
+ * Why a dedicated function instead of `update()`: revoke is the canonical
+ * concurrent-write target — two reviewers can hit `POST /tests/:id/revoke`
+ * at the same time, and we need exactly one to win. The route handler
+ * does a read-then-write pair (`getById` → check `reviewStatus === 'approved'`
+ * → `update`), which is safe on better-sqlite3 (synchronous, single-connection)
+ * but races on PostgreSQL where the pool can serve both reads from the same
+ * pre-revoke snapshot. Baking the check into the UPDATE's `WHERE` clause
+ * makes the operation atomic on every adapter — only the request whose
+ * UPDATE actually flips a row from `approved` to `draft` succeeds; the
+ * second request's `UPDATE … WHERE reviewStatus = 'approved'` matches zero
+ * rows and we return `false`.
+ *
+ * Caller is responsible for the 400/404 mapping: the route returns
+ * `400 "only approved tests can be revoked"` when this returns `false`,
+ * matching the existing read-then-write semantics.
+ *
+ * @param {string} id
+ * @returns {boolean} `true` if the row transitioned approved → draft.
+ */
+export function revokeApprovalIfApproved(id) {
+  const db = getDatabase();
+  const info = db.prepare(
+    `UPDATE tests SET
+       reviewStatus = 'draft',
+       reviewedAt = NULL,
+       approvalSource = NULL,
+       approvalThreshold = NULL,
+       approvedAt = NULL,
+       approvedBy = NULL
+     WHERE id = ? AND reviewStatus = 'approved' AND deletedAt IS NULL`
+  ).run(id);
+  return info.changes > 0;
+}
+
+/**
  * Bulk update review status for a list of test IDs within a project.
  * Only applies to non-deleted tests.
  *
