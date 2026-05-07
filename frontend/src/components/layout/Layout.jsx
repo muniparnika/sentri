@@ -6,6 +6,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import AIChat from "../ai/AIChat.jsx";
 import CommandPalette from "./CommandPalette.jsx";
 import ProviderBanner from "./ProviderBanner.jsx";
+import GlobalRunBanner from "./GlobalRunBanner.jsx";
 import Sidebar from "./Sidebar.jsx";
 import TopBar from "./TopBar.jsx";
 
@@ -64,6 +65,11 @@ export default function Layout() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar onOpenPalette={openPalette} onOpenChat={openChat} />
         <ProviderBanner userId={user?.id} />
+        {/* Cross-page visibility for in-flight AI runs — closes the gap
+            where a 3-min crawl was invisible once the user navigated away
+            from Test Lab. Hidden on the Test Lab route itself (the inline
+            pipeline view is the canonical surface there). */}
+        <GlobalRunBanner />
         <main style={{ flex: 1, padding: "28px 32px", overflow: "auto" }}>
           <Outlet />
         </main>
