@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Home, FolderKanban, SquareCheckBig, PlayCircle, BarChart3, Bot, Server,
     Settings, ChevronDown, Check, ChevronRight, PanelLeftClose, PanelLeftOpen,
@@ -8,6 +8,7 @@ import AppLogo from "./AppLogo.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { userHasRole } from "../../utils/roles.js";
 import { api } from "../../api.js";
+import { ACTIVITY_TYPES } from "../../../../shared/activityTypes.js";
 
 // Review Queue intentionally has no sidebar entry — it's reached via the
 // "Review Drafts" quick-action card on the Tests page (`Tests.jsx`), which
@@ -79,6 +80,39 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
   const [switching, setSwitching] = useState(false);
   const hasMultipleWorkspaces = user?.workspaces?.length > 1;
 
+  // ── AUTO-003b: live "🤖 N auto today" badge on the Approvals nav entry ────
+  // NEXT.md:97 lists this badge as an acceptance criterion (and "hiding the
+  // auto-count from the sidebar" as a rejection criterion). The count
+  // sources from the activity log filtered to `test.auto_approve` rows
+  // created since local-midnight. Today, not 24h, because the badge reads
+  // as "today's auto-approvals" — a reviewer arriving in the morning wants
+  // to see what fired overnight, not a rolling window. The activity feed
+  // is workspace-scoped on the backend, so this honours ACL automatically.
+  //
+  // Refresh cadence: once on mount + every 60s. The endpoint is cheap
+  // (indexed `(type, workspaceId, createdAt)` + a small LIMIT) and 60s is
+  // far below the rate at which a busy project would generate enough new
+  // auto-approvals for the badge to feel stale. Failures are silent — the
+  // badge just doesn't render.
+  const [autoTodayCount, setAutoTodayCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    function fetchCount() {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      api.getActivities({
+        type:  ACTIVITY_TYPES.TEST_AUTO_APPROVE,
+        after: startOfDay.toISOString(),
+        limit: 1000,
+      })
+        .then((rows) => { if (!cancelled) setAutoTodayCount((rows || []).length); })
+        .catch(() => { /* non-fatal — badge just doesn't render */ });
+    }
+    fetchCount();
+    const t = setInterval(fetchCount, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
   // Force-expand the dropdown closed when the sidebar collapses to a rail —
   // the dropdown is anchored to the wide-mode workspace switcher and would
   // float into the main content area otherwise.
@@ -131,19 +165,37 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
 
         {/* Nav icons */}
         <nav className="sidebar-rail__nav">
-          {NAV_GROUPS.flatMap(group => group.items).map(item => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className="nav-link sidebar-rail__nav-item"
-              data-tour={item.tour || undefined}
-              title={item.label}
-            >
-              {({ isActive }) => (
-                <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
-              )}
-            </NavLink>
-          ))}
+          {NAV_GROUPS.flatMap(group => group.items).map(item => {
+            // AUTO-003b: rail-mode equivalent of the expanded "🤖 N" badge —
+            // a small dot in the corner of the Approvals icon when there's
+            // unreviewed auto-approval activity today. The full count
+            // surfaces in the tooltip (`title`) so users on the rail can
+            // still see the magnitude without expanding.
+            const showAutoDot = item.to === "/approvals" && autoTodayCount > 0;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className="nav-link sidebar-rail__nav-item"
+                data-tour={item.tour || undefined}
+                title={showAutoDot
+                  ? `${item.label} — ${autoTodayCount} auto-approved today`
+                  : item.label}
+              >
+                {({ isActive }) => (
+                  <>
+                    <item.icon size={18} strokeWidth={isActive ? 2.4 : 1.6} />
+                    {showAutoDot && (
+                      <span
+                        className="sidebar-rail__nav-dot"
+                        aria-label={`${autoTodayCount} auto-approved today`}
+                      />
+                    )}
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Footer: settings (admin only) — expand toggle lives at the top
@@ -240,32 +292,49 @@ export default function Sidebar({ open, collapsed = false, onToggleCollapsed }) 
           <div key={group.label}>
             <div className="sidebar-nav__group-label">{group.label}</div>
             <div className="sidebar-nav__group-items">
-              {group.items.map(item => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className="nav-link sidebar-nav__item"
-                  data-tour={item.tour || undefined}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <item.icon
-                        size={16}
-                        className="sidebar-nav__item-icon"
-                        strokeWidth={isActive ? 2.4 : 1.6}
-                      />
-                      <span>{item.label}</span>
-                      {isActive && (
-                        <ChevronRight
-                          size={12}
-                          className="sidebar-nav__item-chevron"
-                          color="var(--accent)"
+              {group.items.map(item => {
+                // AUTO-003b: live count of auto-approvals fired today on
+                // the Approvals entry. Rendered as a compact pill before
+                // the active-route chevron so it stays visible regardless
+                // of which page the user is on. Suppressed when zero —
+                // an empty badge is visual noise.
+                const showAutoBadge = item.to === "/approvals" && autoTodayCount > 0;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className="nav-link sidebar-nav__item"
+                    data-tour={item.tour || undefined}
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          size={16}
+                          className="sidebar-nav__item-icon"
+                          strokeWidth={isActive ? 2.4 : 1.6}
                         />
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                        <span>{item.label}</span>
+                        {showAutoBadge && (
+                          <span
+                            className="sidebar-nav__auto-badge"
+                            title={`${autoTodayCount} test${autoTodayCount === 1 ? "" : "s"} auto-approved today`}
+                            aria-label={`${autoTodayCount} auto-approved today`}
+                          >
+                            🤖 {autoTodayCount}
+                          </span>
+                        )}
+                        {isActive && (
+                          <ChevronRight
+                            size={12}
+                            className="sidebar-nav__item-chevron"
+                            color="var(--accent)"
+                          />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
+              })}
             </div>
           </div>
         ))}
