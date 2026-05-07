@@ -51,6 +51,94 @@ import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
  */
 
 /**
+ * AUTO-002 / AUTO-002b: shared diff-aware baseline runner. Compares the
+ * current crawl's snapshots against the persisted baseline, emits the
+ * `pages_changed` SSE event, and merges the new fingerprints into the
+ * baseline table.
+ *
+ * Two callers, two key-derivation strategies:
+ *
+ * - **Link crawl** (`mode="crawl"`) keys baselines by snapshot URL — one
+ *   row per page. The caller filters `snapshots[]` down to changed pages
+ *   so generation only runs on what changed.
+ *
+ * - **State explorer** (`mode="state"`) keys baselines by a composite
+ *   `url#fp=<fingerprint>` — distinct states at the same URL (login form
+ *   blank vs login form with errors) are tracked as separate baseline
+ *   rows. The caller does **not** filter `snapshots[]` post-diff because
+ *   journeys reference unchanged states for context; filtering would
+ *   break flow generation. The diff is informational + persistent, but
+ *   no-change crawls still short-circuit the generation pipeline.
+ *
+ * @param {object} project - project record (must carry id + canonicalUrl/url)
+ * @param {object} run - mutable run record
+ * @param {object[]} snapshots - normalised snapshots (with synthetic .url for state mode)
+ * @param {string} mode - "crawl" | "state"
+ * @returns {{
+ *   noChanges: boolean,
+ *   changedSet: Set<string>|null,
+ *   skipped: boolean,
+ * }} skipped=true when the diff was bypassed (preview crawl or zero snapshots).
+ *    noChanges=true when there's an existing baseline and nothing changed.
+ *    changedSet is the set of keys (URLs or composite keys) that changed; the
+ *    caller decides whether to filter `snapshots[]` against it.
+ */
+function runDiffAwareBaseline(project, run, snapshots, mode) {
+  // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
+  // project's CANONICAL (production) URL — not `project.url`, which the
+  // AUTO-015 trigger routes overwrite with the deployment preview URL
+  // before invoking this function.
+  const canonicalForOriginCheck = project.canonicalUrl || project.url;
+  const sameOrigin = (() => {
+    try {
+      return new URL(snapshots[0]?.url || project.url).origin === new URL(canonicalForOriginCheck).origin;
+    } catch { return false; }
+  })();
+  if (!sameOrigin) {
+    log(run, `↪️  Preview-deployment crawl detected — skipping baseline diff (preserving production baselines).`);
+    return { noChanges: false, changedSet: null, skipped: true };
+  }
+  if (snapshots.length === 0) {
+    // Defence-in-depth: a crawl that yielded zero snapshots but passed
+    // the unreachable-target check above (e.g. auth wall, SPA with no
+    // crawlable links, Playwright silent failure) must not wipe the
+    // project's baselines. Skip the diff entirely.
+    log(run, `⚠️  ${mode === "state" ? "State exploration" : "Crawl"} returned zero snapshots — skipping baseline diff to preserve existing fingerprints.`);
+    return { noChanges: false, changedSet: null, skipped: true };
+  }
+
+  const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
+  const diff = diffCrawlSnapshots(existingBaselines, snapshots);
+  run.changedPages = diff.changedPages;
+  run.removedPages = diff.removedPages;
+  emitRunEvent(run.id, "pages_changed", {
+    changedPages: diff.changedPages,
+    removedPages: diff.removedPages,
+    unchangedPages: diff.unchangedPages,
+  });
+
+  if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
+    // No-change crawl: existing baselines still authoritative. Don't rewrite,
+    // and signal short-circuit to the caller via run.noChangesDetected.
+    log(run, `🟰 No ${mode === "state" ? "state" : "page"} changes detected against the previous crawl baseline.`);
+    run.noChangesDetected = true;
+    return { noChanges: true, changedSet: null, skipped: false };
+  }
+
+  // Changes detected (or first-ever crawl). Merge upserts observed entries
+  // and only deletes URLs the diff explicitly classified as removed —
+  // partial-crawl-safe (a transient page failure won't wipe the baseline).
+  crawlBaselineRepo.mergeProjectBaselines(project.id, diff.fingerprints, diff.removedPages);
+  log(run, `🧬 ${mode === "state" ? "State" : "Crawl"} diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
+  return {
+    noChanges: false,
+    changedSet: new Set(diff.changedPages),
+    skipped: false,
+    hadExistingBaseline: Object.keys(existingBaselines).length > 0,
+  };
+}
+
+/**
  * Shared Steps 2 & 3: Element filtering + intent classification.
  * Extracted to avoid duplication between the "state" and "crawl" branches.
  *
@@ -245,21 +333,45 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
   if (mode === "state") {
     // ── State-based exploration (new engine) ─────────────────────────────
     //
-    // TODO(AUTO-002b): extend diff-aware crawling to state-explorer mode.
-    // State exploration produces multiple snapshots per URL (keyed by
-    // `_stateFingerprint` — e.g. "login form blank" vs "login form with
-    // error"), so the URL→fingerprint baseline used by the link-crawl
-    // branch below cannot model state-mode crawls correctly. Extending
-    // diff-awareness here requires a state-graph baseline
-    // (fingerprint→fingerprint transitions), which is a non-trivial
-    // schema + diff-engine extension. Filed for follow-up; does not
-    // block AUTO-002 acceptance criteria (NEXT.md:48-52, link-crawl-only).
+    // AUTO-002b: state-explorer mode is now diff-aware via composite keys.
+    // The state explorer produces multiple snapshots per URL (login form
+    // blank vs login form with errors), so we key the baseline by the
+    // composite `url#fp=<fingerprint>` instead of plain URL — this lets
+    // distinct states at the same URL be tracked as separate baseline
+    // rows. The caller does NOT filter `snapshots[]` post-diff because
+    // journeys reference unchanged states for flow context; we run the
+    // full state set through generation but short-circuit when nothing
+    // changed against the baseline (no-change crawl → `completed_empty`).
     const exploration = await exploreStates(project, run, { signal, tuning: explorerTuning });
     snapshots = exploration.snapshots;
     snapshotsByUrl = exploration.snapshotsByUrl;
     apiEndpoints = exploration.apiEndpoints || [];
 
     throwIfAborted(signal);
+
+    // AUTO-002b: diff-aware baseline for state mode.
+    // We synthesise a composite key per state (`originalUrl#fp=<fp>`) and
+    // pass adapted snapshots to the shared diff helper. The original
+    // snapshots aren't mutated — only the diff sees the composite key.
+    // This works because diffCrawlSnapshots keys snapshots by `.url` and
+    // only reads `.elements` via `buildPageFingerprint` (which is
+    // deterministic on shape, not URL).
+    if (snapshots.length > 0) {
+      const stateKeyed = snapshots.map((snap) => {
+        const fp = exploration.stateGraph?.snapshotsByFp
+          ? [...exploration.stateGraph.snapshotsByFp.entries()].find(([, s]) => s === snap)?.[0]
+          : null;
+        return fp ? { ...snap, url: `${snap.url}#fp=${fp}` } : snap;
+      });
+      const stateDiff = runDiffAwareBaseline(project, run, stateKeyed, "state");
+      if (stateDiff.noChanges) {
+        // Short-circuit: nothing changed, skip generation entirely.
+        snapshots = [];
+        snapshotsByUrl = {};
+      }
+      // else: keep all snapshots — generation needs the full state set
+      // for journey/flow context; the diff has been persisted + emitted.
+    }
 
     // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
     ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
@@ -339,85 +451,27 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
 
     // ── Diff-aware crawl baseline (AUTO-002) ──────────────────────────────
     // Runs after the unreachable-target check so that transient network
-    // failures cannot wipe existing baselines.
-    //
-    // When the crawl target's origin differs from the project's canonical
-    // URL (e.g. AUTO-015 deployment-preview crawls against
-    // https://preview-abc.vercel.app), we skip the diff entirely. Snapshots
-    // are keyed by the preview origin and would never match the production
-    // baselines — writing them back would silently destroy the project's
-    // real fingerprint set and force a full re-generation on the next
-    // production crawl.
-    // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
-    // project's CANONICAL (production) URL — not `project.url`, which the
-    // AUTO-015 trigger routes overwrite with the deployment preview URL
-    // before invoking this function. `project.canonicalUrl` is passed in
-    // from `routes/trigger.js` for preview crawls; regular crawls omit
-    // it and fall back to `project.url` (where both sides naturally match).
-    const canonicalForOriginCheck = project.canonicalUrl || project.url;
-    const sameOrigin = (() => {
-      try {
-        return new URL(snapshots[0]?.url || project.url).origin === new URL(canonicalForOriginCheck).origin;
-      } catch { return false; }
-    })();
-    if (!sameOrigin) {
-      log(run, `↪️  Preview-deployment crawl detected — skipping baseline diff (preserving production baselines).`);
-    } else if (snapshots.length === 0) {
-      // Defence-in-depth: a crawl that yielded zero snapshots but passed
-      // the unreachable-target check above (e.g. auth wall, SPA with no
-      // crawlable links, Playwright silent failure) must not wipe the
-      // project's baselines. Skip the diff entirely.
-      log(run, `⚠️  Crawl returned zero snapshots — skipping baseline diff to preserve existing fingerprints.`);
-    } else {
-      const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
-      const diff = diffCrawlSnapshots(existingBaselines, snapshots);
-      run.changedPages = diff.changedPages;
-      run.removedPages = diff.removedPages;
-      emitRunEvent(run.id, "pages_changed", {
-        changedPages: diff.changedPages,
-        removedPages: diff.removedPages,
-        unchangedPages: diff.unchangedPages,
-      });
-      if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
-        // No-change crawl: the existing baselines are still authoritative
-        // — re-writing them with the current fingerprints is a no-op at
-        // best and a footgun at worst (see the zero-snapshot branch above,
-        // which is now separately guarded). Leave the baseline table alone
-        // and short-circuit generation.
-        log(run, "🟰 No page changes detected against the previous crawl baseline.");
-        snapshots = [];
-        snapshotsByUrl = {};
-        // AUTO-002 acceptance criterion: a no-change crawl must surface as
-        // `completed_empty` (not green "success") so the UI can render the
-        // "no work to do" path instead of looking like a regression. Mark
-        // it here so the early branch in the finalize block reports the
-        // correct reason ("no changes" vs "AI returned empty").
-        run.noChangesDetected = true;
-      } else {
-        // Changes detected (or first-ever crawl for this project) — persist
-        // the new fingerprints as the updated baseline. Runs BEFORE the
-        // generation pipeline so a generation failure doesn't roll back the
-        // observed page set.
-        //
-        // Use `mergeProjectBaselines` (not `replaceProjectBaselines`) so a
-        // partial crawl — e.g. page N fails with a transient 503 while
-        // the rest succeed — doesn't silently drop page N's baseline and
-        // force an unnecessary regen on the next run. Only URLs that the
-        // diff *explicitly* classified as removed (present before, absent
-        // now) are deleted; pages that weren't observed this crawl but
-        // weren't classified as removed (because the crawl set wasn't
-        // comprehensive) keep their existing baselines.
-        crawlBaselineRepo.mergeProjectBaselines(project.id, diff.fingerprints, diff.removedPages);
-        log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
-        if (Object.keys(existingBaselines).length > 0) {
-          const changedSet = new Set(diff.changedPages);
-          snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
-          snapshotsByUrl = Object.fromEntries(
-            Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
-          );
-          log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
-        }
-      }
+    // failures cannot wipe existing baselines. The shared helper handles
+    // canonical-URL origin checking (AUTO-015 preview-crawl preservation),
+    // zero-snapshot defence, no-change short-circuit, and partial-crawl-safe
+    // baseline merging. See `runDiffAwareBaseline` JSDoc for details.
+    const diffOutcome = runDiffAwareBaseline(project, run, snapshots, "crawl");
+    if (diffOutcome.noChanges) {
+      // No-change crawl → short-circuit generation. The finalize block
+      // checks `run.noChangesDetected` to render the correct
+      // `completed_empty` message ("no changes" vs "AI returned empty").
+      snapshots = [];
+      snapshotsByUrl = {};
+    } else if (!diffOutcome.skipped && diffOutcome.hadExistingBaseline && diffOutcome.changedSet) {
+      // Diff-aware generation scope: filter to changed pages only.
+      // First-ever crawl (no existing baseline) skips this filter so every
+      // page flows through generation, matching pre-AUTO-002 behaviour.
+      const changedSet = diffOutcome.changedSet;
+      snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
+      snapshotsByUrl = Object.fromEntries(
+        Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
+      );
+      log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
     }
 
     throwIfAborted(signal);

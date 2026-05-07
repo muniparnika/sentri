@@ -93,4 +93,43 @@ assert.equal(allRemoved.unchangedPages.length, 0);
 // This is what makes the baseline comparison work across crawls.
 assert.equal(buildPageFingerprint(home), buildPageFingerprint({ ...home }), "fingerprint is deterministic");
 
+// ── Scenario 8: state-explorer composite-key baselines (AUTO-002b) ─────────
+// State mode keys baselines by `originalUrl#fp=<fingerprint>` so distinct
+// states at the same URL (login blank vs login with errors) are tracked
+// as separate rows. The diff function itself doesn't know about composite
+// keys — it just keys on `.url`, so this scenario verifies that whatever
+// caller-side key strategy is used, the diff logic respects it.
+const loginBlank = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }] };
+const loginErr = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }, { tag: "div", text: "Invalid password" }] };
+
+// Compose state-mode keys: same URL, different fingerprints → two distinct rows.
+const blankKeyed = { ...loginBlank, url: `${loginBlank.url}#fp=${buildPageFingerprint(loginBlank)}` };
+const errKeyed = { ...loginErr, url: `${loginErr.url}#fp=${buildPageFingerprint(loginErr)}` };
+
+// First crawl — both states are added.
+const stateFirstDiff = diffCrawlSnapshots({}, [blankKeyed, errKeyed]);
+assert.equal(stateFirstDiff.addedPages.length, 2, "state mode: both states added on first crawl");
+assert.notEqual(blankKeyed.url, errKeyed.url, "composite keys differentiate states at the same base URL");
+
+// Second crawl — same states, no change.
+const stateBaseline = {
+  [blankKeyed.url]: { fingerprint: buildPageFingerprint(loginBlank) },
+  [errKeyed.url]: { fingerprint: buildPageFingerprint(loginErr) },
+};
+const stateNoChange = diffCrawlSnapshots(stateBaseline, [blankKeyed, errKeyed]);
+assert.deepEqual(stateNoChange.changedPages, [], "state mode: no-change crawl returns empty changedPages");
+assert.equal(stateNoChange.unchangedPages.length, 2);
+
+// Third crawl — only the error state changed (e.g. error message changed).
+const loginErr2 = { url: "https://app.example.com/login", title: "Login", elements: [{ tag: "input", type: "email" }, { tag: "div", text: "Account locked" }] };
+const errKeyed2 = { ...loginErr2, url: `${loginErr2.url}#fp=${buildPageFingerprint(loginErr2)}` };
+// Note: errKeyed2 has a NEW composite key (different fingerprint) — so it
+// looks like an *added* state plus a *removed* state to the diff. This is
+// the correct semantics for state mode: a state with new content is a
+// new state, and the old fingerprint becomes "removed".
+const stateDelta = diffCrawlSnapshots(stateBaseline, [blankKeyed, errKeyed2]);
+assert.ok(stateDelta.addedPages.includes(errKeyed2.url), "state mode: state with new content → added");
+assert.ok(stateDelta.removedPages.includes(errKeyed.url), "state mode: state with old content → removed");
+assert.ok(stateDelta.unchangedPages.includes(blankKeyed.url), "state mode: untouched state stays unchanged");
+
 console.log("crawl-diff.test.js passed");
