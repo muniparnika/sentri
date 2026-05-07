@@ -360,6 +360,12 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
         log(run, "🟰 No page changes detected against the previous crawl baseline.");
         snapshots = [];
         snapshotsByUrl = {};
+        // AUTO-002 acceptance criterion: a no-change crawl must surface as
+        // `completed_empty` (not green "success") so the UI can render the
+        // "no work to do" path instead of looking like a regression. Mark
+        // it here so the early branch in the finalize block reports the
+        // correct reason ("no changes" vs "AI returned empty").
+        run.noChangesDetected = true;
       } else {
         log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
         if (Object.keys(existingBaselines).length > 0) {
@@ -475,6 +481,9 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // "completed_empty" so the UI can show a warning instead of green success.
     if (run.tests.length === 0) {
       run.status = "completed_empty";
+      if (run.noChangesDetected) {
+        log(run, `✅ Crawl completed — no page changes since the last baseline; generation skipped.`);
+      } else {
       logWarn(run, `Crawl completed but no tests were generated.`);
       logWarn(run, `Possible causes:`);
       logWarn(run, `  1. AI provider is temporarily overloaded (503) — wait 5-10 min and Re-run, or configure multi-provider fallback in Settings`);
@@ -482,6 +491,7 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       logWarn(run, `  3. Pages have no interactive elements — try a different start URL`);
       logWarn(run, `  4. AI provider returned empty — check your API key in Settings`);
       logWarn(run, `  5. Try "State exploration" mode to discover dynamic content`);
+      }
     } else if (run.rateLimitError) {
       logWarn(run, `Completed with rate limit — only ${run.tests.length} test(s) generated. Switch AI provider or retry later.`);
     } else {
