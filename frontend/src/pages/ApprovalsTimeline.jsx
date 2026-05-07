@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNotifications } from "../context/NotificationContext.jsx";
 import { fmtRelativeTimeFull } from "../utils/formatters.js";
-import { ACTIVITY_TYPES } from "../../../backend/src/constants/activityTypes.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { invalidateAutoApprovalsCache } from "../queryClient.js";
 import "../styles/pages/approvals-timeline.css";
 
@@ -118,9 +118,10 @@ export default function ApprovalsTimeline() {
     // range === "all", `afterIso` is null and we omit the param.
     const after = afterIso || undefined;
     Promise.all([
-      // Activity-type literals are imported from the cross-side constants
-      // module at `backend/src/constants/activityTypes.js` so a typo
-      // becomes a ReferenceError rather than a silent empty-feed regression
+      // Activity-type literals are imported from `frontend/src/constants/
+      // activityTypes.js` (kept in sync with `backend/src/constants/
+      // activityTypes.js`) so a typo becomes a ReferenceError rather than a
+      // silent empty-feed regression
       // — this page previously fetched `"test.approved"` (past tense) while
       // the backend wrote `"test.approve"`, and the human-approvals column
       // was permanently empty. The shared constant is the fix.

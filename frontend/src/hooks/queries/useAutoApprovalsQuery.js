@@ -20,7 +20,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../../api.js";
-import { ACTIVITY_TYPES } from "../../../../backend/src/constants/activityTypes.js";
+import { ACTIVITY_TYPES } from "../../constants/activityTypes.js";
 import { autoApprovalsQueryKeys } from "../../queryClient.js";
 
 /** Shared stale window — 30s matches `DEFAULT_STALE_TIME_MS` elsewhere. */

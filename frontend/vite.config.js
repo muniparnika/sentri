@@ -35,15 +35,13 @@ export default defineConfig({
 
   server: {
     port: 3000,
-    // Allow Vite's dev server to serve files from the repo root so the
-    // frontend can import cross-side constants living under `backend/`
-    // (e.g. `backend/src/constants/activityTypes.js`, imported by both
-    // backend + frontend). By default, Vite restricts module serving to
-    // `frontend/` and blocks relative imports climbing above it with
-    // "file is outside server root". Listing the parent dir opens that
-    // sandbox just enough for the shared ESM modules. Production build
-    // (Rollup) is unaffected — it just follows the import graph with no
-    // filesystem sandbox.
+    // Allow Vite's dev server to serve files from the repo root. Kept
+    // permissive (`..`) so relative imports climbing above `frontend/`
+    // don't trip "file is outside server root" during local dev, even
+    // though cross-side constants now live in `frontend/src/constants/`
+    // (duplicated from `backend/src/constants/`) to keep the Docker
+    // build self-contained. Production build (Rollup) is unaffected —
+    // it just follows the import graph with no filesystem sandbox.
     fs: {
       allow: [".", ".."],
     },
