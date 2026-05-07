@@ -687,7 +687,18 @@ router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
-  testRepo.update(test.id, { reviewStatus: "draft", reviewedAt: null });
+  // AUTO-003b: clear the four provenance columns alongside reviewStatus/reviewedAt
+  // so a previously-approved test (auto- or human-) doesn't retain stale
+  // `approvalSource`/`approvedAt` etc. after being restored to draft. Matches
+  // the bulk-restore path below and the dedicated /tests/:testId/revoke endpoint.
+  testRepo.update(test.id, {
+    reviewStatus: "draft",
+    reviewedAt: null,
+    approvalSource: null,
+    approvalThreshold: null,
+    approvedAt: null,
+    approvedBy: null,
+  });
   logActivity({ ...actor(req),
     type: "test.restore", projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,

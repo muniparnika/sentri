@@ -41,7 +41,15 @@ export function persistGeneratedTests(validatedTests, project, run, defaults = {
   const threshold = Number.isFinite(project?.autoApproveThreshold) ? project.autoApproveThreshold : null;
   for (const t of validatedTests) {
     const testId = generateTestId();
-    const confidenceScore = Number.isFinite(t?.confidenceScore) ? t.confidenceScore : (t._quality || 0);
+    // `confidenceScore` is 0–1 (normalized by `deduplicateTests` and the
+    // orchestrator's re-score step); `_quality` is 0–100. Normalize the
+    // fallback so the `>= threshold` comparison below always compares on
+    // the same scale — a bare `(t._quality || 0)` would read `75 >= 0.8`
+    // as true and silently auto-approve every test if the fallback ever
+    // activates. `threshold` is validated to (0, 1] on the route.
+    const confidenceScore = Number.isFinite(t?.confidenceScore)
+      ? t.confidenceScore
+      : ((t._quality || 0) / 100);
     const autoApproved = threshold !== null && confidenceScore >= threshold;
     // approvedAt is epoch ms (INTEGER per migration 017 + NEXT.md spec) so the
     // approvals timeline can do straight arithmetic ranges; reviewedAt stays

@@ -788,28 +788,11 @@ export const api = {
   getSystemInfo:   () => req("GET",    "/system"),
   /** @returns {Promise<{cleared: number}>} Clear all run history. */
   clearRuns:       () => req("DELETE", "/data/runs"),
-  /**
-   * Fetch the activity log, optionally filtered by `type` and/or `projectId`.
-   * Server caps `limit` at 200 (see `backend/src/routes/system.js`'s
-   * `GET /activities`). Powers the ReviewQueue auto-approval tray (AUTO-003b)
-   * which filters by `type === "test.auto_approve"`.
-   * @param {Object} [filters]
-   * @param {string} [filters.type]      - e.g. `"test.auto_approve"`.
-   * @param {string} [filters.projectId]
-   * @param {number} [filters.limit]
-   * @returns {Promise<Array<{id: string, type: string, projectId: string, testId: string|null, testName: string|null, detail: string, createdAt: string, userName: string|null, meta: Object|null}>>}
-   */
-  getActivities: (filters = {}) => {
-    const params = new URLSearchParams();
-    if (filters.type) params.set("type", filters.type);
-    if (filters.projectId) params.set("projectId", filters.projectId);
-    if (filters.after) params.set("after", filters.after);
-    if (filters.before) params.set("before", filters.before);
-    if (filters.limit) params.set("limit", String(filters.limit));
-    if (filters.offset != null) params.set("offset", String(filters.offset));
-    const qs = params.toString();
-    return req("GET", `/activities${qs ? `?${qs}` : ""}`);
-  },
+  // NOTE: `getActivities` is defined once above (in the Test review actions
+  // block). A duplicate definition previously lived here and silently won
+  // over the first per JS object-literal semantics, producing dead code and
+  // a subtle behaviour divergence (`filters.limit` truthy check vs
+  // `!= null`). Consolidated to a single definition — do not re-add here.
   /** @returns {Promise<{cleared: number}>} Clear activity log. */
   clearActivities: () => req("DELETE", "/data/activities"),
   /** @returns {Promise<{cleared: number}>} Clear self-healing history. */
