@@ -72,7 +72,19 @@ However, Sentri is **not yet enterprise-grade**. The platform is a well-engineer
 | AI8 | **No cost observability.** Token usage not tracked per project / per run / per provider. No budget caps, no cost dashboards. BYOK helps but doesn't replace this. | **High** |
 | AI9 | **No fine-tuning / RAG over user's own codebase.** Generator can't see existing tests when adding new ones — hello, duplication. | High |
 | AI10 | **No AI debugging assistant on failure.** AUTO-021 plans this but unshipped. AUTO-010 (root cause clustering) similarly unshipped. | High |
-## 6. UI/UX Review (cont.)
+### Recommendations (AI)
+- Adopt **LangGraph** or a homegrown DAG runner for the pipeline. Stages become typed nodes with retry, timeout, idempotency.
+- Stand up **Phoenix** (Arize) or **LangSmith** for trace + eval. Define a 50-test golden set; CI fails on >5% regression.
+- Add **per-project token budgets** with a circuit breaker. Emit `ai.tokens.consumed` metric samples (MET-001 infra exists).
+- Implement **RAG over existing approved tests** before generation — drop into the prompt as "do not duplicate these patterns."
+- Add a **Critic agent** that validates generator output against the crawl graph (selectors must exist, URLs must be reachable).
+- Expose **healing history** to the generator so repeated selector failures shape future generations.
+
+---
+
+## 6. UI/UX Review
+
+Findings against modern SaaS bar (Linear, Vercel, Datadog, Retool):
 | U1 | IA sprawl — 5 new top-level pages in one PR, no IA doc | High |
 | U2 | No onboarding / first-run tour / sample project | High |
 | U3 | Empty/Loading/Error states inconsistent across pages | Medium |
@@ -205,7 +217,7 @@ However, Sentri is **not yet enterprise-grade**. The platform is a well-engineer
 - Build a **plugin marketplace** + public SDK (TS/Python).
 - Add **mobile native testing** via Appium driver.
 - Add **API testing UX** parity with Postman/ReadyAPI.
-  Ask anything about this PR...
+  
 - Add **distributed sharding** (CAP-002) + autoscaled K8s worker pool.
 - Add **SOC2 Type II** controls: audit log export, CMK, data residency, sub-processor list, DPA.
 - Add **SSO/SAML/SCIM** (SEC-005) with per-workspace IdP config.
@@ -222,6 +234,34 @@ However, Sentri is **not yet enterprise-grade**. The platform is a well-engineer
 - Build **prompt-injection / PII firewall** layer between crawler and LLM (presidio + content-security policies for DOM ingestion).
 - Build **agent observability** (LangSmith / Phoenix self-hosted) with per-step traces, costs, latencies.
 ## 19. Recommended Architecture Changes
+
+```
+                  ┌────────────────────────┐
+   browser ──────►│  api-gateway (Express) │──► OpenAPI + SDK
+                  └────────────┬───────────┘
+                               │ events (Redis Streams)
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+ ┌──────────────┐      ┌───────────────┐      ┌────────────────┐
+ │ orchestrator │      │  ai-broker    │      │   scheduler    │
+ │  (LangGraph) │◄────►│ (LLM + eval)  │      │ (BullMQ+cron)  │
+ └──────┬───────┘      └───────┬───────┘      └────────┬───────┘
+        │                      │                       │
+        ▼                      ▼                       ▼
+   ┌────────────────────────────────────────────────────────┐
+   │  worker pool (stateless containers, K8s autoscaled)    │
+   │   • crawler agent  • generator agent  • runner agent   │
+   │   • healer agent   • critic agent                      │
+   └────────────────────┬───────────────────────────────────┘
+                        ▼
+            ┌──────────────────────┐
+            │  Postgres (primary)  │
+            │  + Redis (cache/bus) │
+            │  + S3 (artifacts)    │
+            │  + OTel collector    │
+            └──────────────────────┘
+```
+
 Key shifts:
 1. **api-gateway** is thin; emits events; never blocks on AI/Playwright.
 2. **orchestrator** runs the pipeline as a typed LangGraph DAG with checkpoint + resume.
