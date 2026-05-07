@@ -171,6 +171,11 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
     failed: 0,
     total: triggerCrawl ? 0 : tests.length,
     parallelWorkers,
+    // tests[] is required by persistGeneratedTests (testPersistence.js)
+    // which calls run.tests.push(testId) when triggerCrawl runs the
+    // crawlAndGenerateTests path. Without this, the crawl crashes at
+    // the persistence step with "Cannot read properties of undefined".
+    tests: [],
     testQueue: triggerCrawl ? [] : tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
     workspaceId: project.workspaceId || null,
   };

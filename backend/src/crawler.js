@@ -330,29 +330,46 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // ── Diff-aware crawl baseline (AUTO-002) ──────────────────────────────
     // Runs after the unreachable-target check so that transient network
     // failures cannot wipe existing baselines.
-    const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
-    const diff = diffCrawlSnapshots(existingBaselines, snapshots);
-    run.changedPages = diff.changedPages;
-    run.removedPages = diff.removedPages;
-    crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
-    emitRunEvent(run.id, "pages_changed", {
-      changedPages: diff.changedPages,
-      removedPages: diff.removedPages,
-      unchangedPages: diff.unchangedPages,
-    });
-    if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
-      log(run, "🟰 No page changes detected against the previous crawl baseline.");
-      snapshots = [];
-      snapshotsByUrl = {};
+    //
+    // When the crawl target's origin differs from the project's canonical
+    // URL (e.g. AUTO-015 deployment-preview crawls against
+    // https://preview-abc.vercel.app), we skip the diff entirely. Snapshots
+    // are keyed by the preview origin and would never match the production
+    // baselines — writing them back would silently destroy the project's
+    // real fingerprint set and force a full re-generation on the next
+    // production crawl.
+    const sameOrigin = (() => {
+      try {
+        return new URL(snapshots[0]?.url || project.url).origin === new URL(project.url).origin;
+      } catch { return false; }
+    })();
+    if (!sameOrigin) {
+      log(run, `↪️  Preview-deployment crawl detected — skipping baseline diff (preserving production baselines).`);
     } else {
-      log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
-      if (Object.keys(existingBaselines).length > 0) {
-        const changedSet = new Set(diff.changedPages);
-        snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
-        snapshotsByUrl = Object.fromEntries(
-          Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
-        );
-        log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
+      const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
+      const diff = diffCrawlSnapshots(existingBaselines, snapshots);
+      run.changedPages = diff.changedPages;
+      run.removedPages = diff.removedPages;
+      crawlBaselineRepo.replaceProjectBaselines(project.id, diff.fingerprints);
+      emitRunEvent(run.id, "pages_changed", {
+        changedPages: diff.changedPages,
+        removedPages: diff.removedPages,
+        unchangedPages: diff.unchangedPages,
+      });
+      if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
+        log(run, "🟰 No page changes detected against the previous crawl baseline.");
+        snapshots = [];
+        snapshotsByUrl = {};
+      } else {
+        log(run, `🧬 Crawl diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
+        if (Object.keys(existingBaselines).length > 0) {
+          const changedSet = new Set(diff.changedPages);
+          snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
+          snapshotsByUrl = Object.fromEntries(
+            Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
+          );
+          log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
+        }
       }
     }
 
