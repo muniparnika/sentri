@@ -178,35 +178,57 @@ function DetailSidebar({
   return (
     <div className="rq-detail-sidebar">
       {/* Quality score */}
-      {score != null && (
-        <div className="rq-info-row">
-          <div className="rq-info-label">Quality score</div>
-          <div className="rq-quality-row rq-quality-row--flush">
-            <span className="rq-quality-score" style={{ color: qualityColor(score) }}>
-              {score}
-            </span>
-            <div
-              className="rq-quality-bar"
-              role="progressbar"
-              aria-valuenow={score}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label="Quality score"
-            >
+      {score != null && (() => {
+        // Always-visible inline summary: the single biggest penalty and the
+        // single biggest reward. Reviewers see the actionable signal without
+        // having to click; the full factor list stays behind the chip below.
+        const sorted = [...(test.qualityScoreFactors || [])].sort((a, b) => a.delta - b.delta);
+        const worst  = sorted[0]?.delta < 0 ? sorted[0] : null;
+        const best   = sorted[sorted.length - 1]?.delta > 0 ? sorted[sorted.length - 1] : null;
+        return (
+          <div className="rq-info-row">
+            <div className="rq-info-label">Quality score</div>
+            <div className="rq-quality-row rq-quality-row--flush">
+              <span className="rq-quality-score" style={{ color: qualityColor(score) }}>
+                {score}
+              </span>
               <div
-                className="rq-quality-fill"
-                style={{ width: `${score}%`, background: qualityColor(score) }}
-              />
+                className="rq-quality-bar"
+                role="progressbar"
+                aria-valuenow={score}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Quality score"
+              >
+                <div
+                  className="rq-quality-fill"
+                  style={{ width: `${score}%`, background: qualityColor(score) }}
+                />
+              </div>
+            </div>
+            {(worst || best) && (
+              <div className="rq-quality-summary">
+                {worst && (
+                  <div className="rq-quality-summary__line" style={{ color: "var(--red)" }}>
+                    − {worst.label} ({worst.delta})
+                  </div>
+                )}
+                {best && (
+                  <div className="rq-quality-summary__line" style={{ color: "var(--green)" }}>
+                    + {best.label} (+{best.delta})
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Click-to-expand factor breakdown — same component used in the
+                list pane so reviewers can audit the score without leaving the
+                detail view. */}
+            <div className="rq-quality-explain">
+              <QualityScoreChip score={score} factors={test.qualityScoreFactors} />
             </div>
           </div>
-          {/* Click-to-expand factor breakdown — same component used in the
-              list pane so reviewers can audit the score without leaving the
-              detail view. */}
-          <div className="rq-quality-explain">
-            <QualityScoreChip score={score} factors={test.qualityScoreFactors} />
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Project */}
       <div className="rq-info-row">
@@ -1042,10 +1064,23 @@ export default function ReviewQueue() {
                   const score      = t.qualityScore;
                   const isApi      = t.generatedFrom === "api_har_capture" || t.generatedFrom === "api_user_described";
 
+                  // Quality warn: gate on a *specific* heavy penalty (e.g.
+                  // "No assertions" at -30) rather than overall score < 50.
+                  // This ties the red-border affordance to an actionable
+                  // cause instead of a vague low number.
+                  const factors    = Array.isArray(t.qualityScoreFactors) ? t.qualityScoreFactors : [];
+                  const qualityWarn = factors.some(f => f.kind === "penalty" && f.delta <= -25);
+                  // Worst-penalty label only (no delta — keeps the row tight)
+                  // and only when score < 80, so healthy tests stay quiet.
+                  const sortedFactors = [...factors].sort((a, b) => a.delta - b.delta);
+                  const worstLabel  = (score != null && score < 80 && sortedFactors[0]?.delta < 0)
+                    ? sortedFactors[0].label
+                    : null;
+
                   return (
                     <div
                       key={t.id}
-                      className={`rq-item ${isActive ? "rq-item--active" : ""} ${isNew ? "rq-item--new" : ""}`}
+                      className={`rq-item ${isActive ? "rq-item--active" : ""} ${isNew ? "rq-item--new" : ""} ${qualityWarn ? "rq-item--quality-warn" : ""}`}
                       role="button"
                       tabIndex={0}
                       aria-pressed={isActive}
@@ -1099,6 +1134,14 @@ export default function ReviewQueue() {
                               onClick={e => e.stopPropagation()}
                             >
                               <QualityScoreChip score={score} factors={t.qualityScoreFactors} />
+                            </span>
+                          )}
+                          {worstLabel && (
+                            <span
+                              className="rq-item__quality-summary"
+                              title={`Top penalty: ${worstLabel}`}
+                            >
+                              · {worstLabel}
                             </span>
                           )}
                         </div>
