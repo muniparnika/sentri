@@ -37,7 +37,22 @@
  * smoke-test fixture in scripts/promote-sprint-item.test.mjs).
  *
  * Usage:
+ *   # Promote a single queue item to Current PR
  *   node scripts/promote-sprint-item.mjs <prNumber> <nextItemId> [--root=<dir>]
+ *
+ *   # Promote a bundle (multiple queue items merged into one Current PR)
+ *   node scripts/promote-sprint-item.mjs <prNumber> "<id1>+<id2>" [--root=<dir>]
+ *   node scripts/promote-sprint-item.mjs <prNumber> "<id1> + <id2>" [--root=<dir>]
+ *
+ * The second form accepts a `+`-joined id string (with or without spaces)
+ * and:
+ *   - Renders the Current PR heading as `## ▶ Current PR — <id1> + <id2> (bundled)`
+ *   - Sources scope text from EACH queue slot, concatenated under the new
+ *     heading with `### Scope 1 — <id1>` / `### Scope 2 — <id2>` sub-headings
+ *     so reviewers can still see which spec drove which acceptance criterion
+ *   - Removes ALL referenced slots from the queue and renumbers survivors
+ *   - Adds a `**Do not split this PR.**` note matching the AUTO-003+003b
+ *     bundling pattern
  */
 
 import fs from "node:fs";
@@ -187,6 +202,7 @@ function findQueueSlot(nextMd, nextItemId) {
     ? queueRegion.length
     : headingEndInRegion + nextHeadingRel + 1; // +1 keeps the trailing newline
   return {
+    id: match[2],
     block: queueRegion.slice(headingStartInRegion + match[0].length, bodyEndInRegion).trim(),
     title,
     slotNumber,
@@ -211,6 +227,77 @@ function findQueueSlot(nextMd, nextItemId) {
  * If `slot` is null (id not found in the queue — e.g. a hand-rolled
  * promotion), this is a no-op so the caller's heading rewrite still applies.
  */
+/**
+ * Bundle-aware wrapper around the single-slot `replaceCurrentPrBody`.
+ *
+ * Splits a `+`-joined `nextItemId` (e.g. `"AUTO-002 + AUTO-015"`) into its
+ * component ids, looks up each in the queue, and renders ONE Current PR
+ * section that concatenates the matched slots' bodies under per-scope
+ * `### Scope N — <id>` sub-headings. Single-id calls round-trip unchanged
+ * to the original single-slot path so existing fixtures + the smoke test
+ * keep passing.
+ *
+ * Why a wrapper rather than re-shaping `replaceCurrentPrBody`: the
+ * single-slot path is already exercised by an established smoke test;
+ * widening its signature would force every other caller (and the existing
+ * fixture) to migrate. The wrapper keeps single-id behaviour byte-identical
+ * and only diverges when the caller asked for a bundle.
+ */
+function replaceCurrentPrBodyForIds(nextMd, ids, slots, prevShipped, prevPrNum) {
+  const realSlots = slots.filter(Boolean);
+  if (realSlots.length === 0) return nextMd;
+  if (ids.length === 1) {
+    // Single-id path: delegate to the original implementation untouched.
+    return replaceCurrentPrBody(nextMd, ids[0], realSlots[0], prevShipped, prevPrNum);
+  }
+  // Bundle path: render a multi-scope section.
+  const headingId = `${ids.join(" + ")} (bundled)`;
+  const branchSlug = ids.join("-").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  // Pull the first resolved slot's meta line (Effort/Priority/Dependencies)
+  // for the section header. Per-scope sub-blocks below carry their own meta
+  // lines so reviewers see each scope's individual sizing.
+  const firstMetaMatch = realSlots[0].block.match(/^\*\*Effort:\*\*[^\n]+/m);
+  const firstMeta = firstMetaMatch ? firstMetaMatch[0] : "**Effort:** TBD | **Priority:** TBD";
+  // Compose per-scope sub-blocks. Each preserves the queue body verbatim so
+  // hand-edits to the queue's prose flow through to the bundle without
+  // re-templating.
+  const scopeBlocks = realSlots.map((s, i) =>
+    `### Scope ${i + 1} — ${s.id} — ${s.title}\n\n${s.block}`,
+  );
+  // Surface any caller-requested ids that didn't resolve to a queue slot —
+  // the script can't synthesise scope text for an id that doesn't exist,
+  // but it can flag the gap so a human fills it in before review.
+  const missingIds = ids.filter((id) => !realSlots.find((s) => s.id === id));
+  const missingNote = missingIds.length > 0
+    ? `> ⚠ **TODO:** the following ids weren't found in the queue and need hand-written scope blocks: ${missingIds.map((m) => "`" + m + "`").join(", ")}.\n\n`
+    : "";
+  const slotNumbers = realSlots.map((s) => s.slotNumber).join(", ");
+  const breadcrumb = `> ${prevShipped.id} ✅ shipped in PR #${prevPrNum}. ${ids.join(" + ")} promoted as a bundle from queue slot${realSlots.length === 1 ? "" : "s"} ${slotNumbers} per \`NEXT.md\` rotation.`;
+  const bundleNote = "**Do not split this PR.** Bundled promotions ship together by design — see the bundling-guidance note at the top of NEXT.md and the per-scope sub-headings below.";
+  const rendered =
+    `## ▶ Current PR — ${headingId}\n\n` +
+    `**Title:** ${realSlots.map((s) => s.title).join(" + ")}\n` +
+    `**Branch:** \`feat/${branchSlug}\`\n` +
+    `${firstMeta}\n\n` +
+    `${breadcrumb}\n\n` +
+    `${bundleNote}\n\n` +
+    missingNote +
+    scopeBlocks.join("\n\n") + "\n\n" +
+    `### PR checklist (${ids.join(" + ")})\n\n` +
+    `- [ ] **Both scopes shipped in one PR — do not split**\n` +
+    `- [ ] Acceptance criteria for every scope above are met\n` +
+    `- [ ] Add entry to \`docs/changelog.md\` under \`## [Unreleased]\` (one per scope)\n` +
+    `- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)\n\n`;
+  // Splice the rendered block in place of the existing Current PR section.
+  const currentStart = nextMd.indexOf("## ▶ Current PR");
+  if (currentStart < 0) return nextMd;
+  const tail = nextMd.slice(currentStart + "## ▶ Current PR".length);
+  const nextSectionRel = tail.search(/\n## (?!▶)/);
+  if (nextSectionRel < 0) return nextMd;
+  const currentEnd = currentStart + "## ▶ Current PR".length + nextSectionRel + 1;
+  return nextMd.slice(0, currentStart) + rendered + nextMd.slice(currentEnd);
+}
+
 function replaceCurrentPrBody(nextMd, newId, slot, prevShipped, prevPrNum) {
   if (!slot) return nextMd;
 
@@ -497,31 +584,63 @@ function pruneShippedRoadmapEntry(roadmapMd, shipped) {
 // ── Apply all three transforms ──────────────────────────────────────────────
 let shipped = { id: "unknown", title: "(title not found)" };
 
+// Bundle-aware id parsing: a `+`-joined `nextItemId` (with or without spaces)
+// promotes multiple queue slots into one bundled Current PR. Single-id
+// values keep the original single-promotion shape — `splitBundledIds`
+// returns a one-element array, every downstream loop runs once.
+const promotedIds = splitBundledIds(nextItemId);
+const headingId = promotedIds.length > 1
+  ? `${promotedIds.join(" + ")} (bundled)`
+  : promotedIds[0];
+
 if (fs.existsSync(NEXT_PATH)) {
   let next = fs.readFileSync(NEXT_PATH, "utf8");
   shipped = parseCurrentPr(next);
-  // Find the queue slot BEFORE we rewrite anything, so the offsets we
+  // Find each queue slot BEFORE we rewrite anything, so the offsets we
   // capture for `removeQueueSlot` still point at the unmutated buffer.
-  const slot = findQueueSlot(next, nextItemId);
-  if (!slot) {
-    console.warn(
-      `[promote] queue slot for "${nextItemId}" not found — Current PR body will keep prior scope text. ` +
-      `Add a "### N · ${nextItemId} — <title>" entry under "## ⏭ Queue" before promoting, or hand-edit NEXT.md after.`,
-    );
-  }
+  // Slots are looked up in the order the user supplied them — which becomes
+  // the `Scope 1 / Scope 2` ordering in the rendered bundle section.
+  const slots = promotedIds.map((id) => {
+    const slot = findQueueSlot(next, id);
+    if (!slot) {
+      console.warn(
+        `[promote] queue slot for "${id}" not found — its scope block will be missing from the rendered Current PR section. ` +
+        `Add a "### N · ${id} — <title>" entry under "## ⏭ Queue" before promoting, or hand-edit NEXT.md after.`,
+      );
+    }
+    return slot;
+  });
   next = updateRecentlyCompleted(next, prNumber, shipped);
-  // `replaceCurrentPrBody` is the body-rewrite that the prior heading-only
-  // `rewriteCurrentPrHeading` couldn't do — it pulls the spec from the
-  // queue slot and slots it under the new "Current PR" heading. When `slot`
-  // is null this is a no-op and we fall through to the heading-only path
-  // (preserving the previous behaviour for ad-hoc promotions).
-  next = replaceCurrentPrBody(next, nextItemId, slot, shipped, prNumber);
-  // Heading rewrite still runs for the `slot === null` fall-through case;
-  // when `replaceCurrentPrBody` already wrote the section the regex below
-  // simply matches the freshly-written heading and re-writes it identically.
-  next = rewriteCurrentPrHeading(next, nextItemId);
-  // Excise the now-promoted slot from the queue + renumber survivors.
-  next = removeQueueSlot(next, slot);
+  // `replaceCurrentPrBodyForIds` handles both single-id and bundled
+  // promotions — single-id calls delegate to the legacy
+  // `replaceCurrentPrBody` (preserving byte-identical output the smoke test
+  // already locks down); bundled calls render `### Scope 1 — <id>` /
+  // `### Scope 2 — <id>` sub-blocks under one Current PR heading.
+  next = replaceCurrentPrBodyForIds(next, promotedIds, slots, shipped, prNumber);
+  // Heading rewrite still runs for the all-slots-missing fall-through case;
+  // when the body-replace already wrote the section the regex below simply
+  // matches the freshly-written heading and re-writes it identically (the
+  // `headingId` carries the `(bundled)` suffix for multi-id promotions so
+  // round-tripping through `parseCurrentPr` on the next promotion strips
+  // it back to the canonical id list).
+  next = rewriteCurrentPrHeading(next, headingId);
+  // Excise every promoted slot from the queue + renumber survivors. We
+  // process in REVERSE slot-number order so each removal's offsets stay
+  // valid against the buffer — removing a slot at offset X first would
+  // shift every later slot's offsets upward, breaking the next removal.
+  // `findQueueSlot` returns `slotNumber` from the heading, which gives a
+  // stable sort key independent of buffer offsets.
+  const slotsToRemove = slots
+    .filter(Boolean)
+    .sort((a, b) => b.slotNumber - a.slotNumber);
+  for (const slot of slotsToRemove) {
+    // Re-find by id against the in-progress buffer so offsets reflect any
+    // prior removals in this loop. The sort above means each iteration
+    // works on a buffer where higher-numbered slots have already been
+    // excised, so the lookup is unambiguous.
+    const fresh = findQueueSlot(next, slot.id);
+    if (fresh) next = removeQueueSlot(next, fresh);
+  }
   fs.writeFileSync(NEXT_PATH, next);
 }
 

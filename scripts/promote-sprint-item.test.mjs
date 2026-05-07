@@ -244,7 +244,177 @@ const roadmap2 = fs.readFileSync(path.join(sandbox, "ROADMAP.md"), "utf8");
 const auto099Rows = (roadmap2.match(/\|\s*AUTO-099\s*\|/g) || []).length;
 assert.equal(auto099Rows, 1, "Re-running must not double-write the Completed Work Summary row");
 
-// Cleanup — only delete sandbox; real tracker files were never touched.
+// Single-promotion scenario complete — clean up its sandbox before the
+// bundled-promotion scenario allocates its own. Keeping each scenario's
+// sandbox isolated means a failure in the bundle path doesn't leave behind
+// the single-promotion files (and vice versa) for forensic inspection.
 fs.rmSync(sandbox, { recursive: true, force: true });
+
+// ── Bundled-promotion scenario ─────────────────────────────────────────────
+// Promote two queue slots into one bundled Current PR. Validates the new
+// `+`-joined nextItemId path: bundled heading, per-scope sub-blocks, both
+// slots removed from the queue, "Do not split this PR" callout rendered.
+const sandbox2 = fs.mkdtempSync(path.join(os.tmpdir(), "promote-sprint-bundle-"));
+const docs2 = path.join(sandbox2, "docs");
+fs.mkdirSync(docs2, { recursive: true });
+
+const BUNDLE_NEXT = `# NEXT.md
+
+## ▶ Current PR — AUTO-099
+
+**Title:** Prior shipped item
+**Branch:** \`feat/auto-099\`
+
+Old scope.
+
+## ⏭ Queue (next 3 PRs after current)
+
+### 1 · AUTO-200 — First scope of the bundle
+**Effort:** L | **Priority:** 🟢 Differentiator | **Dependencies:** none
+
+First scope's prose body. Acceptance: thing A happens.
+
+### 2 · AUTO-201 — Second scope of the bundle
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-200
+
+Second scope's prose body. Acceptance: thing B happens.
+
+### 3 · AUTO-202 — Untouched survivor
+**Effort:** S | **Priority:** 🔵 Medium
+
+Survivor body — must remain in queue, renumbered from slot 3 to slot 1.
+
+## ✅ Recently completed
+
+| ID | Title | PR |
+|----|-------|----|
+| OLD-X | Older work | #50 |
+`;
+
+const BUNDLE_ROADMAP = `# ROADMAP.md
+
+> **Current sprint:** \`AUTO-099\` · **Blockers:** none
+
+## Completed Work Summary
+
+| ID | Title | PR / Commit |
+|----|-------|-------------|
+| OLD-X | An older shipped item | PR #50 |
+
+---
+
+## Phase 4 — Autonomous Intelligence
+
+---
+
+### AUTO-099 — Prior shipped item 🟢 Differentiator
+
+Old scope text.
+
+---
+
+### AUTO-200 — First scope of the bundle 🟢 Differentiator
+
+Detailed scope (will not be pruned — the script only prunes the SHIPPED item).
+
+---
+
+### AUTO-201 — Second scope of the bundle 🟢 Differentiator
+
+Detailed scope (will not be pruned — same reason).
+
+---
+
+## Summary
+
+| Category | Total | ✅ Done | 🔄 In Progress | 🔲 Pending | Remaining |
+|----------|------:|--------:|---------------:|----------:|-----------|
+| Autonomous Intelligence | 10 | 4 | 1 | 5 | AUTO-099 in-flight |
+| **Totals** | **10** | **4** | **1** | **5** | |
+`;
+
+const BUNDLE_CHANGELOG = `# Changelog
+
+## [Unreleased]
+
+### Added
+- Existing entry.
+
+## [1.0.0] — 2026-01-01
+- Old release.
+`;
+
+fs.writeFileSync(path.join(sandbox2, "NEXT.md"), BUNDLE_NEXT);
+fs.writeFileSync(path.join(sandbox2, "ROADMAP.md"), BUNDLE_ROADMAP);
+fs.writeFileSync(path.join(docs2, "changelog.md"), BUNDLE_CHANGELOG);
+
+// Promote AUTO-200 + AUTO-201 as a bundle.
+execSync(`node scripts/promote-sprint-item.mjs 1000 "AUTO-200 + AUTO-201" --root="${sandbox2}"`, {
+  stdio: "pipe",
+});
+
+const nextBundle = fs.readFileSync(path.join(sandbox2, "NEXT.md"), "utf8");
+
+// 1. Bundled heading rendered with `(bundled)` suffix.
+assert.match(
+  nextBundle,
+  /^##\s+▶\s+Current PR\s+—\s+AUTO-200 \+ AUTO-201 \(bundled\)$/m,
+  "Bundled promotion must render `(bundled)` suffix on the heading",
+);
+
+// 2. Title joins both scopes' titles.
+assert.match(
+  nextBundle,
+  /\*\*Title:\*\*\s+First scope of the bundle \+ Second scope of the bundle/,
+  "Bundled Title line must concatenate both queue slots' titles",
+);
+
+// 3. Branch slug derived from both ids.
+assert.match(
+  nextBundle,
+  /\*\*Branch:\*\*\s+`feat\/auto-200-auto-201`/,
+  "Bundled branch slug must concatenate both ids",
+);
+
+// 4. "Do not split" callout rendered.
+assert.match(
+  nextBundle,
+  /\*\*Do not split this PR\.\*\*/,
+  "Bundled promotion must include the do-not-split callout",
+);
+
+// 5. Per-scope sub-headings rendered for both ids.
+assert.match(nextBundle, /### Scope 1 — AUTO-200 — First scope of the bundle/, "Scope 1 heading must render");
+assert.match(nextBundle, /### Scope 2 — AUTO-201 — Second scope of the bundle/, "Scope 2 heading must render");
+
+// 6. Both promoted slots removed from the queue.
+const bundleQueueBlock = nextBundle.match(/## ⏭ Queue[\s\S]*?(?=\n## )/);
+assert.ok(bundleQueueBlock, "Queue section must still exist after bundled promotion");
+assert.ok(!/### \d+ · AUTO-200 —/.test(bundleQueueBlock[0]), "AUTO-200 slot must be removed from queue");
+assert.ok(!/### \d+ · AUTO-201 —/.test(bundleQueueBlock[0]), "AUTO-201 slot must be removed from queue");
+
+// 7. Surviving slot renumbered from 3 → 1; queue header count drops to 1.
+assert.match(bundleQueueBlock[0], /### 1 · AUTO-202 —/, "Survivor must renumber from slot 3 to slot 1");
+assert.match(
+  bundleQueueBlock[0],
+  /## ⏭ Queue \(next 1 PR after current\)/,
+  "Queue header count must update to 1 (only survivor remains)",
+);
+
+// 8. Hand-off breadcrumb references both promoted ids.
+assert.match(
+  nextBundle,
+  /AUTO-200 \+ AUTO-201 promoted as a bundle from queue slots 1, 2 per `NEXT\.md` rotation/,
+  "Bundled hand-off breadcrumb must list both ids + both slot numbers",
+);
+
+// 9. PR checklist rendered with the joined id.
+assert.match(
+  nextBundle,
+  /### PR checklist \(AUTO-200 \+ AUTO-201\)/,
+  "Bundled PR checklist heading must use the joined id",
+);
+
+fs.rmSync(sandbox2, { recursive: true, force: true });
 
 console.log("promote-sprint-item.test.mjs passed");
