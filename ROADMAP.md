@@ -15,7 +15,7 @@
 >
 > Come back here only to: look up a specific item by ID (Ctrl+F the ID e.g. `DIF-008`), check completed work history, or review phase/competitive context.
 >
-> **Current sprint:** `AUTO-002` (change detection / diff-aware crawling) — promoted per `NEXT.md` rotation after `AUTO-003 + AUTO-003b` shipped in PR #10 · **Blockers:** none remaining · **Remaining:** ~28 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-003 + AUTO-003b ✅ PR #10 (confidence-based auto-approval + provenance / revoke / audit trail); AUTO-017.3 + PROC-001 + PROC-003 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard + sprint-promotion auto-prune); CAP-004 + MET-001 + PROC-002 ✅ PR #8 (self-healing dashboard + time-series metric primitive + sprint-tracker hand-off script); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8.
+> **Current sprint:** `AUTO-002` (change detection / diff-aware crawling) — promoted per `NEXT.md` rotation after `AUTO-003 + AUTO-003b` shipped in PR #10 · **Blockers:** none remaining · **Remaining:** ~28 planned items across Phases 2–4 + Maintenance — see the Summary table at the bottom of this document for the authoritative breakdown. Recent ships: AUTO-003 + AUTO-003b ✅ PR #10 (confidence-based auto-approval + provenance / revoke / audit trail); AUTO-017.3 + PROC-001 ✅ PR #9 (Web Vitals trend charts + no-orphan-routes CI guard); CAP-004 + MET-001 ✅ PR #8 (self-healing dashboard + time-series metric primitive); CAP-003 ✅ PR #12; UI-REFACTOR-001 ✅ PR #6; DIF-015b Gap 3 + DIF-015c Gap 1 ✅ PR #11; AUTO-019 ✅ PR #10; DIF-005 ✅ PR #9; AUTO-017 ✅ PR #8. PROC-002 + PROC-003 (sprint-promotion automation, originally PR #8 / PR #9) reverted in PR #10 — see Completed Work Summary row.
 
 ---
 
@@ -115,7 +115,7 @@ The following items have been verified complete against the codebase and are **n
 | UI-REFACTOR-001 | `ConfigurablePanel` abstraction extracted from `QualityGatesPanel` (AUTO-012) + `WebVitalsBudgetsPanel` (AUTO-017) — ~95% structural overlap eliminated; future SLO-style config UIs (SEC-005 SSO config, DIF-008 Jira integration) ship as one-file PRs. Shipped alongside an Automation page redesign: four top-level WAI-ARIA tabs (**Triggers & Schedules** · **Quality Gates** · **Integrations** · **Snippets**) with arrow-key + Home/End navigation, per-project accordions inside each tab with live status chips (`N tokens` / `Scheduled`, `Gates configured` / `Budgets set`), and a new `frontend/src/utils/automationStatus.js` parser + module-level promise cache + pub/sub invalidation bus pinning the backend response shapes (`data.schedule.enabled`, `data.qualityGates`, `data.webVitalsBudgets`) with regression coverage in `frontend/tests/automation-status.test.js`. The legacy ProjectDetail → Settings tab is removed; Quality Gates / Web Vitals Budgets now live exclusively at `/automation`. Frontend-only — no backend, schema, route, or `permissions.json` changes. | PR #6                                                           |
 | AUTO-017.3 | Web Vitals trend charts on `ProjectQualityCard` (LCP / CLS / INP / TTFB) backed by per-run averages from `recordMetric()` in `testRunner.js` via new `GET /projects/:id/metrics` route + `useProjectMetricQuery` hook; threshold lines sourced from `project.webVitalsBudgets`. | PR #9 |
 | PROC-001 | No-orphan-routes CI guard (`.github/workflows/no-orphan-routes.yml`) — fails PRs adding `router.<method>(…)` in `backend/src/routes/*.js` without touching `frontend/src/api.js` / pages / components; `[no-ui]` PR-title opt-out. Convention documented in REVIEW.md, AGENT.md, CONTRIBUTING.md, and the PR template. | PR #9 |
-| PROC-003 | Sprint promotion auto-prune — `scripts/promote-sprint-item.mjs` extended with three idempotent transforms (`appendCompletedWorkSummary`, `decrementRemainingCounts`, `pruneShippedRoadmapEntry`) that fold the manual REVIEW.md § Sprint Tracker Hand-off steps into the script. | PR #9 |
+| ~~PROC-002~~ + ~~PROC-003~~ | **Reverted in PR #10.** Sprint-promotion automation script (`scripts/promote-sprint-item.mjs` + smoke test) and its PROC-003 auto-prune extension. The regex-based transforms had too many edge cases (bundled-id `(bundled)` suffix leakage, queue-slot vs ROADMAP.md scope-text split, drifting title formats) to be reliably automated; the canonical hand-off is now the expanded manual checklist in `REVIEW.md § Sprint Tracker Hand-off`. | PR #8 (added) / PR #10 (reverted) |
 | CAP-003 | Secret scanner gate on AI-generated Playwright tests. New `backend/src/pipeline/secretScanner.js` runs a `gitleaks`-style scan inside the validate stage (`backend/src/pipeline/testValidator.js`); built-in detectors (AWS access key IDs, JWTs, `Bearer` tokens) plus best-effort `.github/.gitleaks.toml` reuse. Matched tests are rejected, annotated with a redacted finding list (first/last 4 chars only — never plaintext), and the run is flagged via `run.secretScanBlocked = true` in `pipelineOrchestrator.js` so CI consumers can fail the build on regression. Positive + negative fixtures in `backend/tests/secret-scanner.test.js`, registered in `backend/tests/run-tests.js`. | PR #12                                                          |
 | AUTO-003 | Confidence scoring & auto-approval of low-risk tests | PR #10 |
 | AUTO-003b | Auto-approval provenance & audit trail (two-tone badges, revoke endpoint, calibration line, sidebar `🤖 N today`, ApprovalsTimeline page) | PR #10 |
@@ -810,7 +810,7 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 
 **Critical gaps to close next:** AUTO-002 (change detection — current PR) · AUTO-001 (risk-based test selection) · INT-002 (GitHub PR check comments) · AUTO-004 (test impact analysis from git diff)
 
-> **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · PROC-002 · UI-REFACTOR-001.
+> **Previous priorities ✅ shipped:** DIF-001 · DIF-002/002b · DIF-003 · DIF-004 · DIF-005 · DIF-006 · DIF-007 · DIF-011 · DIF-013 · DIF-014 · DIF-015 · DIF-015b · DIF-016 · AUTO-005/006/007/012/013/016/016b/017/019 · CAP-003 · CAP-004 · MET-001 · UI-REFACTOR-001.
 
 ---
 
@@ -825,25 +825,20 @@ Workaround today is to set `BROWSER_HEADLESS=false` (per `REVIEW.md:154-156`). L
 | Differentiators | 22 | 16 | 0 | 6 | DIF-002c, 008, 009, 010, 012, 015c (sub-gaps 2–6) |
 | Autonomous Intelligence | 26 | 14 | 0 | 12 | AUTO-001/002/004/008–011/014/015/018/020/021/022 |
 | Capabilities | 4 | 2 | 0 | 2 | CAP-001 (data-driven testing), CAP-002 (test sharding) |
-| Process automation | 3 | 3 | 0 | 0 | — |
+| Process automation | 1 | 1 | 0 | 0 | — |
 | Maintenance | 11 | 5 | 0 | 6 | MNT-001/002/003/004/005/008 |
-| **Totals** | **83** | **55** | **0** | **28** | |
+| **Totals** | **81** | **53** | **0** | **28** | |
 
 <!--
-  PR #10 ledger reconciliation (AUTO-003 + AUTO-003b):
-    - Per-row impact:    Autonomous Intelligence  Done +2 / Pending −2.
-    - Totals row:        Done 53 → 55, Pending 30 → 28 (matches the +2 / −2 ship).
-    - Narrative line:    advanced from `51 complete / 32 remaining` to
-                         `55 complete / 28 remaining` — that's a +4 / −4 swing
-                         on a +2 / −2 ship because the pre-PR narrative was
-                         already two ships behind the live Totals row
-                         (Totals had been kept current by `promote-sprint-item.mjs`
-                         on PR #9; the prose underneath drifted). Reconciling
-                         the two in this PR brings them back into agreement.
-                         The next agent should treat Totals as authoritative
-                         and only update the narrative from it.
+  PR #10 ledger reconciliation (AUTO-003 + AUTO-003b ship + PROC-002/003 revert):
+    - AUTO-003 + AUTO-003b ship: Autonomous Intelligence Done +2 / Pending −2.
+    - PROC-002 + PROC-003 revert: Process automation Total −2 / Done −2 (the
+      items themselves are gone from the ledger, not just unshipped).
+    - Net Totals impact: Total 83 → 81, Done 55 → 53, Pending unchanged at 28.
+    - Narrative line: matches the Totals row exactly. Treat Totals as
+      authoritative; if the narrative ever drifts, update it from Totals.
 -->
-**Total tracked items:** 83 across 9 categories — **55 complete** (66%), **0 in current PR**, **28 remaining**
+**Total tracked items:** 81 across 9 categories — **53 complete** (65%), **0 in current PR**, **28 remaining**
 
 **Blockers (must ship before team deployment):** All resolved. ✅
 
