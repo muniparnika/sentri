@@ -78,6 +78,7 @@ const files = [
   "tests/web-vitals-trend.test.js",
   "tests/auto-approval.test.js",
   "tests/auto-approval-routes.test.js",
+  "tests/pr11-fixes.test.js",
 ];
 
 let passed = 0;

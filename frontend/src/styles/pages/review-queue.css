@@ -275,6 +275,13 @@
   background: rgba(34, 197, 94, 0.06);
 }
 
+/* Quality warning — gated on a *specific* heavy penalty (e.g. "No
+   assertions" at -30), not on overall score. Ties the red-border
+   affordance to an actionable cause rather than a vague low number. */
+.rq-item--quality-warn {
+  border-left: 3px solid var(--red);
+}
+
 /* "NEW" pill rendered next to the test name in `.rq-item__name`. */
 .rq-new-badge {
   display: inline-block;
@@ -455,6 +462,34 @@
 /* Right-pane explainer slot — sits below the quality bar in DetailSidebar. */
 .rq-quality-explain {
   margin-top: 6px;
+}
+
+/* Always-visible inline summary in DetailSidebar — single worst penalty
+   and single best reward, rendered below the quality bar. The full factor
+   list stays behind the click-to-expand chip in `.rq-quality-explain`. */
+.rq-quality-summary {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rq-quality-summary__line {
+  font-size: 0.72rem;
+  font-family: var(--font-sans);
+  line-height: 1.4;
+}
+
+/* List-row worst-penalty hint — label only (no delta) to save horizontal
+   space. Hidden on healthy tests via the conditional render in JSX so this
+   class only ever paints when there's something actionable to say. */
+.rq-item__quality-summary {
+  font-size: 0.68rem;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
 }
 
 /* ── Pager (server-side pagination footer) ──────────────────────────────────── */

@@ -287,6 +287,29 @@ export function scoreTestWithFactors(test) {
 }
 
 /**
+ * normalizeQualityToConfidence(quality) → number 0–1
+ *
+ * Single source of truth for converting the 0–100 quality rubric output
+ * (`scoreTest` / `_quality`) into the 0–1 `confidenceScore` scale used by
+ * AUTO-003b's `autoApproveThreshold` comparison. Previously this `/100`
+ * normalization was inlined in three places (`deduplicator.js`,
+ * `pipelineOrchestrator.js`, `testPersistence.js`); centralizing avoids
+ * drift if the rubric range ever changes.
+ *
+ * Coerces non-finite / negative inputs to 0 and clamps to [0, 1] so callers
+ * can safely use the result without revalidating.
+ *
+ * @param {number} quality — 0–100 score from scoreTest / scoreTestWithFactors
+ * @returns {number} 0–1 confidence
+ */
+export function normalizeQualityToConfidence(quality) {
+  const q = Number.isFinite(quality) ? quality : 0;
+  if (q <= 0) return 0;
+  if (q >= 100) return 1;
+  return q / 100;
+}
+
+/**
  * scoreTest(test) → number 0–100
  *
  * Quality score used to pick the best test when duplicates are found.
@@ -331,7 +354,7 @@ export function deduplicateTests(tests) {
       // `quality` is on a 0–100 scale (see scoreTestWithFactors); the
       // `autoApproveThreshold` config is on a 0–1 scale per AUTO-003b.
       // Normalize here so a single comparison in testPersistence.js works.
-      confidenceScore: quality / 100,
+      confidenceScore: normalizeQualityToConfidence(quality),
     };
 
     if (!hashMap.has(hash)) {

@@ -5,11 +5,12 @@
  * Applications.jsx to align with the sidebar label and route path.
  */
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Globe, Search, ExternalLink, SquareCheckBig,
   RefreshCw, ChevronRight, Trash2, Pencil,
+  LayoutGrid, List as ListIcon,
 } from "lucide-react";
 import useProjectData, { invalidateProjectDataCache } from "../hooks/useProjectData";
 import { fmtRelativeDate } from "../utils/formatters";
@@ -40,6 +41,15 @@ export default function Projects() {
   const { projects, allTests, allRuns, loading, refresh } = useProjectData();
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null); // project to confirm-delete
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      const v = localStorage.getItem("projects.viewMode");
+      return v === "list" || v === "card" ? v : "list";
+    } catch { return "list"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("projects.viewMode", viewMode); } catch { /* ignore */ }
+  }, [viewMode]);
   const navigate = useNavigate();
   const { user } = useAuth();
   const canDelete = userHasRole(user, "qa_lead");
@@ -102,17 +112,39 @@ export default function Projects() {
         </button>
       </div>
 
-      {/* Search */}
+      {/* Search + view toggle */}
       {projects.length > 0 && (
-        <div style={{ position: "relative", maxWidth: 340, marginBottom: 16 }}>
-          <Search size={13} color="var(--text3)" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
-          <input
-            className="input"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search projects..."
-            style={{ paddingLeft: 28, height: 34, fontSize: "0.82rem" }}
-          />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 340 }}>
+            <Search size={13} color="var(--text3)" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)" }} />
+            <input
+              className="input"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search projects..."
+              style={{ paddingLeft: 28, height: 34, fontSize: "0.82rem" }}
+            />
+          </div>
+          <div role="group" aria-label="View mode" style={{ display: "inline-flex", gap: 4 }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${viewMode === "list" ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setViewMode("list")}
+              aria-pressed={viewMode === "list"}
+              title="List view"
+            >
+              <ListIcon size={13} />
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${viewMode === "card" ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setViewMode("card")}
+              aria-pressed={viewMode === "card"}
+              title="Card view"
+            >
+              <LayoutGrid size={13} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -136,7 +168,127 @@ export default function Projects() {
         </div>
       )}
 
+      {/* Compact list view */}
+      {filtered.length > 0 && viewMode === "list" && (
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.6fr) 110px minmax(140px, 1fr) 90px 160px",
+              gap: 12,
+              padding: "8px 14px",
+              borderBottom: "1px solid var(--border)",
+              fontSize: "0.7rem",
+              color: "var(--text3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              fontWeight: 600,
+            }}
+          >
+            <div>Project</div>
+            <div>Last Run</div>
+            <div>Pass Rate</div>
+            <div>Drafts</div>
+            <div style={{ textAlign: "right" }}>Actions</div>
+          </div>
+          {filtered.map((p, idx) => {
+            const s = projectStats[p.id] || {};
+            const status = s.activeRun ? "running"
+              : s.lastRun?.status === "completed" ? "passed"
+              : s.lastRun?.status === "failed" ? "failed"
+              : "idle";
+            return (
+              <div
+                key={p.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/projects/${p.id}`)}
+                onKeyDown={e => { if (e.key === "Enter") navigate(`/projects/${p.id}`); }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1.6fr) 110px minmax(140px, 1fr) 90px 160px",
+                  gap: 12,
+                  padding: "10px 14px",
+                  alignItems: "center",
+                  borderBottom: idx === filtered.length - 1 ? "none" : "1px solid var(--border)",
+                  cursor: "pointer",
+                  transition: "background 0.12s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--bg2)"}
+                onMouseLeave={e => e.currentTarget.style.background = ""}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <StatusDot status={status} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.85rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {p.name}
+                    </div>
+                    <div style={{ fontSize: "0.7rem", color: "var(--text3)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {p.url}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "var(--text2)" }}>
+                  {fmtRelativeDate(s.lastRun?.startedAt, "Never")}
+                </div>
+                <div><PassRateBar rate={s.passRate} /></div>
+                <div>
+                  {s.draft > 0 ? (
+                    <span className="badge" style={{ background: "var(--amber-bg, rgba(255,176,32,0.15))", color: "var(--amber)", fontSize: "0.72rem" }}>
+                      {s.draft} draft
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "0.75rem", color: "var(--text3)" }}>—</span>
+                  )}
+                </div>
+                <div
+                  style={{ display: "flex", gap: 4, justifyContent: "flex-end", alignItems: "center" }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-ghost btn-sm"
+                    title="Open URL"
+                  >
+                    <ExternalLink size={13} />
+                  </a>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => navigate(`/projects/${p.id}`)}
+                    title="View tests"
+                  >
+                    <SquareCheckBig size={13} />
+                  </button>
+                  {canEdit && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => navigate(`/projects/new?edit=${p.id}`)}
+                      title="Edit project"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: "var(--text3)" }}
+                      onClick={() => setDeleteTarget(p)}
+                      title="Delete project"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Application cards */}
+      {viewMode === "card" && (
       <div className="flex-col" style={{ gap: 10 }}>
         {filtered.map(p => {
           const s = projectStats[p.id] || {};
@@ -256,6 +408,7 @@ export default function Projects() {
           );
         })}
       </div>
+      )}
 
       {/* Delete confirmation modal */}
       {deleteTarget && (

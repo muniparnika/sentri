@@ -404,19 +404,14 @@ export default function Tests() {
     <div className="fade-in">
       {/* ── Header ── */}
       <div className="page-header" style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div>
-            <h1 className="page-title">Tests</h1>
-            <p className="page-subtitle">Manage, run, and review test cases across all projects</p>
-          </div>
-          {/* The "drafts → Review Queue" entry-point lives in the
-              "Review Drafts" quick-action card below — no need for a
-              duplicate header button. */}
-          <div style={{ flex: 1 }} />
-          {/* Project dropdown — mirrors the Review Queue's project filter
-              (`.rq-header-select` dimensions). Scopes the export button
-              to a single project so users with 3+ projects don't see 3+
-              export buttons cluttering the header. */}
+        <div>
+          <h1 className="page-title">Tests</h1>
+          <p className="page-subtitle">Manage, run, and review test cases across all projects</p>
+        </div>
+        {/* Right-side controls: project dropdown + export — mirrors the
+            Review Queue header (`.rq-header` / `.at-header__controls`)
+            so the two audit surfaces share a layout vocabulary. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {projects.length > 1 && (
             <select
               className="input tests-header-select"
@@ -431,7 +426,6 @@ export default function Tests() {
             </select>
           )}
           {projectsWithTests.length > 0 && (() => {
-            // Show export for the selected project, or the first project if "all"
             const exportProject = selectedProjectId !== "all"
               ? projectsWithTests.find(p => p.id === selectedProjectId)
               : projectsWithTests[0];

@@ -157,6 +157,20 @@ export default function ApprovalsTimeline() {
     return map;
   }, [revokeRows]);
 
+  // ── Summary stats for the callout strip ─────────────────────────────────
+  const summary = useMemo(() => {
+    const totalApprovals = autoRows.length + humanRows.length;
+    const revokeCount    = revokeRows.length;
+    const revokeRate     = totalApprovals > 0 ? (revokeCount / totalApprovals) * 100 : 0;
+    // Health signal: <5% reverts is healthy, 5–15% is caution, >15% is concern.
+    const health =
+      totalApprovals === 0   ? "none"
+      : revokeRate < 5       ? "good"
+      : revokeRate < 15      ? "warn"
+      :                        "bad";
+    return { totalApprovals, revokeCount, revokeRate, health };
+  }, [autoRows, humanRows, revokeRows]);
+
   const projectName = useMemo(() => {
     const map = new Map(projects.map((p) => [p.id, p.name]));
     return (id) => map.get(id) || id || "—";
@@ -298,6 +312,51 @@ export default function ApprovalsTimeline() {
         </div>
       )}
 
+      {/* Summary callout strip — gives reviewers an at-a-glance health
+          signal before they read any individual rows. Only rendered once
+          data has loaded so the strip shows real numbers. */}
+      {summary.totalApprovals > 0 && (
+        <div className="at-summary" role="region" aria-label="Approval summary">
+          <div className="at-summary__stat">
+            <div className="at-summary__label">Total approvals</div>
+            <div className="at-summary__value">{summary.totalApprovals}</div>
+            <div className="at-summary__sub">
+              {autoRows.length} auto · {humanRows.length} human
+            </div>
+          </div>
+          <div className="at-summary__stat">
+            <div className="at-summary__label">Revert rate</div>
+            <div className="at-summary__value">{summary.revokeRate.toFixed(1)}%</div>
+            <div className="at-summary__sub">{summary.revokeCount} revoked</div>
+          </div>
+          <div className="at-summary__stat">
+            <div className="at-summary__label">Health</div>
+            <div className="at-summary__value">
+              <span className={`at-summary__health-badge ${
+                summary.health === "good" ? "badge badge-green"
+                : summary.health === "warn" ? "badge badge-amber"
+                : summary.health === "bad"  ? "badge badge-red"
+                : "badge badge-gray"
+              }`}>
+                {summary.health === "good" ? "Healthy"
+                  : summary.health === "warn" ? "Caution"
+                  : summary.health === "bad"  ? "Review needed"
+                  : "No data"}
+              </span>
+            </div>
+            <div className="at-summary__sub">
+              {summary.health === "good"
+                ? "Revert rate within normal range"
+                : summary.health === "warn"
+                  ? "Elevated revert rate — check auto-approval threshold"
+                  : summary.health === "bad"
+                    ? "High revert rate — consider lowering threshold"
+                    : "Approvals will appear here as tests are reviewed"}
+            </div>
+          </div>
+        </div>
+      )}
+
       {days.length === 0 && (
         <div className="at-empty">
           No approvals yet. Approvals will appear here as tests are reviewed.
@@ -313,8 +372,9 @@ export default function ApprovalsTimeline() {
             {batches.map((batch) => {
               const isOpen = expanded.has(batch.id);
               const Icon = batch.kind === "auto" ? Bot : User;
-              const headline = batch.kind === "auto"
-                ? `${batch.rows.length} auto-approved (avg score ${avgScore(batch.rows)})`
+              const isAuto = batch.kind === "auto";
+              const headline = isAuto
+                ? `${batch.rows.length} auto-approved`
                 : `@${batch.who} approved ${batch.rows.length}`;
               return (
                 <div key={batch.id} className="at-batch">
@@ -324,11 +384,19 @@ export default function ApprovalsTimeline() {
                     aria-expanded={isOpen}
                   >
                     {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <Icon
-                      size={14}
-                      className={batch.kind === "auto" ? "at-batch__icon--auto" : "at-batch__icon--human"}
-                    />
+                    {/* Coloured avatar chip: purple = auto, blue = human */}
+                    <span className={`at-batch__avatar ${isAuto ? "at-batch__avatar--auto" : "at-batch__avatar--human"}`}
+                      aria-hidden="true">
+                      <Icon size={10} />
+                    </span>
                     <span>{headline}</span>
+                    {/* Avg score chip on auto batches — inline so it stays in
+                        the toggle row next to the headline count. */}
+                    {isAuto && batch.rows.some((r) => Number.isFinite(r?.meta?.score)) && (
+                      <span className="badge badge-gray at-batch__avg-badge">
+                        avg {avgScore(batch.rows)}
+                      </span>
+                    )}
                   </button>
                   {isOpen && (
                     <ul className="at-rows">
@@ -342,12 +410,20 @@ export default function ApprovalsTimeline() {
                           </Link>
                           <span className="at-row__sep">·</span>
                           <span className="at-row__project">{projectName(row.projectId)}</span>
-                          {batch.kind === "auto" && (
+                          {isAuto && Number.isFinite(row.meta?.score) && (
                             <>
                               <span className="at-row__sep">·</span>
-                              <span className="at-row__score">
-                                score {fmtNum(row.meta?.score)} / threshold {fmtNum(row.meta?.threshold)}
+                              {/* Score pill: green ≥ threshold, amber within 10%
+                                  below, red further below. Falls back to gray
+                                  when threshold is unknown. */}
+                              <span className={`badge at-score-pill ${scoreBadgeClass(row.meta.score, row.meta?.threshold)}`}>
+                                {fmtNum(row.meta.score)}
                               </span>
+                              {Number.isFinite(row.meta?.threshold) && (
+                                <span className="at-row__score">
+                                  / {fmtNum(row.meta.threshold)}
+                                </span>
+                              )}
                             </>
                           )}
                           <span className="at-row__time">
@@ -448,4 +524,18 @@ function avgScore(rows) {
 /** 2dp number formatter that's null-safe — used for both score and threshold. */
 function fmtNum(n) {
   return Number.isFinite(n) ? n.toFixed(2) : "?";
+}
+
+/**
+ * Semantic badge class for a score/threshold pair.
+ * green  = at or above threshold
+ * amber  = within 10% below threshold (close call)
+ * red    = more than 10% below threshold
+ * gray   = threshold unknown
+ */
+function scoreBadgeClass(score, threshold) {
+  if (!Number.isFinite(threshold)) return "badge-gray";
+  if (score >= threshold)             return "badge-green";
+  if (score >= threshold * 0.9)       return "badge-amber";
+  return "badge-red";
 }

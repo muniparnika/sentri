@@ -1,0 +1,95 @@
+/**
+ * Healing Dashboard — page-specific styles
+ *
+ * Scoped by `.heal-*` prefix.
+ * Shared primitives (card, badge, table, stat-grid, progress-bar, flex-*)
+ * are used directly from components.css / utilities.css — nothing is
+ * redefined here.
+ *
+ * Layer: Pages (ITCSS)
+ */
+
+/* ── Two-column grid: trend chart + strategy bars ───────────────────────────── */
+.heal-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* ── Trend chart ────────────────────────────────────────────────────────────── */
+.heal-chart-area {
+  position: relative;
+  height: 120px;
+}
+
+.heal-chart-bars {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.heal-chart-bar {
+  flex: 1;
+  border-radius: 3px 3px 0 0;
+  min-height: 0;
+  transition: height 0.3s ease;
+}
+
+.heal-chart-bar--above {
+  background: var(--accent);
+}
+
+.heal-chart-bar--below {
+  background: var(--accent-bg);
+  border: 1px solid var(--border2);
+}
+
+/* Dashed average line — positioned absolutely inside .heal-chart-area */
+.heal-avg-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 2px dashed var(--text3);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.heal-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+/* ── Strategy bars ──────────────────────────────────────────────────────────── */
+.heal-strategy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.heal-strategy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.heal-strategy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Selectors card header ──────────────────────────────────────────────────── */
+.heal-selectors-header {
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Responsive: 900px ──────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .heal-two-col {
+    grid-template-columns: 1fr;
+  }
+}

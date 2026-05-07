@@ -68,6 +68,23 @@ import { randomUUID } from "crypto";
 const router = Router();
 
 /**
+ * Normalise a `tags` query-string value into a clean string[] suitable for
+ * `filters.tags` on the testRepo paged/count helpers. Accepts either a
+ * repeated query param (Express parses `?tags=a&tags=b` as an array) or a
+ * single comma-joined string (`?tags=a,b`). Empty strings and whitespace-
+ * only entries are dropped. Returns `undefined` when there's nothing to
+ * filter on so callers can omit the key from the filters object entirely
+ * (the repo treats a missing key and an empty array differently — empty
+ * array would match nothing).
+ */
+const parseTags = (raw) => {
+  if (!raw) return undefined;
+  const arr = Array.isArray(raw) ? raw : String(raw).split(",");
+  const cleaned = arr.map((s) => String(s).trim()).filter(Boolean);
+  return cleaned.length ? cleaned : undefined;
+};
+
+/**
  * Return `desiredName` if it's free within the project, otherwise append
  * ` (2)`, ` (3)`, … until a non-colliding name is found. Compares
  * case-insensitively (manual testers expect "Login" and "login" to be
@@ -114,13 +131,15 @@ router.get("/projects/:id/tests", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
-  const { page, pageSize, reviewStatus, category, search, stale } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, tags } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const filters = {};
     if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
     if (category && category !== "all") filters.category = category;
     if (search) filters.search = search;
     if (stale === "true") filters.stale = true;
+    const parsedTags = parseTags(tags);
+    if (parsedTags) filters.tags = parsedTags;
     return res.json(testRepo.getByProjectIdPaged(req.params.id, page, pageSize, filters));
   }
   res.json(testRepo.getByProjectId(req.params.id));
@@ -131,7 +150,7 @@ router.get("/tests", (req, res) => {
   const wsProjects = projectRepo.getAll(req.workspaceId);
   const projectIds = wsProjects.map(p => p.id);
 
-  const { page, pageSize, reviewStatus, category, search, stale, projectId, sortBy } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, projectId, sortBy, tags } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const filters = {};
     if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
@@ -145,6 +164,8 @@ router.get("/tests", (req, res) => {
     // fall back to "newest" — we still pass it through unchanged so the
     // frontend's UI sort dropdown drives the SQL ORDER BY directly.
     if (sortBy) filters.sortBy = sortBy;
+    const parsedTags = parseTags(tags);
+    if (parsedTags) filters.tags = parsedTags;
     return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize, filters));
   }
   res.json(testRepo.getAllByProjectIds(projectIds));
@@ -167,12 +188,14 @@ router.get("/tests/counts", (req, res) => {
   const wsProjects = projectRepo.getAll(req.workspaceId);
   const projectIds = wsProjects.map(p => p.id);
 
-  const { category, search, stale, projectId } = req.query;
+  const { category, search, stale, projectId, tags } = req.query;
   const filters = {};
   if (category && category !== "all") filters.category = category;
   if (search) filters.search = search;
   if (stale === "true") filters.stale = true;
   if (projectId && projectId !== "all") filters.projectId = projectId;
+  const parsedTags = parseTags(tags);
+  if (parsedTags) filters.tags = parsedTags;
 
   res.json(testRepo.countReviewQueueByProjectIds(projectIds, filters));
 });
@@ -822,16 +845,33 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
       : {};
   const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);
 
+  // Map the action verb onto the canonical ACTIVITY_TYPES values so the
+  // bulk path emits the same `type` literals as the single-test handlers
+  // (approve at L673, reject at L705, restore at L735). Previously this
+  // used `\`test.${action}\`` interpolation which happened to match today
+  // but reopened the `"test.approve"` vs `"test.approved"` drift class
+  // the constants were introduced to prevent.
+  const PER_TEST_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_REJECT,
+    restore: ACTIVITY_TYPES.TEST_RESTORE,
+  };
+  const BULK_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_BULK_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_BULK_REJECT,
+    restore: ACTIVITY_TYPES.TEST_BULK_RESTORE,
+  };
+
   if (updated.length) {
     for (const test of updated) {
       logActivity({ ...actor(req),
-        type: `test.${action}`, projectId: req.params.id, projectName: project.name,
+        type: PER_TEST_TYPES[action], projectId: req.params.id, projectName: project.name,
         testId: test.id, testName: test.name,
         detail: `Test ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "restored to draft"} (bulk) — "${test.name}"`,
       });
     }
     logActivity({ ...actor(req),
-      type: `test.bulk_${action}`, projectId: req.params.id, projectName: project.name,
+      type: BULK_TYPES[action], projectId: req.params.id, projectName: project.name,
       detail: `Bulk ${action} — ${updated.length} test${updated.length !== 1 ? "s" : ""}`,
     });
     // DIF-013: emit ONE bulk event (not N per-test) to keep PostHog volume
