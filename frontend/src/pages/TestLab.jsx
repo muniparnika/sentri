@@ -633,6 +633,43 @@ export default function TestLab() {
     persistRun(activeRun, runData, logLines);
   }, [activeRun, runData, logLines]);
 
+  // ── Auto-attach to a server-side running run on mount ──
+  // sessionStorage-based rehydration only covers the single-tab case (a user
+  // who started the crawl in *this* tab and stayed inside the SPA). Three
+  // real cases break it:
+  //   1. New tab — sessionStorage is empty even though a run is executing.
+  //   2. User switches to a different project's TestLab — sessionStorage
+  //      holds the *other* project's run and the new project's running
+  //      crawl is invisible until they click Queue.
+  //   3. Hard reload mid-run — sessionStorage survives, but on browsers/
+  //      modes where it doesn't (private mode), we'd still drop the run.
+  //
+  // `allRuns` (TanStack Query cache, populated by `useProjectData`) is the
+  // server's authoritative list of running runs. When the panel is idle and
+  // there's a generation run executing for the selected project, attach to
+  // it automatically — same effect as the user clicking "View" in the
+  // Queue tab, but without making them find it. `attachedFromQueueRef`
+  // prevents the effect from re-firing every time `allRuns` refreshes.
+  const attachedFromQueueRef = useRef(false);
+  useEffect(() => {
+    if (activeRun) { attachedFromQueueRef.current = false; return; }
+    if (attachedFromQueueRef.current) return;
+    if (!selectedId) return;
+    const candidate = allRuns.find(
+      (r) => r.projectId === selectedId
+        && (r.type === "crawl" || r.type === "generate")
+        && r.status === "running",
+    );
+    if (!candidate) return;
+    attachedFromQueueRef.current = true;
+    handleAttachRun(candidate);
+    // `handleAttachRun` is defined below in the component — declared as a
+    // function so it's hoisted for this effect's reference. It's stable
+    // across renders (no closure dependencies that would change between
+    // calls).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun, selectedId, allRuns]);
+
   // ── Backfill missing log lines on remount ──
   // SSE has no replay cursor — `useRunSSE` (`hooks/useRunSSE.js:114-134`) only
   // forwards messages emitted *after* its EventSource opens. If the user

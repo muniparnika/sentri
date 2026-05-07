@@ -24,10 +24,21 @@ const isGenerationRun = (r) =>
 
 export default function GlobalRunBanner() {
   const { pathname } = useLocation();
-  // Skip while the user is on Test Lab — the in-page pipeline view supersedes
-  // this strip there. The check is permissive: matches both `/test-lab` and
-  // `/projects/:id/test-lab`.
+  // On Test Lab itself, the in-page pipeline view is the canonical surface
+  // for the *selected* project's run, so we don't double-render the strip
+  // for that case. But cross-project runs (e.g. user is in Project A's Test
+  // Lab while Project B's crawl is executing) are still invisible without
+  // this banner — Test Lab's auto-attach only catches the selected project.
+  // We narrow the hide-rule to "we're on Test Lab AND every running run
+  // matches the route's projectId".
   const onTestLab = pathname === "/test-lab" || pathname.endsWith("/test-lab");
+  // Project ID embedded in `/projects/:id/test-lab` URLs. The non-scoped
+  // `/test-lab` route doesn't carry one, so this is null there and the
+  // hide-rule below evaluates to false (banner shows for any run).
+  const routeProjectId = (() => {
+    const m = pathname.match(/^\/projects\/([^/]+)\/test-lab$/);
+    return m ? m[1] : null;
+  })();
 
   // Only need runs; skip tests + projects to keep this lightweight. The
   // shared cache means this hook does not trigger new requests when other
@@ -35,7 +46,15 @@ export default function GlobalRunBanner() {
   const { allRuns } = useProjectData({ fetchTests: false, fetchProjects: false });
   const activeRuns = (allRuns || []).filter(isGenerationRun);
 
-  if (onTestLab || activeRuns.length === 0) return null;
+  if (activeRuns.length === 0) return null;
+  // Hide only when on Test Lab AND every running run is for the route's
+  // project (the in-page pipeline already covers them). On the non-scoped
+  // /test-lab route, `routeProjectId` is null so this never triggers and
+  // the banner shows for cross-project runs as expected.
+  if (onTestLab && routeProjectId
+      && activeRuns.every((r) => r.projectId === routeProjectId)) {
+    return null;
+  }
 
   // Single-run case: deep-link straight to that run's project test-lab.
   // Multi-run case: link to /test-lab queue tab so the user picks.
