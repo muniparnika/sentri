@@ -245,16 +245,15 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
   if (mode === "state") {
     // ── State-based exploration (new engine) ─────────────────────────────
     //
-    // AUTO-002 scope note: diff-aware crawling is intentionally wired
-    // into the link-crawl branch below only. State exploration produces
-    // multiple snapshots per URL (keyed by `_stateFingerprint` — e.g.
-    // "login form blank" vs "login form with error"), so a URL→fingerprint
-    // baseline keyed on `pageUrl` alone would either collapse distinct
-    // states into one (breaking the "changed state" signal) or thrash
-    // on natural state churn (every visit looks "changed"). Extending
-    // diff-awareness to state mode requires a state-graph baseline
-    // (fingerprint→fingerprint transitions), tracked separately in
-    // ROADMAP.md and not part of the AUTO-002 acceptance criteria.
+    // TODO(AUTO-002b): extend diff-aware crawling to state-explorer mode.
+    // State exploration produces multiple snapshots per URL (keyed by
+    // `_stateFingerprint` — e.g. "login form blank" vs "login form with
+    // error"), so the URL→fingerprint baseline used by the link-crawl
+    // branch below cannot model state-mode crawls correctly. Extending
+    // diff-awareness here requires a state-graph baseline
+    // (fingerprint→fingerprint transitions), which is a non-trivial
+    // schema + diff-engine extension. Filed for follow-up; does not
+    // block AUTO-002 acceptance criteria (NEXT.md:48-52, link-crawl-only).
     const exploration = await exploreStates(project, run, { signal, tuning: explorerTuning });
     snapshots = exploration.snapshots;
     snapshotsByUrl = exploration.snapshotsByUrl;

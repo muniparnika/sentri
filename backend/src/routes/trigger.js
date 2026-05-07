@@ -24,7 +24,7 @@ import * as webhookTokenRepo from "../database/repositories/webhookTokenRepo.js"
 import { generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
-import { resolveDialsConfig } from "../testDials.js";
+import { resolveDialsConfig, resolveDialsPrompt } from "../testDials.js";
 import { runTests } from "../testRunner.js";
 import { crawlAndGenerateTests } from "../crawler.js";
 import { classifyError } from "../utils/errorClassifier.js";
@@ -136,6 +136,19 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
 
   const validatedDials = resolveDialsConfig(dialsConfig);
   const parallelWorkers = validatedDials?.parallelWorkers ?? 1;
+  // AUTO-002 / AUTO-015: honour dialsConfig on the crawl path too — `runs.js`
+  // already derives these from the same `validatedDials` and forwards them to
+  // crawlAndGenerateTests at runs.js:108. Without this the trigger path
+  // silently runs every crawl with defaults regardless of caller config.
+  const dialsPrompt = resolveDialsPrompt(dialsConfig);
+  const testCount = validatedDials?.testCount || "ai_decides";
+  const explorerMode = validatedDials?.exploreMode || "crawl";
+  const explorerTuning = {
+    maxStates:     validatedDials?.exploreMaxStates     ?? 30,
+    maxDepth:      validatedDials?.exploreMaxDepth      ?? 3,
+    maxActions:    validatedDials?.exploreMaxActions    ?? 8,
+    actionTimeout: validatedDials?.exploreActionTimeout ?? 5000,
+  };
 
   // ── 4. Guard: no concurrent run ───────────────────────────────────────
   // From here to runRepo.create() the code is fully synchronous, so no
@@ -205,7 +218,7 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
       ? crawlAndGenerateTests(
           { ...project, url: previewUrl || project.url, canonicalUrl: project.url },
           run,
-          { signal }
+          { dialsPrompt, testCount, explorerMode, explorerTuning, signal }
         )
       : runTests(project, tests, run, { parallelWorkers, signal }),
     {
@@ -281,8 +294,32 @@ function verifyWebhookSignature(provider, rawBody, signatureHeader) {
  * The caller must have already (a) verified the provider's HMAC signature,
  * (b) authenticated the trigger token via requireTrigger, and (c) validated
  * `previewUrl` via SSRF guard.
+ *
+ * TODO(AUTO-015b): emit a "deployment-run" marker on the run record (or via
+ * an activity-log type like `crawl.start.deployment`) so the frontend can
+ * render the "Last deployment run" badge on the project header
+ * (NEXT.md:69 acceptance criterion). Today the run row carries no signal
+ * distinguishing webhook-launched crawls from manually-triggered ones, so
+ * the badge cannot be rendered without a backend change. Filed for
+ * follow-up; the AUTO-015 backend integration itself is functional.
  */
-async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow }) {
+async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dialsConfig }) {
+  // AUTO-002 / AUTO-015: derive crawl options from optional dialsConfig in the
+  // webhook payload. Provider webhook bodies don't carry these today, but
+  // future Vercel/Netlify integrations (or Sentri-side admin overrides) can
+  // pass them through — keeping the signature uniform with POST /trigger
+  // means there's no second config-routing path to maintain.
+  const validatedDials = resolveDialsConfig(dialsConfig);
+  const dialsPrompt = resolveDialsPrompt(dialsConfig);
+  const testCount = validatedDials?.testCount || "ai_decides";
+  const explorerMode = validatedDials?.exploreMode || "crawl";
+  const explorerTuning = {
+    maxStates:     validatedDials?.exploreMaxStates     ?? 30,
+    maxDepth:      validatedDials?.exploreMaxDepth      ?? 3,
+    maxActions:    validatedDials?.exploreMaxActions    ?? 8,
+    actionTimeout: validatedDials?.exploreActionTimeout ?? 5000,
+  };
+
   // Concurrent-run guard — same as POST /trigger
   const existingRun = runRepo.findActiveByProjectId(project.id);
   if (existingRun) {
@@ -323,7 +360,7 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow }) {
     (signal) => crawlAndGenerateTests(
       { ...project, url: previewUrl, canonicalUrl: project.url },
       run,
-      { signal }
+      { dialsPrompt, testCount, explorerMode, explorerTuning, signal }
     ),
     {
       onSuccess: () => logActivity({

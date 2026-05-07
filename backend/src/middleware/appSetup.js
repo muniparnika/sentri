@@ -152,10 +152,22 @@ export function cookieSameSite() {
   return `; SameSite=Strict${secure ? "; Secure" : ""}`;
 }
 
+// Webhook-only raw-body capture. Only the deployment-webhook routes
+// (`/trigger/vercel`, `/trigger/netlify`) need `req.rawBody` for HMAC
+// verification — capturing it for every JSON-parsed request would double the
+// memory footprint of every API call (Buffer copy of the entire body).
+//
+// We test `req.path` inside the `verify` callback (it runs before the parser
+// commits the body) and only retain the buffer for the webhook surface. The
+// regex matches both `/api/v1/projects/:id/trigger/vercel` and the
+// (legacy-prefix) `/api/projects/:id/trigger/vercel` paths.
+const _RAW_BODY_PATH_PATTERN = /\/projects\/[^/]+\/trigger\/(?:vercel|netlify)$/;
 app.use(express.json({
   limit: "1mb",
   verify: (req, _res, buf) => {
-    req.rawBody = Buffer.from(buf);
+    if (_RAW_BODY_PATH_PATTERN.test(req.path)) {
+      req.rawBody = Buffer.from(buf);
+    }
   },
 }));
 
