@@ -327,8 +327,18 @@ function isProviderUsable(provider) {
     return !runtimeOllamaDisabled;
   }
   if (isCompatProvider(provider)) {
-    const compat = getCompatConfig(provider);
-    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+    // Wrap the cache loader / DB read so a transient DB failure during a
+    // cache miss (TTL expired) doesn't propagate through detectProvider() →
+    // generateText() / streamText(). Mirrors the try/catch around the
+    // `listCompatSlots()` sweep below — without it, a sticky-fallback or
+    // active-provider pointing at a compat slot would crash hot paths the
+    // moment the cache TTL elapses while the DB is briefly unavailable.
+    try {
+      const compat = getCompatConfig(provider);
+      return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+    } catch {
+      return false;
+    }
   }
   const envName = CLOUD_KEY_MAP[provider];
   if (!envName) return false;
