@@ -52,7 +52,7 @@ router.get("/settings", requireRole("admin"), (req, res) => {
 });
 
 // POST /api/settings — save API key at runtime (no server restart needed)
-router.post("/settings", requireRole("admin"), (req, res) => {
+router.post("/settings", requireRole("admin"), async (req, res) => {
   const { provider, apiKey, baseUrl, model } = req.body;
   const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
   const isCompat = typeof provider === "string" && provider.startsWith("compat:");
@@ -88,7 +88,11 @@ router.post("/settings", requireRole("admin"), (req, res) => {
     if (!normalizedBaseUrl) return res.status(400).json({ error: "baseUrl is required for compat providers" });
     if (!normalizedModel) return res.status(400).json({ error: "model is required for compat providers" });
     if (!normalizedApiKey || normalizedApiKey.length < 10) return res.status(400).json({ error: "apiKey is required and must be at least 10 characters" });
-    try { validateUrl(normalizedBaseUrl); } catch (err) { return res.status(400).json({ error: err.message }); }
+    // validateUrl is async + returns an error string (or null). Await it
+    // and surface the message as a 400 — never let an unvalidated user
+    // baseUrl reach the OpenAI SDK (SSRF boundary, NEXT.md AI-001).
+    const ssrfErr = await validateUrl(normalizedBaseUrl);
+    if (ssrfErr) return res.status(400).json({ error: ssrfErr });
     apiKeyRepo.setCompatSlot(provider, { baseUrl: normalizedBaseUrl, model: normalizedModel, apiKey: normalizedApiKey, displayName: (req.body.displayName || provider.replace("compat:", "")).trim() });
     setActiveProvider(provider);
     logActivity({ ...actor(req), type: "settings.update", detail: `Compat provider configured: ${provider}` });

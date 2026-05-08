@@ -31,7 +31,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { throwIfAborted } from "./utils/abortHelper.js";
 import { formatLogLine } from "./utils/logFormatter.js";
 import * as apiKeyRepo from "./database/repositories/apiKeyRepo.js";
-import { validateUrl } from "./utils/ssrfGuard.js";
 
 // ── Runtime key store ────────────────────────────────────────────────────────
 // In-memory cache populated at startup from the DB (via loadKeysFromDatabase)
@@ -133,9 +132,17 @@ const CLOUD_DETECT_ORDER = ["anthropic", "openai", "google", "openrouter"];
  * @param {string} key      - The API key string, or `""` to deactivate.
  */
 export function setRuntimeKey(provider, key) {
+  // Compat providers are managed via apiKeyRepo.setCompatSlot() in settings.js
+  // (they need {baseUrl, model, apiKey, displayName}, not just a key string).
+  // Reset their circuit breaker so the new config is retried immediately.
   if (isCompatProvider(provider)) {
-    const compat = getCompatConfig(provider);
-    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+    if (circuitBreakers[provider]) {
+      circuitBreakers[provider].failures = 0;
+      circuitBreakers[provider].disabledUntil = 0;
+    }
+    _stickyFallbackProvider = null;
+    _stickyFallbackExpiry   = 0;
+    return;
   }
   const envName = CLOUD_KEY_MAP[provider];
   if (!envName) return;
@@ -428,12 +435,15 @@ export function loadKeysFromDatabase() {
           runtimeOllamaDisabled = false;
           loaded += 1;
         }
-      } else if (!isCompatProvider(provider)) {
-        if (isCompatProvider(provider)) {
-    const compat = getCompatConfig(provider);
-    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
-  }
-  const envName = CLOUD_KEY_MAP[provider];
+      } else if (isCompatProvider(provider)) {
+        // Compat slots store {apiKey, baseUrl, model, displayName} as JSON;
+        // they are read on demand via apiKeyRepo.get() inside getCompatConfig(),
+        // so no runtime cache restore is required here. Just count it as loaded.
+        if (value && typeof value === "object" && value.apiKey && value.baseUrl && value.model) {
+          loaded += 1;
+        }
+      } else {
+        const envName = CLOUD_KEY_MAP[provider];
         if (!envName) continue;
         // Only restore from DB when the env var is absent and cache is not already
         // populated — env vars always win.
@@ -838,8 +848,12 @@ function isCircuitBreakerOpen(provider) {
 function getFallbackProviders(primaryProvider) {
   // Local tier has only one provider (Ollama) — no fallback possible.
   if (primaryProvider === "local") return [];
-  // Cloud tier: try other cloud providers in detection order.
-  return CLOUD_DETECT_ORDER.filter(p =>
+  // Cloud tier: try other cloud providers in detection order, then any
+  // configured `compat:<id>` slots (AI-001) — they share the OpenAI wire
+  // format and participate in the same circuit-breaker accounting per slot.
+  const compatSlots = apiKeyRepo.listCompatSlots();
+  const candidates = [...CLOUD_DETECT_ORDER, ...compatSlots];
+  return candidates.filter(p =>
     p !== primaryProvider &&
     isProviderUsable(p) &&
     !isCircuitBreakerOpen(p),
@@ -879,16 +893,26 @@ async function callProvider(provider, promptOrMessages, maxTokens, signal, respo
 
 
   if (provider === "openai_compatible" || isCompatProvider(provider)) {
+    // baseUrl is SSRF-validated at config-save time in routes/settings.js.
+    // Calling validateUrl() here would be no-op (it's async + returns a
+    // string, never throws) so we rely on the saved-time guard.
     const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
     const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
     const baseURL = compat?.baseUrl;
     const model = compat?.model || getCloudModel("openai_compatible");
-    if (baseURL) validateUrl(baseURL);
     const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
-    const { system, user } = normaliseMessages(promptOrMessages);
-    const messages = [ ...(system ? [{ role: "system", content: system }] : []), { role: "user", content: user } ];
-    const resp = await withRetry(() => client.chat.completions.create({ model, messages, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, ...(responseFormat ? { response_format: responseFormat } : {}), }, { signal }), provider);
-    return resp.choices?.[0]?.message?.content || "";
+    const messages = [];
+    if (system) messages.push({ role: "system", content: system });
+    messages.push({ role: "user", content: user });
+    return await withRetry(async () => {
+      const { signal: composedSignal, cleanup } = composeSignal(signal, CLOUD_TIMEOUT_MS);
+      try {
+        const params = { model, max_tokens: tokens, messages };
+        if (useJson) params.response_format = { type: "json_object" };
+        const res = await client.chat.completions.create(params, { signal: composedSignal });
+        return res.choices?.[0]?.message?.content || "";
+      } finally { cleanup(); }
+    }, `OpenAI-compat (${provider})`);
   }
 
   if (provider === "openai") {
@@ -1169,16 +1193,39 @@ export async function streamText(promptOrMessages, onToken, options = {}) {
 
 
   if (provider === "openai_compatible" || isCompatProvider(provider)) {
-    const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
-    const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
-    const baseURL = compat?.baseUrl;
-    const model = compat?.model || getCloudModel("openai_compatible");
-    if (baseURL) validateUrl(baseURL);
-    const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
-    const { system, user } = normaliseMessages(promptOrMessages);
-    const messages = [ ...(system ? [{ role: "system", content: system }] : []), { role: "user", content: user } ];
-    const resp = await withRetry(() => client.chat.completions.create({ model, messages, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, ...(responseFormat ? { response_format: responseFormat } : {}), }, { signal }), provider);
-    return resp.choices?.[0]?.message?.content || "";
+    // Stream via the OpenAI SDK against the compat baseURL. On any retryable
+    // error before tokens emit, fall back to non-streaming generateText().
+    let tokensEmitted = 0;
+    try {
+      const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
+      const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
+      const baseURL = compat?.baseUrl;
+      const model = compat?.model || getCloudModel("openai_compatible");
+      // SSRF-validated at config-save time in routes/settings.js.
+      const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      const messages = [];
+      if (system) messages.push({ role: "system", content: system });
+      messages.push({ role: "user", content: user });
+      const params = {
+        model,
+        max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+        stream: true,
+        messages,
+      };
+      if (useJson) params.response_format = { type: "json_object" };
+      const stream = await client.chat.completions.create(params, { signal });
+      let full = "";
+      for await (const chunk of stream) {
+        throwIfAborted(signal);
+        const token = chunk.choices[0]?.delta?.content ?? "";
+        if (token) { full += token; onToken(token); tokensEmitted++; }
+      }
+      return full;
+    } catch (err) {
+      if (err.name === "AbortError" || signal?.aborted) throw err;
+      if (tokensEmitted === 0 && isRetryableError(err)) return fallbackToNonStreaming(err);
+      throw err;
+    }
   }
 
   if (provider === "openai") {
