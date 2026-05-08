@@ -31,6 +31,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { throwIfAborted } from "./utils/abortHelper.js";
 import { formatLogLine } from "./utils/logFormatter.js";
 import * as apiKeyRepo from "./database/repositories/apiKeyRepo.js";
+import { validateUrl } from "./utils/ssrfGuard.js";
 
 // ── Runtime key store ────────────────────────────────────────────────────────
 // In-memory cache populated at startup from the DB (via loadKeysFromDatabase)
@@ -81,6 +82,7 @@ const CLOUD_KEY_MAP = {
   openai:     "OPENAI_API_KEY",
   google:     "GOOGLE_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  openai_compatible: "OPENAI_COMPATIBLE_API_KEY",
 };
 
 // Default models per cloud provider — overridable via env vars
@@ -89,6 +91,7 @@ const CLOUD_DEFAULT_MODELS = {
   openai:     { envVar: "OPENAI_MODEL",     fallback: "gpt-4o-mini",              name: "GPT-4o-mini" },
   google:     { envVar: "GOOGLE_MODEL",     fallback: "gemini-2.5-flash",         name: "Gemini 2.5 Flash" },
   openrouter: { envVar: "OPENROUTER_MODEL", fallback: "openrouter/auto",          name: "OpenRouter" },
+  openai_compatible: { envVar: "OPENAI_COMPATIBLE_MODEL", fallback: "gpt-4o-mini", name: "OpenAI-compatible" },
 };
 
 // OpenRouter base URL — overridable for self-hosted proxies.
@@ -108,6 +111,16 @@ function getCloudName(provider) {
   return model !== cfg.fallback ? model : cfg.name;
 }
 
+
+
+function isCompatProvider(provider) {
+  return typeof provider === "string" && provider.startsWith("compat:");
+}
+
+function getCompatConfig(provider) {
+  return isCompatProvider(provider) ? apiKeyRepo.get(provider) : null;
+}
+
 // Auto-detect order for cloud providers
 const CLOUD_DETECT_ORDER = ["anthropic", "openai", "google", "openrouter"];
 
@@ -120,6 +133,10 @@ const CLOUD_DETECT_ORDER = ["anthropic", "openai", "google", "openrouter"];
  * @param {string} key      - The API key string, or `""` to deactivate.
  */
 export function setRuntimeKey(provider, key) {
+  if (isCompatProvider(provider)) {
+    const compat = getCompatConfig(provider);
+    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+  }
   const envName = CLOUD_KEY_MAP[provider];
   if (!envName) return;
   runtimeKeys[envName] = key;
@@ -245,6 +262,10 @@ function isProviderUsable(provider) {
   if (provider === "local") {
     return !runtimeOllamaDisabled;
   }
+  if (isCompatProvider(provider)) {
+    const compat = getCompatConfig(provider);
+    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+  }
   const envName = CLOUD_KEY_MAP[provider];
   if (!envName) return false;
   // Runtime key of "" means explicitly cleared — respect that
@@ -356,6 +377,7 @@ export function getConfiguredKeys() {
   // True only when Ollama has explicit config AND is not disabled — prevents
   // the dropdown from showing Ollama as "saved" when it's just the default URL.
   result.ollamaConfigured = !runtimeOllamaDisabled && hasOllamaConfig();
+  result.compatProviders = apiKeyRepo.listCompatSlots().map((provider) => ({ provider, ...(apiKeyRepo.get(provider) || {}) })).map((p)=>({ provider: p.provider, displayName: p.displayName || p.provider.replace("compat:",""), baseUrl: p.baseUrl || "", model: p.model || "", apiKey: maskKey(p.apiKey || "") }));
   return result;
 }
 
@@ -406,8 +428,12 @@ export function loadKeysFromDatabase() {
           runtimeOllamaDisabled = false;
           loaded += 1;
         }
-      } else {
-        const envName = CLOUD_KEY_MAP[provider];
+      } else if (!isCompatProvider(provider)) {
+        if (isCompatProvider(provider)) {
+    const compat = getCompatConfig(provider);
+    return !!(compat?.apiKey && compat?.baseUrl && compat?.model);
+  }
+  const envName = CLOUD_KEY_MAP[provider];
         if (!envName) continue;
         // Only restore from DB when the env var is absent and cache is not already
         // populated — env vars always win.
@@ -851,6 +877,20 @@ async function callProvider(provider, promptOrMessages, maxTokens, signal, respo
     }, "Anthropic");
   }
 
+
+  if (provider === "openai_compatible" || isCompatProvider(provider)) {
+    const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
+    const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
+    const baseURL = compat?.baseUrl;
+    const model = compat?.model || getCloudModel("openai_compatible");
+    if (baseURL) validateUrl(baseURL);
+    const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    const { system, user } = normaliseMessages(promptOrMessages);
+    const messages = [ ...(system ? [{ role: "system", content: system }] : []), { role: "user", content: user } ];
+    const resp = await withRetry(() => client.chat.completions.create({ model, messages, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, ...(responseFormat ? { response_format: responseFormat } : {}), }, { signal }), provider);
+    return resp.choices?.[0]?.message?.content || "";
+  }
+
   if (provider === "openai") {
     const client = new OpenAI({ apiKey: getKey("OPENAI_API_KEY") });
     return await withRetry(async () => {
@@ -1125,6 +1165,20 @@ export async function streamText(promptOrMessages, onToken, options = {}) {
       if (tokensEmitted === 0 && isRetryableError(err)) return fallbackToNonStreaming(err);
       throw err;
     }
+  }
+
+
+  if (provider === "openai_compatible" || isCompatProvider(provider)) {
+    const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
+    const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
+    const baseURL = compat?.baseUrl;
+    const model = compat?.model || getCloudModel("openai_compatible");
+    if (baseURL) validateUrl(baseURL);
+    const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    const { system, user } = normaliseMessages(promptOrMessages);
+    const messages = [ ...(system ? [{ role: "system", content: system }] : []), { role: "user", content: user } ];
+    const resp = await withRetry(() => client.chat.completions.create({ model, messages, max_tokens: maxTokens || DEFAULT_MAX_TOKENS, ...(responseFormat ? { response_format: responseFormat } : {}), }, { signal }), provider);
+    return resp.choices?.[0]?.message?.content || "";
   }
 
   if (provider === "openai") {

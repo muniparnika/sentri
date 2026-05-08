@@ -20,6 +20,8 @@ import { resetOnboarding, emitTourEvent } from "../hooks/useOnboarding.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
+const OPENAI_COMPAT_HINTS = ["https://api.deepseek.com/v1", "https://api.groq.com/openai/v1", "https://api.mistral.ai/v1", "https://api.x.ai/v1"];
+
 const PROVIDERS = [
   {
     id: "anthropic",

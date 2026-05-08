@@ -18,6 +18,8 @@ import { hasProvider, setRuntimeKey, setRuntimeOllama, setActiveProvider, checkO
 import { actor } from "../utils/actor.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { isDemoEnabled, getDemoQuotaStatus } from "../middleware/demoQuota.js";
+import { validateUrl } from "../utils/ssrfGuard.js";
+import * as apiKeyRepo from "../database/repositories/apiKeyRepo.js";
 
 const router = Router();
 
@@ -53,8 +55,9 @@ router.get("/settings", requireRole("admin"), (req, res) => {
 router.post("/settings", requireRole("admin"), (req, res) => {
   const { provider, apiKey, baseUrl, model } = req.body;
   const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
+  const isCompat = typeof provider === "string" && provider.startsWith("compat:");
 
-  if (!provider || !validProviders.includes(provider)) {
+  if (!provider || (!validProviders.includes(provider) && !isCompat)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
 
@@ -76,6 +79,20 @@ router.post("/settings", requireRole("admin"), (req, res) => {
     });
   }
 
+
+  if (isCompat) {
+    const normalizedBaseUrl = (baseUrl || "").trim();
+    const normalizedModel = (model || "").trim();
+    const normalizedApiKey = (apiKey || "").trim();
+    if (!normalizedBaseUrl) return res.status(400).json({ error: "baseUrl is required for compat providers" });
+    if (!normalizedModel) return res.status(400).json({ error: "model is required for compat providers" });
+    if (!normalizedApiKey || normalizedApiKey.length < 10) return res.status(400).json({ error: "apiKey is required and must be at least 10 characters" });
+    try { validateUrl(normalizedBaseUrl); } catch (err) { return res.status(400).json({ error: err.message }); }
+    apiKeyRepo.setCompatSlot(provider, { baseUrl: normalizedBaseUrl, model: normalizedModel, apiKey: normalizedApiKey, displayName: (req.body.displayName || provider.replace("compat:", "")).trim() });
+    setActiveProvider(provider);
+    logActivity({ ...actor(req), type: "settings.update", detail: `Compat provider configured: ${provider}` });
+    return res.json({ ok: true, provider, providerName: req.body.displayName || provider });
+  }
   if (provider === "local") {
     if (baseUrl && baseUrl.trim()) {
       let parsedUrl;
@@ -130,7 +147,8 @@ router.post("/settings", requireRole("admin"), (req, res) => {
 router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
   const { provider } = req.params;
   const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
-  if (!validProviders.includes(provider)) {
+  const isCompat = typeof provider === "string" && provider.startsWith("compat:");
+  if (!validProviders.includes(provider) && !isCompat) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
 
@@ -138,8 +156,11 @@ router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
   // getProvider() checks the runtimeActiveProvider override first.
   const wasActive = getProvider();
 
+
   if (provider === "local") {
     setRuntimeOllama({ baseUrl: "", model: "", disabled: true });
+  } else if (isCompat) {
+    apiKeyRepo.deleteCompatSlot(provider);
   } else {
     setRuntimeKey(provider, "");
   }

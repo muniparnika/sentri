@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added AI-001: generic `openai_compatible` provider slots (`compat:<id>`) using the existing OpenAI SDK with configurable `baseUrl`, `apiKey`, `model`, and `displayName`, including SSRF validation and settings integration.
+
+
 ## [1.7.0] — 2026-05-08
 
 ### Added
