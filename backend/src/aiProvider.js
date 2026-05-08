@@ -51,7 +51,11 @@ function createSsrfGuardedFetch() {
     const url = typeof input === "string" ? input
       : input instanceof URL ? input.toString()
       : input?.url;
-    if (url) {
+    // AI-001: Honor the ALLOW_PRIVATE_URLS escape hatch for self-hosted /
+    // on-prem OpenAI-compatible endpoints. Scoped to compat-provider fetches
+    // here — the shared validateUrl() does NOT apply this bypass, so trigger
+    // callbacks / preview URLs / webhooks remain protected.
+    if (url && process.env.ALLOW_PRIVATE_URLS !== "true") {
       const err = await validateUrl(url);
       if (err) throw new Error(`SSRF guard rejected compat baseUrl: ${err}`);
     }

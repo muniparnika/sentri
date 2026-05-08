@@ -99,9 +99,21 @@ router.post("/settings", requireRole("admin"), async (req, res) => {
     // validateUrl is async + returns an error string (or null). Await it
     // and surface the message as a 400 — never let an unvalidated user
     // baseUrl reach the OpenAI SDK (SSRF boundary, NEXT.md AI-001).
-    const ssrfErr = await validateUrl(normalizedBaseUrl);
-    if (ssrfErr) return res.status(400).json({ error: ssrfErr });
+    //
+    // AI-001: Operator escape hatch for self-hosted / on-prem OpenAI-compatible
+    // endpoints (e.g. a local LiteLLM proxy on 127.0.0.1, or an internal vLLM
+    // server on 10.0.0.x).  Scoped to compat provider config — does NOT relax
+    // SSRF for trigger callbacks, preview URLs, or webhook URLs.
+    if (process.env.ALLOW_PRIVATE_URLS === "true") {
+      console.warn(`[settings] ALLOW_PRIVATE_URLS=true — bypassing SSRF validation for compat baseUrl ${normalizedBaseUrl}. Do not enable in multi-tenant deployments.`);
+    } else {
+      const ssrfErr = await validateUrl(normalizedBaseUrl);
+      if (ssrfErr) return res.status(400).json({ error: ssrfErr });
+    }
     apiKeyRepo.setCompatSlot(provider, { baseUrl: normalizedBaseUrl, model: normalizedModel, apiKey: normalizedApiKey, displayName: (req.body.displayName || provider.replace("compat:", "")).trim() });
+    // Reset circuit breaker so updated credentials are retried immediately
+    // (consistent with cloud-provider save flow via setRuntimeKey).
+    setRuntimeKey(provider, normalizedApiKey);
     setActiveProvider(provider);
     logActivity({ ...actor(req), type: "settings.update", detail: `Compat provider configured: ${provider}` });
     return res.json({ ok: true, provider, providerName: req.body.displayName || provider });

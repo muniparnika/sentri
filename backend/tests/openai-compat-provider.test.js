@@ -82,15 +82,18 @@ test('SSRF guard rejects loopback when ALLOW_PRIVATE_URLS is unset', async () =>
   }
 });
 
-test('SSRF guard allows loopback when ALLOW_PRIVATE_URLS=true', async () => {
+test('SSRF guard still rejects loopback when ALLOW_PRIVATE_URLS=true (bypass is scoped to compat saves, not the shared validateUrl)', async () => {
+  // The ALLOW_PRIVATE_URLS bypass is intentionally NOT applied inside
+  // validateUrl() — that would also exempt trigger callback URLs, preview
+  // URLs (Playwright-navigated), and webhook URLs from SSRF protection.
+  // The bypass is applied locally in routes/settings.js for compat baseUrl
+  // saves only.  See routes/settings.js for the scoped check.
   const prev = process.env.ALLOW_PRIVATE_URLS;
   process.env.ALLOW_PRIVATE_URLS = 'true';
   try {
-    const err = await validateUrl('http://127.0.0.1:8000/v1');
-    assert.equal(err, null, 'expected loopback URL to be allowed under the bypass');
-    // Sanity: also allows RFC1918 + link-local under the bypass.
-    assert.equal(await validateUrl('http://10.0.0.5/v1'), null);
-    assert.equal(await validateUrl('http://localhost:8000/v1'), null);
+    assert.ok(await validateUrl('http://127.0.0.1:8000/v1'), 'shared validateUrl must still reject loopback');
+    assert.ok(await validateUrl('http://10.0.0.5/v1'), 'shared validateUrl must still reject RFC1918');
+    assert.ok(await validateUrl('http://localhost:8000/v1'), 'shared validateUrl must still reject localhost');
   } finally {
     if (prev === undefined) delete process.env.ALLOW_PRIVATE_URLS;
     else process.env.ALLOW_PRIVATE_URLS = prev;
