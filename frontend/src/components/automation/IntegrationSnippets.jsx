@@ -81,6 +81,7 @@ function curlSnippet(projectId, apiBase) {
 function vercelWebhookSnippet(projectId, apiBase) {
   return `POST ${apiBase}/api/projects/${projectId}/trigger/vercel
 Headers:
+  Authorization: Bearer <SENTRI_TRIGGER_TOKEN>
   Content-Type: application/json
   X-Vercel-Signature: <HMAC_SHA1_HEX_OF_RAW_BODY>
 
@@ -94,6 +95,7 @@ Headers:
 function netlifyWebhookSnippet(projectId, apiBase) {
   return `POST ${apiBase}/api/projects/${projectId}/trigger/netlify
 Headers:
+  Authorization: Bearer <SENTRI_TRIGGER_TOKEN>
   Content-Type: application/json
   X-Netlify-Token: <HMAC_SHA256_HEX_OF_RAW_BODY>
 
