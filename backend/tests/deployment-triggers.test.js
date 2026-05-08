@@ -158,6 +158,28 @@ async function main() {
     const buildingJson = await buildingRes.json();
     assert.equal(buildingJson.ignored, true, "response must signal the event was ignored");
 
+    // ── Netlify: non-ready states must NOT trigger a crawl.
+    //    Netlify fires webhooks for every deploy state (`new`, `building`,
+    //    `ready`, `error`, `processing`, …) and allocates `deploy_ssl_url`
+    //    early in the lifecycle, so the URL alone isn't a readiness signal.
+    //    Only `state === "ready"` should launch a crawl; anything else acks
+    //    200 (no Netlify retry) and is ignored.
+    const netlifyBuildingBody = JSON.stringify({ state: "building", deploy_ssl_url: "https://deploy-preview-building.netlify.app" });
+    const netlifyBuildingSig = sign("sha256", netlifyBuildingBody, process.env.NETLIFY_WEBHOOK_SECRET);
+    const netlifyBuildingRes = await fetch(`${base}/api/projects/${proj.id}/trigger/netlify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Netlify-Token": netlifyBuildingSig,
+        "Authorization": `Bearer ${plaintext}`,
+      },
+      body: netlifyBuildingBody,
+    });
+    assert.equal(netlifyBuildingRes.status, 200, "Netlify non-ready state must ack 200 without launching a run");
+    const netlifyBuildingJson = await netlifyBuildingRes.json();
+    assert.equal(netlifyBuildingJson.ignored, true, "Netlify response must signal the event was ignored");
+    assert.equal(netlifyBuildingJson.state, "building", "Netlify response echoes the rejected state for observability");
+
     console.log("deployment-triggers.test.js passed");
   } finally {
     await new Promise((r) => server.close(r));

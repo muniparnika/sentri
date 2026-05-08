@@ -100,6 +100,7 @@ Headers:
   X-Netlify-Token: <HMAC_SHA256_HEX_OF_RAW_BODY>
 
 {
+  "state": "ready",
   "deploy_ssl_url": "https://deploy-preview-42--my-site.netlify.app"
 }`.trim();
 }

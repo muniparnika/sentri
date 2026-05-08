@@ -482,6 +482,18 @@ router.post("/projects/:id/trigger/netlify", expensiveOpLimiter, requireTrigger,
   const sig = req.get("X-Netlify-Token");
   if (!verifyWebhookSignature("netlify", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
 
+  // AUTO-015: Netlify deploy notifications fire for every deploy state
+  // (`new`, `building`, `ready`, `error`, `processing`, …). Crawling a
+  // deploy that isn't yet serving content captures a "building" placeholder
+  // page (junk tests) or fails with a navigation error — and Netlify allocates
+  // `deploy_ssl_url` / `deploy_url` early in the lifecycle, so the URL alone
+  // isn't a readiness signal. Only fire on `state === "ready"`. Anything else
+  // acks 200 (so Netlify doesn't retry indefinitely) without launching a run.
+  const state = typeof req.body?.state === "string" ? req.body.state : "";
+  if (state.toLowerCase() !== "ready") {
+    return res.status(200).json({ ok: true, ignored: true, reason: "deploy not ready", state });
+  }
+
   const previewUrl = req.body?.deploy_ssl_url || req.body?.deploy_url || null;
   if (!previewUrl) return res.status(400).json({ error: "deploy_ssl_url / deploy_url missing from payload" });
 

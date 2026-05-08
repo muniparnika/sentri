@@ -214,9 +214,11 @@ POST /api/v1/projects/:id/trigger/netlify
 
 Same diff-aware-crawl-on-deploy behavior as the Vercel handler. Preview URL is read from `deploy_ssl_url` (preferred) or `deploy_url`.
 
+Only fires when `state === "ready"`. Other states (`new`, `building`, `error`, `processing`, …) ack 200 with `{ ignored: true }` and do **not** launch a run — Netlify allocates the preview URL early in the deploy lifecycle, so the URL alone isn't a readiness signal.
+
 **Body** (forwarded by Netlify):
 ```json
-{ "deploy_ssl_url": "https://deploy-preview-42--my-site.netlify.app" }
+{ "state": "ready", "deploy_ssl_url": "https://deploy-preview-42--my-site.netlify.app" }
 ```
 
 **Response `202 Accepted`:**
