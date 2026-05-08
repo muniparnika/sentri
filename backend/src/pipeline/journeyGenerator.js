@@ -9,7 +9,7 @@
  *   - stepSanitiser.js              — sanitiseSteps, extractTestsArray
  */
 
-import { generateText, streamText, parseJSON, isRateLimitError } from "../aiProvider.js";
+import { generateText, streamText, parseJSON, isRateLimitError, isTransientServerError } from "../aiProvider.js";
 import { throwIfAborted } from "../utils/abortHelper.js";
 import { formatLogLine } from "../utils/logFormatter.js";
 import { withDials } from "./promptHelpers.js";
@@ -19,6 +19,19 @@ import { buildIntentPrompt } from "./prompts/intentPrompt.js";
 import { buildUserRequestedPrompt } from "./prompts/userRequestedPrompt.js";
 import { buildApiTestPrompt } from "./prompts/apiTestPrompt.js";
 import { parseOpenApiSpec } from "./openApiParser.js";
+
+/**
+ * True when the error reaching this layer represents a *durably exhausted*
+ * provider — i.e. aiProvider.js has already retried with exponential backoff
+ * AND tried every configured fallback provider, and they all failed with
+ * either a rate-limit (429) or a transient 5xx ("high demand", "service
+ * unavailable", etc.). In both cases hammering the provider with more
+ * requests is pointless until its quota / outage window resets, so the
+ * pipeline should short-circuit the same way for either class of error.
+ */
+function isProviderExhausted(err) {
+  return isRateLimitError(err) || isTransientServerError(err);
+}
 
 // ── API intent detection ──────────────────────────────────────────────────────
 // Heuristic: if the user's name + description mention API-specific keywords,
@@ -211,8 +224,10 @@ export async function generateJourneyTest(journey, snapshotsByUrl, { dialsPrompt
     return tests;
   } catch (err) {
     if (err.name === "AbortError" || signal?.aborted) throw err;
-    // Propagate rate limit errors so the caller can short-circuit
-    if (isRateLimitError(err)) throw err;
+    // Propagate rate-limit AND transient-5xx-after-retries errors so the
+    // caller can short-circuit. Both indicate the provider is durably
+    // unavailable — aiProvider.js already exhausted retries + fallbacks.
+    if (isProviderExhausted(err)) throw err;
     console.error(formatLogLine("error", null, `[journeyGenerator] Journey test generation failed: ${err.message?.slice(0, 300)}`));
     return [];
   }
@@ -233,8 +248,9 @@ export async function generateIntentTests(classifiedPage, snapshot, { dialsPromp
     return tests;
   } catch (err) {
     if (err.name === "AbortError" || signal?.aborted) throw err;
-    // Propagate rate limit errors so the caller can short-circuit
-    if (isRateLimitError(err)) throw err;
+    // Propagate provider-exhausted errors (rate limit OR transient 5xx after
+    // all retries + fallbacks) so the caller can short-circuit.
+    if (isProviderExhausted(err)) throw err;
     console.error(formatLogLine("error", null, `[journeyGenerator] Intent test generation failed for ${classifiedPage?.url || "unknown"}: ${err.message?.slice(0, 300)}`));
     return [];
   }
@@ -274,11 +290,14 @@ export async function generateAllTests(classifiedPages, journeys, snapshotsByUrl
       return await fn();
     } catch (err) {
       if (err.name === "AbortError" || signal?.aborted) throw err;
-      if (isRateLimitError(err)) {
-        // aiProvider.js already exhausted its own retries — wait for the
-        // provider's quota window before making one final attempt.
-        onProgress?.(`⚠️  AI rate limit reached after all retries: ${err.message.slice(0, 120)}`);
-        onProgress?.(`⏳ Waiting ${RATE_LIMIT_GRACE_MS / 1000}s for quota window to reset before retrying…`);
+      if (isProviderExhausted(err)) {
+        // aiProvider.js already exhausted its own retries + fallbacks —
+        // wait for the provider's quota / outage window before making one
+        // final attempt. Covers both 429s and durable 5xx ("high demand",
+        // "service unavailable") which behave the same way at this layer.
+        const reason = isRateLimitError(err) ? "rate limit" : "provider outage (5xx)";
+        onProgress?.(`⚠️  AI ${reason} reached after all retries: ${err.message.slice(0, 120)}`);
+        onProgress?.(`⏳ Waiting ${RATE_LIMIT_GRACE_MS / 1000}s for ${reason === "rate limit" ? "quota window" : "provider"} to recover before retrying…`);
         await new Promise((resolve, reject) => {
           if (signal?.aborted) {
             reject(new DOMException("Aborted", "AbortError"));
@@ -295,16 +314,18 @@ export async function generateAllTests(classifiedPages, journeys, snapshotsByUrl
           return await fn();
         } catch (retryErr) {
           if (retryErr.name === "AbortError" || signal?.aborted) throw retryErr;
-          if (isRateLimitError(retryErr)) {
-            // Grace-period retry also hit rate limit — quota is durably exhausted.
-            // Stop all remaining calls to avoid hammering the provider.
+          if (isProviderExhausted(retryErr)) {
+            // Grace-period retry also failed — provider is durably unavailable
+            // (quota truly exhausted, or backend still in outage). Stop all
+            // remaining calls to avoid hammering the provider.
             rateLimitHit = true;
             rateLimitError = retryErr.message || String(retryErr);
-            onProgress?.(`⏭️  Rate limit persists after grace period — skipping remaining AI calls (${allTests.length} tests saved so far)`);
+            const persisted = isRateLimitError(retryErr) ? "Rate limit" : "Provider outage (5xx)";
+            onProgress?.(`⏭️  ${persisted} persists after grace period — skipping remaining AI calls (${allTests.length} tests saved so far)`);
             return [];
           }
-          // Non-rate-limit error on retry — log and return empty but don't
-          // permanently skip remaining calls since this isn't a quota issue.
+          // Non-exhaustion error on retry — log and return empty but don't
+          // permanently skip remaining calls since this isn't a durable issue.
           onProgress?.(`⚠️  ${label} retry failed: ${retryErr.message?.slice(0, 100)}`);
           return [];
         }
@@ -447,8 +468,9 @@ export async function generateApiTests(apiEndpoints, appUrl, { dialsPrompt = "",
     return tests;
   } catch (err) {
     if (err.name === "AbortError" || signal?.aborted) throw err;
-    // Propagate rate limit errors so the caller can short-circuit (matches journey/intent generators)
-    if (isRateLimitError(err)) throw err;
+    // Propagate provider-exhausted errors so the caller can short-circuit
+    // (matches journey/intent generators).
+    if (isProviderExhausted(err)) throw err;
     console.error(formatLogLine("error", null, `[journeyGenerator] API test generation failed: ${err.message?.slice(0, 300)}`));
     return [];
   }

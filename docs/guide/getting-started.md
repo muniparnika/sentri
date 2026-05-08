@@ -217,6 +217,21 @@ PG_POOL_SIZE=10
 
 Sentri's migration runner auto-detects the dialect at startup and translates SQLite-specific SQL (AUTOINCREMENT, INSERT OR IGNORE, LIKE, datetime) to PostgreSQL equivalents.
 
+### Adding OpenRouter (optional, one key for 200+ models)
+
+[OpenRouter](https://openrouter.ai) is a unified gateway to 200+ models (Claude, GPT, Llama, Mixtral, …) behind a single OpenAI-compatible API — useful when you want to A/B-test models without juggling vendor keys.
+
+1. Grab a key at [openrouter.ai/keys](https://openrouter.ai/keys).
+2. Enable in `backend/.env`:
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=openrouter/auto              # or e.g. anthropic/claude-3.5-sonnet
+# OPENROUTER_BASE_URL=https://openrouter.ai/api/v1   # override for self-hosted proxy
+```
+
+Auto-detection order is Anthropic → OpenAI → Google → OpenRouter → Ollama, so setting `OPENROUTER_API_KEY` alongside other cloud keys will prefer them first. To force OpenRouter, set `AI_PROVIDER=openrouter`.
+
 ### Adding Ollama (optional, free local AI)
 
 No API key needed — inference runs on your machine.
@@ -277,7 +292,7 @@ The `/api/v1/system` response includes `activeProvider`, `redis`, `postgres`, an
 
 - [What is Sentri?](/guide/what-is-sentri) — deeper overview
 - [Architecture](/guide/architecture) — how the pipeline and runner are structured
-- [AI Providers](/guide/ai-providers) — configure Anthropic, OpenAI, Google, or Ollama
+- [AI Providers](/guide/ai-providers) — configure Anthropic, OpenAI, Google, OpenRouter, or Ollama
 - [Environment Variables](/guide/env-vars) — full reference for all backend + frontend env vars
 - [Docker Deployment](/guide/docker) — production Docker setup
 - [Production Checklist](/guide/production) — what to harden before exposing Sentri to a team

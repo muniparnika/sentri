@@ -28,7 +28,7 @@ features:
     details: CDP screencast at ~7 FPS, real-time SSE log stream, per-step screenshots with bounding-box overlays.
   - icon: 🦙
     title: Multi-Provider AI
-    details: Anthropic Claude, OpenAI GPT-4o-mini, Google Gemini, or Ollama for free local inference. Switch with one setting.
+    details: Anthropic Claude, OpenAI GPT-4o-mini, Google Gemini, OpenRouter (200+ models), or Ollama for free local inference. Switch with one setting.
   - icon: 🎛️
     title: Test Dials
     details: Configure strategy, workflow, quality checks, output format, language, and test count. Presets auto-fill. Validated server-side.

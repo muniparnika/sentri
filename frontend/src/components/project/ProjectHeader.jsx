@@ -12,7 +12,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Play, RefreshCw, Globe, Sparkles, ArrowRight, Zap, Clock,
+  Play, RefreshCw, Globe, Sparkles, ArrowRight, Zap, Clock, Rocket,
 } from "lucide-react";
 import { PARALLEL_WORKERS_TUNING } from "../../config/testDialsConfig.js";
 import { api } from "../../api.js";
@@ -53,6 +53,34 @@ export default function ProjectHeader({
       .catch(() => {});
   }, [projectId]);
 
+  // AUTO-003b: header aggregate (N tests · N human · N auto · N drafts).
+  // Lives at the project level — per-run rows are intentionally untouched
+  // so the per-run UI stays focused on execution status, not approval
+  // provenance (per NEXT.md:84). Failures are non-fatal: the aggregate
+  // line just doesn't render if the endpoint errors.
+  const [approvalStats, setApprovalStats] = useState(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api.getApprovalStats(projectId)
+      .then((s) => { if (!cancelled) setApprovalStats(s); })
+      .catch(() => { /* non-fatal — aggregate line just won't render */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  // AUTO-015b: "Last deployment run" badge (NEXT.md:69). Fetches the most
+  // recent deployment-triggered crawl in the last 24h; badge is hidden when
+  // there's nothing to show. Fail-soft: a backend error just hides the chip.
+  const [lastDeploymentRun, setLastDeploymentRun] = useState(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api.getLastDeploymentRun(projectId)
+      .then((resp) => { if (!cancelled) setLastDeploymentRun(resp?.run || null); })
+      .catch(() => { /* non-fatal — badge just won't render */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
   return (
     <div className="card pd-header">
       <div className="pd-header-top">
@@ -63,6 +91,14 @@ export default function ProjectHeader({
           <div>
             <h1 style={{ fontWeight: 700, fontSize: "1.2rem", marginBottom: 2 }}>{project.name}</h1>
             <a href={project.url} target="_blank" rel="noreferrer" className="text-xs text-muted text-mono">{project.url}</a>
+            {approvalStats && approvalStats.total > 0 && (
+              <div
+                className="text-xs text-muted pd-approval-aggregate"
+                title="Approval breakdown for this project (AUTO-003b)"
+              >
+                {approvalStats.total} tests · {approvalStats.human} human · {approvalStats.auto} auto 🤖 · {approvalStats.draft} drafts
+              </div>
+            )}
           </div>
         </div>
         <div className="pd-header-actions">
@@ -84,6 +120,28 @@ export default function ProjectHeader({
                 <Clock size={11} />
                 {fmtFutureRelative(nextRunAt)}
               </span>
+            )}
+            {/* AUTO-015b: "Last deployment run" badge — only renders when a
+                webhook-triggered crawl completed in the last 24h. Click to
+                navigate to the run for diff inspection. */}
+            {lastDeploymentRun && (
+              <button
+                type="button"
+                onClick={() => navigate(`/runs/${lastDeploymentRun.id}`)}
+                title={`${lastDeploymentRun.provider || "deployment"} preview crawl${lastDeploymentRun.status === "running" ? " (in progress)" : ""} — ${lastDeploymentRun.previewUrl || ""}`}
+                className="btn btn-ghost btn-xs"
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  fontSize: "0.75rem",
+                  color: lastDeploymentRun.status === "failed" ? "var(--red)" : "var(--accent)",
+                  borderColor: lastDeploymentRun.status === "failed" ? "var(--red)" : "var(--accent)",
+                }}
+              >
+                <Rocket size={11} />
+                {lastDeploymentRun.status === "running"
+                  ? "Deployment crawl in progress"
+                  : `Last ${lastDeploymentRun.provider || "deployment"} run · ${lastDeploymentRun.changedPages?.length || 0} changed`}
+              </button>
             )}
             <button
               className="btn btn-ghost btn-sm"

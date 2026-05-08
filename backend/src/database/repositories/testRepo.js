@@ -21,14 +21,14 @@ export { parsePagination };
 
 // ─── Row ↔ Object helpers ─────────────────────────────────────────────────────
 
-const JSON_FIELDS = ["steps", "tags"];
+const JSON_FIELDS = ["steps", "tags", "qualityScoreFactors"];
 const BOOL_FIELDS = ["isJourneyTest", "assertionEnhanced", "isApiTest", "isStale"];
 
 function rowToTest(row) {
   if (!row) return undefined;
   const obj = { ...row };
   for (const f of JSON_FIELDS) {
-    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" ? [] : null);
+    obj[f] = obj[f] ? JSON.parse(obj[f]) : (f === "steps" || f === "tags" || f === "qualityScoreFactors" ? [] : null);
   }
   for (const f of BOOL_FIELDS) {
     obj[f] = obj[f] === 1 ? true : obj[f] === 0 ? false : obj[f];
@@ -54,15 +54,63 @@ function testToRow(t, { fillDefaults = false } = {}) {
 const INSERT_COLS = [
   "id", "projectId", "name", "description", "steps", "playwrightCode",
   "playwrightCodePrev", "priority", "type", "sourceUrl", "pageTitle",
-  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore",
+  "createdAt", "updatedAt", "lastResult", "lastRunAt", "qualityScore", "qualityScoreFactors",
   "isJourneyTest", "journeyType", "assertionEnhanced", "reviewStatus",
   "reviewedAt", "promptVersion", "modelUsed", "linkedIssueKey", "tags",
   "generatedFrom", "isApiTest", "scenario", "codeRegeneratedAt",
   "aiFixAppliedAt", "codeVersion", "workspaceId", "isStale", "flakyScore",
+  "confidenceScore", "approvalSource", "approvalThreshold", "approvedAt", "approvedBy",
 ];
 
 const INSERT_SQL = `INSERT INTO tests (${INSERT_COLS.join(", ")})
   VALUES (${INSERT_COLS.map(c => "@" + c).join(", ")})`;
+
+// ─── Tag filter helpers ──────────────────────────────────────────────────────
+
+/**
+ * Build a `tags LIKE` pattern for a single tag value, escaping the SQL LIKE
+ * metacharacters (`%`, `_`) and the escape char itself (`\`) so user-supplied
+ * tags like `"50%_off"` don't match unrelated rows. The returned pattern MUST
+ * be used with a `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+ *
+ * Tags are persisted as a JSON-encoded array, so the pattern wraps the value
+ * in `"…"` quotes to anchor on the JSON-string boundary; embedded `"` chars
+ * in the tag value are escaped with `\"` to match `JSON.stringify` output.
+ *
+ * @param {string} tag
+ * @returns {string} LIKE pattern
+ */
+function buildTagLikePattern(tag) {
+  // Two-stage encoding:
+  //   1. Mirror what `JSON.stringify` does to the tag value when it's
+  //      persisted into the `tags` TEXT column — `"` and `\` get
+  //      backslash-escaped, so a tag value `needs "review"` is stored
+  //      on disk as the bytes `needs \"review\"`.
+  //   2. Then escape SQL LIKE metacharacters (`%`, `_`) and the LIKE
+  //      escape char itself (`\`) so user-supplied tags like `"50%_off"`
+  //      don't match unrelated rows. The output MUST be used with a
+  //      `LIKE ? ESCAPE '\\'` clause — see {@link TAG_LIKE_ESCAPE}.
+  //
+  // Order matters: stage 1 must run BEFORE stage 2's `\` escape, so the
+  // backslashes introduced by JSON-encoding get themselves escaped for
+  // the LIKE engine. Otherwise a JSON-stored `\"` in the row would only
+  // match a pattern of `\"` in the SQL, but ESCAPE='\\' would consume
+  // that backslash and leave just `"`, missing the row entirely.
+  const jsonEncoded = String(tag)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g,  '\\"');
+  const likeEscaped = jsonEncoded
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g,  "\\%")
+    .replace(/_/g,  "\\_");
+  return `%"${likeEscaped}"%`;
+}
+
+/** SQL fragment appended to every `tags LIKE ?` clause to honour the
+ *  backslash escapes produced by {@link buildTagLikePattern}. SQLite has no
+ *  default LIKE escape, so this is required for the metacharacter escapes
+ *  to take effect; PostgreSQL accepts the same syntax. */
+const TAG_LIKE_ESCAPE = " ESCAPE '\\'";
 
 // ─── Read queries ─────────────────────────────────────────────────────────────
 
@@ -154,6 +202,85 @@ export function countDraftByProjectIds(projectIds) {
 }
 
 /**
+ * Per-status test counts across a set of project IDs, with the same filter
+ * shape as {@link getAllPagedByProjectIds}. Powers the Review Queue's tab
+ * badges in a single COUNT-aggregated query — replaces the previous trio
+ * of `pageSize: 1` paginated probes (one per tab) which produced three
+ * concurrent round-trips on every filter / page change.
+ *
+ * The aggregate uses `SUM(CASE WHEN ...)` so the `WHERE` filters apply to
+ * every status uniformly — switching the project filter or the search
+ * input updates all three counts in lock-step.
+ *
+ * @param {string[]} projectIds
+ * @param {Object}   [filters]   - Same shape as `getAllPagedByProjectIds`'s
+ *                                 `filters` arg, minus `reviewStatus` (which
+ *                                 is partitioned in the SUM, not filtered).
+ * @returns {{ draft: number, approved: number, rejected: number, total: number }}
+ */
+export function countReviewQueueByProjectIds(projectIds, filters = {}) {
+  if (!projectIds || projectIds.length === 0) {
+    return { draft: 0, approved: 0, rejected: 0, total: 0 };
+  }
+
+  // Mirror the ACL-scoped projectId narrowing from getAllPagedByProjectIds —
+  // a `projectId` outside the workspace set is silently ignored, never
+  // widens scope.
+  let scopedIds = projectIds;
+  if (filters.projectId && projectIds.includes(filters.projectId)) {
+    scopedIds = [filters.projectId];
+  }
+
+  const db = getDatabase();
+  const placeholders = scopedIds.map(() => "?").join(", ");
+  const conditions = [`projectId IN (${placeholders})`, "deletedAt IS NULL"];
+  const params = [...scopedIds];
+
+  if (filters.category === "api") {
+    conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
+  } else if (filters.category === "ui") {
+    conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    conditions.push("isJourneyTest = 1");
+  }
+  if (filters.stale) {
+    conditions.push("isStale = 1");
+  }
+  if (filters.search) {
+    conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
+    const like = `%${filters.search}%`;
+    params.push(like, like);
+  }
+  // Tag filter — kept in lock-step with getAllPagedByProjectIds so the tab
+  // counts reflect the same row set the paginated list shows.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
+  }
+
+  const where = conditions.join(" AND ");
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN reviewStatus = 'draft'    THEN 1 ELSE 0 END) AS draft,
+      SUM(CASE WHEN reviewStatus = 'approved' THEN 1 ELSE 0 END) AS approved,
+      SUM(CASE WHEN reviewStatus = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+      COUNT(*)                                                   AS total
+    FROM tests
+    WHERE ${where}
+  `).get(...params);
+
+  return {
+    draft:    row?.draft    || 0,
+    approved: row?.approved || 0,
+    rejected: row?.rejected || 0,
+    total:    row?.total    || 0,
+  };
+}
+
+/**
  * Get all non-deleted tests belonging to the given project IDs with pagination.
  * Used by the workspace-scoped GET /api/tests endpoint (ACL-001).
  * @param {string[]} projectIds
@@ -161,22 +288,123 @@ export function countDraftByProjectIds(projectIds) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @returns {PagedResult}
  */
-export function getAllPagedByProjectIds(projectIds, page, pageSize) {
+/**
+ * Cross-project paginated list with optional filters.
+ *
+ * Mirrors `getByProjectIdPaged`'s filter shape so the cross-project Review
+ * Queue can server-paginate without forcing the client to fetch every test
+ * in the workspace and filter in memory.
+ *
+ * @param {string[]} projectIds  - Workspace-scoped project IDs (ACL gate).
+ * @param {number}   page
+ * @param {number}   pageSize
+ * @param {Object}   [filters]
+ * @param {string}   [filters.reviewStatus]  - "draft" | "approved" | "rejected"
+ * @param {string}   [filters.category]      - "api" | "ui" | "journey"
+ *                                             ("journey" matches `isJourneyTest = 1`,
+ *                                             orthogonal to api/ui — same column
+ *                                             contract as `getByProjectIdPaged`.)
+ * @param {string}   [filters.search]        - LIKE match against name + sourceUrl
+ * @param {boolean}  [filters.stale]
+ * @param {string}   [filters.projectId]     - Narrow to a single project; ignored
+ *                                             if the project isn't in `projectIds`.
+ * @param {string}   [filters.sortBy]        - "newest" (default) | "oldest" |
+ *                                             "quality" | "name". Applied
+ *                                             server-side BEFORE the LIMIT/OFFSET
+ *                                             so a global sort can span pages —
+ *                                             a client-side sort over the
+ *                                             current page would only reorder
+ *                                             the rows already in hand.
+ */
+export function getAllPagedByProjectIds(projectIds, page, pageSize, filters = {}) {
   if (!projectIds || projectIds.length === 0) {
     const { page: p, pageSize: ps } = parsePagination(page, pageSize);
     return { data: [], meta: { total: 0, page: p, pageSize: ps, hasMore: false } };
   }
+
+  // Honour the optional `projectId` filter — but only if it falls inside the
+  // ACL-scoped set. Never let the param widen scope beyond `projectIds`.
+  let scopedIds = projectIds;
+  if (filters.projectId && projectIds.includes(filters.projectId)) {
+    scopedIds = [filters.projectId];
+  }
+
   const db = getDatabase();
   const { page: p, pageSize: ps, offset } = parsePagination(page, pageSize);
-  const placeholders = projectIds.map(() => "?").join(", ");
+  const placeholders = scopedIds.map(() => "?").join(", ");
+
+  const conditions = [`projectId IN (${placeholders})`, "deletedAt IS NULL"];
+  const params = [...scopedIds];
+
+  if (filters.reviewStatus) {
+    conditions.push("reviewStatus = ?");
+    params.push(filters.reviewStatus);
+  }
+  if (filters.category === "api") {
+    conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
+  } else if (filters.category === "ui") {
+    conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    // Journeys are an orthogonal axis to api/ui (a journey is always a UI test
+    // today, but the column is reserved for future cross-cutting types).
+    // Backed by the `isJourneyTest` boolean column — `1` after testToRow's
+    // boolean→int coercion, so the comparison stays a literal `= 1`.
+    conditions.push("isJourneyTest = 1");
+  }
+  if (filters.stale) {
+    conditions.push("isStale = 1");
+  }
+  if (filters.search) {
+    conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
+    const like = `%${filters.search}%`;
+    params.push(like, like);
+  }
+  // Tag filter — OR semantics across the supplied list (industry standard for
+  // tag pickers: "show tests matching ANY of these tags"). Tags are stored as
+  // a JSON-encoded array string on the row, so a `tags LIKE '%"tag"%'` probe
+  // matches the canonical JSON.stringify output portably across SQLite and
+  // PostgreSQL adapters — no dialect-specific JSON functions required.
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
+  }
+
+  const where = conditions.join(" AND ");
+  // Resolve sortBy to a fixed ORDER BY clause. The mapping is hardcoded
+  // (no string interpolation of caller input) so this can never be a SQL
+  // injection vector even though SQLite doesn't bind ORDER BY values.
+  // `qualityScore IS NULL` ordering puts un-scored tests last when sorting
+  // by quality desc — without it NULLs would float to the top in SQLite.
+  // Guard against inherited prototype keys (`__proto__`, `constructor`,
+  // `toString`, …) — a plain `SORT_BY_CLAUSES[key] || …` lookup would return
+  // truthy values from `Object.prototype` for those keys and bypass the
+  // fallback, producing invalid SQL like `ORDER BY [object Object]`.
+  // `Object.hasOwn` keeps the whitelist limited to declared own keys.
+  const orderBy = Object.hasOwn(SORT_BY_CLAUSES, filters.sortBy)
+    ? SORT_BY_CLAUSES[filters.sortBy]
+    : SORT_BY_CLAUSES.newest;
   const total = db.prepare(
-    `SELECT COUNT(*) as cnt FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL`
-  ).get(...projectIds).cnt;
+    `SELECT COUNT(*) as cnt FROM tests WHERE ${where}`
+  ).get(...params).cnt;
   const data = db.prepare(
-    `SELECT * FROM tests WHERE projectId IN (${placeholders}) AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`
-  ).all(...projectIds, ps, offset).map(rowToTest);
+    `SELECT * FROM tests WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`
+  ).all(...params, ps, offset).map(rowToTest);
   return { data, meta: { total, page: p, pageSize: ps, hasMore: offset + data.length < total } };
 }
+
+// Whitelist of allowed ORDER BY clauses. Keys are the public `sortBy` values
+// the API exposes; values are the literal SQL fragment substituted into the
+// query. Adding a new sort = add an entry here. Never interpolate caller
+// input directly — even without bind support for ORDER BY this stays safe.
+const SORT_BY_CLAUSES = {
+  newest:  "createdAt DESC",
+  oldest:  "createdAt ASC",
+  quality: "qualityScore IS NULL, qualityScore DESC, createdAt DESC",
+  name:    "LOWER(name) ASC, createdAt DESC",
+};
 
 /**
  * Get non-deleted tests for a specific project.
@@ -195,7 +423,9 @@ export function getByProjectId(projectId) {
  * @param {number|string} [pageSize=DEFAULT_PAGE_SIZE]
  * @param {Object}        [filters]
  * @param {string}        [filters.reviewStatus] — "draft", "approved", "rejected", or undefined for all.
- * @param {string}        [filters.category]     — "api", "ui", or undefined for all.
+ * @param {string}        [filters.category]     — "api", "ui", "journey", or undefined for all.
+ *                                                  ("journey" matches `isJourneyTest = 1` —
+ *                                                  orthogonal to api/ui.)
  * @param {string}        [filters.search]       — free-text search against name and sourceUrl.
  * @returns {PagedResult}
  */
@@ -214,6 +444,8 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("generatedFrom IN ('api_har_capture', 'api_user_described')");
   } else if (filters.category === "ui") {
     conditions.push("(generatedFrom IS NULL OR generatedFrom NOT IN ('api_har_capture', 'api_user_described'))");
+  } else if (filters.category === "journey") {
+    conditions.push("isJourneyTest = 1");
   }
   if (filters.stale) {
     conditions.push("isStale = 1");
@@ -222,6 +454,13 @@ export function getByProjectIdPaged(projectId, page, pageSize, filters = {}) {
     conditions.push("(name LIKE ? OR sourceUrl LIKE ?)");
     const like = `%${filters.search}%`;
     params.push(like, like);
+  }
+  if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+    const tagClauses = filters.tags.map(() => `tags LIKE ?${TAG_LIKE_ESCAPE}`).join(" OR ");
+    conditions.push(`(${tagClauses})`);
+    for (const tag of filters.tags) {
+      params.push(buildTagLikePattern(tag));
+    }
   }
 
   const where = conditions.join(" AND ");
@@ -354,23 +593,87 @@ export function hardDeleteByProjectId(projectId) {
 }
 
 /**
+ * Atomic revoke (AUTO-003b): clear `reviewStatus` + provenance ONLY IF the
+ * row is currently `approved`. Returns `true` on success, `false` if the
+ * row was already in a different state.
+ *
+ * Why a dedicated function instead of `update()`: revoke is the canonical
+ * concurrent-write target — two reviewers can hit `POST /tests/:id/revoke`
+ * at the same time, and we need exactly one to win. The route handler
+ * does a read-then-write pair (`getById` → check `reviewStatus === 'approved'`
+ * → `update`), which is safe on better-sqlite3 (synchronous, single-connection)
+ * but races on PostgreSQL where the pool can serve both reads from the same
+ * pre-revoke snapshot. Baking the check into the UPDATE's `WHERE` clause
+ * makes the operation atomic on every adapter — only the request whose
+ * UPDATE actually flips a row from `approved` to `draft` succeeds; the
+ * second request's `UPDATE … WHERE reviewStatus = 'approved'` matches zero
+ * rows and we return `false`.
+ *
+ * Caller is responsible for the 400/404 mapping: the route returns
+ * `400 "only approved tests can be revoked"` when this returns `false`,
+ * matching the existing read-then-write semantics.
+ *
+ * @param {string} id
+ * @returns {boolean} `true` if the row transitioned approved → draft.
+ */
+export function revokeApprovalIfApproved(id) {
+  const db = getDatabase();
+  const info = db.prepare(
+    `UPDATE tests SET
+       reviewStatus = 'draft',
+       reviewedAt = NULL,
+       approvalSource = NULL,
+       approvalThreshold = NULL,
+       approvedAt = NULL,
+       approvedBy = NULL
+     WHERE id = ? AND reviewStatus = 'approved' AND deletedAt IS NULL`
+  ).run(id);
+  return info.changes > 0;
+}
+
+/**
  * Bulk update review status for a list of test IDs within a project.
  * Only applies to non-deleted tests.
+ *
+ * AUTO-003b: optional `extraFields` are applied in the SAME UPDATE statement
+ * as `reviewStatus` / `reviewedAt`, inside the same transaction. This keeps
+ * `reviewStatus` and provenance columns (`approvalSource`, `approvedBy`,
+ * `approvedAt`, `approvalThreshold`) atomic — the previous two-phase pattern
+ * (bulk status update, then per-row provenance writes) could leave tests
+ * approved with null provenance if the request was aborted between phases,
+ * which would miscount as human-approved on the approval-stats endpoint.
+ *
+ * `extraFields` keys are filtered through `VALID_COLS` so caller-supplied
+ * keys can never inject column names. Values are bound via parameters.
+ *
  * @param {string[]}    testIds
  * @param {string}      projectId
  * @param {string}      reviewStatus
  * @param {string|null} reviewedAt
- * @returns {Object[]} Updated test objects.
+ * @param {Object}      [extraFields]  - Additional column→value pairs to set
+ *                                       in the same UPDATE (e.g. provenance).
+ * @returns {Object[]} Updated test objects (re-read after the UPDATE so the
+ *                     response reflects all fields, not just reviewStatus).
  */
-export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt) {
+export function bulkUpdateReviewStatus(testIds, projectId, reviewStatus, reviewedAt, extraFields = {}) {
   const db = getDatabase();
   const updated = [];
-  const stmt = db.prepare(
-    "UPDATE tests SET reviewStatus = ?, reviewedAt = ? WHERE id = ? AND projectId = ? AND deletedAt IS NULL"
-  );
+
+  // Filter extraFields to known columns + bake them into the UPDATE so the
+  // whole write is a single atomic statement per test. Using SET fragments
+  // built from the validated key list (not raw caller keys) keeps this safe
+  // from SQL injection — only whitelisted column names ever land in the SQL.
+  const row = testToRow(extraFields);
+  const extraEntries = Object.entries(row).filter(([k]) => VALID_COLS.has(k) && k !== "id");
+  const extraSets = extraEntries.map(([k]) => `${k} = ?`).join(", ");
+  const sql = `UPDATE tests SET reviewStatus = ?, reviewedAt = ?${extraSets ? ", " + extraSets : ""}`
+    + " WHERE id = ? AND projectId = ? AND deletedAt IS NULL";
+  const stmt = db.prepare(sql);
+  const extraValues = extraEntries.map(([, v]) => v);
+
   const txn = db.transaction(() => {
     for (const tid of testIds) {
-      const info = stmt.run(reviewStatus, reviewedAt, tid, projectId);
+      const info = stmt.run(reviewStatus, reviewedAt, ...extraValues, tid, projectId);
       if (info.changes > 0) {
         const test = getById(tid);
         if (test) updated.push(test);
@@ -489,6 +792,50 @@ export function clearStaleByProjectIds(projectIds) {
 }
 
 // ─── Counts ───────────────────────────────────────────────────────────────────
+
+/**
+ * Count tests by review status + approval source for a project (AUTO-003b).
+ *
+ * Splits approved tests into `human` (reviewer-driven) and `auto` (machine-
+ * driven) buckets based on the `approvalSource` column. Used by the project
+ * approval-stats endpoint to render the calibration line
+ * `N auto-approved · N human · N draft`.
+ *
+ * Done as a single `SUM(CASE WHEN ...)` aggregate so the query cost is
+ * O(index lookup) instead of the previous O(n) in-JS scan over every row
+ * in the project. Matches the existing {@link countByReviewStatus}
+ * pattern — both are portable across the SQLite and PostgreSQL adapters
+ * (INF-001) because they use only vanilla `CASE WHEN`, no dialect-specific
+ * JSON or date functions.
+ *
+ * `auto` matches `approvalSource = 'auto'` exactly; `human` matches
+ * `approved` with any other source (`'human'` on new rows, NULL on legacy
+ * rows approved before migration 017). This preserves the invariant
+ * `auto + human == approved` without a separate LEFT JOIN.
+ *
+ * @param {string} projectId
+ * @returns {{ human: number, auto: number, draft: number, rejected: number, total: number }}
+ */
+export function countApprovalSplitByProjectId(projectId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN reviewStatus = 'approved' AND approvalSource = 'auto'                              THEN 1 ELSE 0 END) AS auto,
+      SUM(CASE WHEN reviewStatus = 'approved' AND (approvalSource IS NULL OR approvalSource <> 'auto') THEN 1 ELSE 0 END) AS human,
+      SUM(CASE WHEN reviewStatus = 'draft'                                                             THEN 1 ELSE 0 END) AS draft,
+      SUM(CASE WHEN reviewStatus = 'rejected'                                                          THEN 1 ELSE 0 END) AS rejected,
+      COUNT(*)                                                                                                            AS total
+    FROM tests
+    WHERE projectId = ? AND deletedAt IS NULL
+  `).get(projectId);
+  return {
+    human:    row?.human    || 0,
+    auto:     row?.auto     || 0,
+    draft:    row?.draft    || 0,
+    rejected: row?.rejected || 0,
+    total:    row?.total    || 0,
+  };
+}
 
 /**
  * Count tests by review status for a project (non-deleted only).

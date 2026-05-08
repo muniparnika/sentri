@@ -25,7 +25,7 @@ Auto-generated documentation for every module, function, and type in the codebas
 | `crawler.js` | Chromium-based page crawler |
 | `testRunner.js` | Playwright test execution engine |
 | `selfHealing.js` | Multi-strategy selector waterfall with healing history |
-| `aiProvider.js` | Multi-provider AI abstraction (Anthropic, OpenAI, Google, Ollama) |
+| `aiProvider.js` | Multi-provider AI abstraction (Anthropic, OpenAI, Google, OpenRouter, Ollama) |
 | `testDials.js` | Test generation configuration and prompt builder |
 
 ### Frontend (`frontend/src/`)

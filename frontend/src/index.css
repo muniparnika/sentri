@@ -24,6 +24,7 @@
 @import "./styles/features/automation.css";
 @import "./styles/features/recorder.css";
 @import "./styles/features/sidebar.css";
+@import "./styles/features/step-results-view.css";
 @import "./styles/pages/new-project.css";
 @import "./styles/pages/dashboard.css";
 @import "./styles/pages/tests.css";
@@ -33,7 +34,11 @@
 @import "./styles/pages/reports.css";
 @import "./styles/pages/runs.css";
 @import "./styles/pages/run-detail.css";
+@import "./styles/pages/test-lab.css";
 @import "./styles/pages/projects.css";
 @import "./styles/pages/chat-history.css";
+@import "./styles/pages/review-queue.css";
+@import "./styles/pages/approvals-timeline.css";
 @import "./styles/pages/layout.css";
+@import "./styles/pages/healing.css";
 @import "./styles/utilities.css";

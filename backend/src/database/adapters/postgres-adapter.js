@@ -292,15 +292,23 @@ const _COL_MAP = buildColumnMap([
   "deletedAt", "workspaceId",
   // tests
   "projectId", "playwrightCode", "playwrightCodePrev", "sourceUrl", "pageTitle",
-  "lastResult", "lastRunAt", "qualityScore", "isJourneyTest", "journeyType",
+  "lastResult", "lastRunAt", "qualityScore", "qualityScoreFactors", "isJourneyTest", "journeyType",
   "assertionEnhanced", "reviewStatus", "reviewedAt", "promptVersion", "modelUsed",
   "linkedIssueKey", "generatedFrom", "isApiTest", "codeRegeneratedAt",
   "aiFixAppliedAt", "codeVersion",
+  // tests — auto-approval provenance (migration 017, AUTO-003b)
+  "confidenceScore", "approvalSource", "approvalThreshold", "approvedAt", "approvedBy",
+  // projects — auto-approval threshold (migration 017) + web-vitals budgets (migration 015)
+  "autoApproveThreshold", "webVitalsBudgets",
   // runs
   "startedAt", "finishedAt", "errorCategory", "pagesFound", "parallelWorkers",
   "tracePath", "videoPath", "videoSegments", "testQueue", "generateInput",
   "promptAudit", "pipelineStats", "feedbackLoop", "currentStep", "rateLimitError",
   "qualityAnalytics",
+  // runs — web-vitals result (migration 015) + secret-scan flag (migration 015, CAP-003)
+  "webVitalsResult", "secretScanBlocked",
+  // metric_samples (migration 016, MET-001)
+  "metricKey",
   // activities
   "projectName", "testId", "testName", "userName",
   // healing_history

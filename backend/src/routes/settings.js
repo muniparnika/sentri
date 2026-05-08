@@ -52,7 +52,7 @@ router.get("/settings", requireRole("admin"), (req, res) => {
 // POST /api/settings — save API key at runtime (no server restart needed)
 router.post("/settings", requireRole("admin"), (req, res) => {
   const { provider, apiKey, baseUrl, model } = req.body;
-  const validProviders = ["anthropic", "openai", "google", "local"];
+  const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
 
   if (!provider || !validProviders.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
@@ -129,7 +129,7 @@ router.post("/settings", requireRole("admin"), (req, res) => {
 // DELETE /api/settings/:provider — remove a key or deactivate local provider
 router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
   const { provider } = req.params;
-  const validProviders = ["anthropic", "openai", "google", "local"];
+  const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
   if (!validProviders.includes(provider)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }

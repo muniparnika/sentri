@@ -42,7 +42,7 @@
 
 ## What is Sentri?
 
-Sentri is an autonomous QA platform that covers the full testing lifecycle in a single tool. Point it at a URL — it crawls your application, runs an 8-stage AI pipeline to generate a Playwright test suite, routes every test through a human approval queue, executes approved tests in real browsers across Chromium, Firefox, and WebKit, and automatically repairs broken selectors between runs.
+Sentri is an autonomous QA platform that covers the full testing lifecycle in a single tool. Point it at a URL — it crawls your application, runs an 8-stage AI pipeline to generate a Playwright test suite, routes tests through a review queue (with optional confidence-based auto-approval for high-quality output), executes approved tests in real browsers across Chromium, Firefox, and WebKit, and automatically repairs broken selectors between runs.
 
 ```
 Crawl → Generate → Deduplicate → Enhance → Validate → Review → Execute → Self-Heal
@@ -58,10 +58,10 @@ Most AI test generators stop at code generation. Sentri treats generation as ste
 |---|---|
 | Writing E2E tests is slow | Point it at a URL — tests are generated in minutes |
 | Selectors break every sprint | Adaptive selector waterfall records what works and tries it first next run |
-| AI-generated tests are untrustworthy | Every test lands in a Draft queue — nothing executes without human approval |
+| AI-generated tests are untrustworthy | Tests land in a Draft queue by default; opt-in confidence-based auto-approval with a full audit trail and one-click revoke for high-quality output |
 | Tests fail and nobody knows why | AI feedback loop classifies every failure and auto-regenerates failing tests |
 | No visibility into what the test is doing | Live browser screencast, real-time SSE log stream, per-step screenshots |
-| Vendor lock-in on AI providers | Switch between Anthropic, OpenAI, Google, or Ollama with a single setting |
+| Vendor lock-in on AI providers | Switch between Anthropic, OpenAI, Google, OpenRouter, or Ollama with a single setting |
 
 ---
 
@@ -88,6 +88,8 @@ Most AI test generators stop at code generation. Sentri treats generation as ste
 - Flaky test detection with 0–100 scoring based on run history
 - Scheduled runs with timezone support
 - CI/CD webhook trigger with per-project Bearer tokens
+- Diff-aware crawling — only regenerates tests for pages whose DOM fingerprint changed since the last crawl; zero LLM calls when nothing changed
+- Vercel + Netlify deployment webhooks — HMAC-signed payloads auto-launch a diff-aware crawl against the preview URL when a deployment is READY
 - Failure notifications via Microsoft Teams, email, and generic webhook
 - Workspace isolation and role-based access control (Admin / QA Lead / Viewer)
 - GDPR/CCPA account export and cascade deletion
@@ -119,9 +121,10 @@ For local development setup, optional Redis/PostgreSQL profiles, and Windows ins
 | Anthropic Claude | `ANTHROPIC_API_KEY` | claude-sonnet-4-20250514 |
 | OpenAI | `OPENAI_API_KEY` | gpt-4o-mini |
 | Google Gemini | `GOOGLE_API_KEY` | gemini-2.5-flash |
+| OpenRouter | `OPENROUTER_API_KEY` | openrouter/auto |
 | Ollama (local, free) | `AI_PROVIDER=local` | mistral:7b |
 
-Auto-detects in order: Anthropic → OpenAI → Google → Ollama. Switch at any time from the header dropdown or Settings page.
+Auto-detects in order: Anthropic → OpenAI → Google → OpenRouter → Ollama. Switch at any time from the header dropdown or Settings page.
 
 Full setup guide including Ollama: **[AI Providers →](https://rameshbabuprudhvi.github.io/sentri/docs/guide/ai-providers.html)**
 
@@ -143,6 +146,7 @@ If you plan to run multiple instances, prefer managed Postgres and set `DATABASE
 |---|---|
 | **Getting Started** | [Installation, first steps, optional services](https://rameshbabuprudhvi.github.io/sentri/docs/guide/getting-started.html) |
 | **Architecture** | [Pipeline, data flow, design decisions](https://rameshbabuprudhvi.github.io/sentri/docs/guide/architecture.html) |
+| **Auto-Approval** | [Confidence-based auto-approval, threshold tuning, audit trail, kill-switch](https://rameshbabuprudhvi.github.io/sentri/docs/guide/auto-approval.html) |
 | **Self-Healing** | [Selector waterfall, healing history, failure classification](https://rameshbabuprudhvi.github.io/sentri/docs/guide/self-healing.html) |
 | **Test Dials** | [Strategy, workflow, quality, format, language options](https://rameshbabuprudhvi.github.io/sentri/docs/guide/test-dials.html) |
 | **API Reference** | [Full REST API with request/response examples](https://rameshbabuprudhvi.github.io/sentri/docs/api/) |

@@ -1,0 +1,318 @@
+/**
+ * pages/approvals-timeline.css
+ *
+ * Scoped to .at-* namespace (approvals-timeline).
+ * Layer: Pages (ITCSS) — imported from index.css alongside other page styles.
+ *
+ * Daily-grouped audit feed of auto- and human-approved tests (AUTO-003b).
+ * Per STANDARDS.md §Styling, all visual rules live here as `var(--token)`
+ * references; the JSX carries class hooks only (no inline `style`).
+ */
+
+/* ── Page shell ──────────────────────────────────────────────────────────── */
+.at-page {
+  padding: 16px 24px;
+  max-width: 960px;
+}
+
+.at-header {
+  margin-bottom: 16px;
+}
+
+/* Header row — title on the left, spacer in the middle, controls on the
+   right. Mirrors `.rq-header` on the ReviewQueue page so the two audit
+   surfaces share a layout vocabulary. */
+.at-header__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.at-header__title {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+/* Flex-grow spacer that pushes `.at-header__controls` to the right edge.
+   Mirrors `.rq-header__spacer`; using a spacer rather than `margin-left:
+   auto` on the controls keeps the order in the DOM linear (title →
+   spacer → controls), which matches reading order and tab order. */
+.at-header__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Right-side controls cluster — project filter + date-range picker. */
+.at-header__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Compact project-filter select — matches the dimensions ReviewQueue uses
+   on its `.rq-header-select` so the two pages feel consistent. */
+.at-header__project-select,
+.at-header__range-select {
+  height: 32px;
+  font-size: 0.78rem;
+  padding: 0 28px 0 10px;
+  min-width: 140px;
+}
+
+/* Date-range select sits to the right of the project filter; narrower
+   minimum because the option labels are short ("Last 7 days" etc.). */
+.at-header__range-select {
+  min-width: 120px;
+}
+
+/* Load-more footer — centred row below the last day section. The hint
+   text gives users a sense of how many rows they've expanded to without
+   having to count, so they know when to switch tactics (narrow date
+   range vs. keep scrolling). */
+.at-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 8px;
+}
+
+.at-load-more__hint {
+  font-size: 0.72rem;
+  color: var(--text3);
+}
+
+.at-header__desc {
+  font-size: 0.85rem;
+  color: var(--text2);
+  margin: 4px 0 0;
+}
+
+/* ── Loading / error states ──────────────────────────────────────────────── */
+.at-loading {
+  padding: 24px;
+  color: var(--text2);
+}
+
+.at-error {
+  padding: 24px;
+  color: var(--danger);
+}
+
+.at-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text2);
+  font-size: 0.875rem;
+}
+
+/* Truncation banner shown when either feed hits the 200-row server cap. */
+.at-truncated-banner {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  font-size: 0.8rem;
+  color: var(--text2);
+}
+
+/* ── Day groups ──────────────────────────────────────────────────────────── */
+.at-day {
+  margin-bottom: 24px;
+}
+
+.at-day__heading {
+  font-size: 0.8rem;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px;
+}
+
+.at-day__batches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Batch (auto / per-actor human group) ────────────────────────────────── */
+.at-batch {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+}
+
+.at-batch__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.875rem;
+  text-align: left;
+  font-family: var(--font-sans);
+}
+
+/* Per-batch icon colour. Auto uses the muted text colour; human uses the
+   accent so reviewer-driven decisions stand out in the daily feed. */
+.at-batch__icon--auto  { color: var(--text2); }
+.at-batch__icon--human { color: var(--accent); }
+
+/* ── Per-test rows inside an expanded batch ──────────────────────────────── */
+.at-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.at-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+}
+
+.at-row__name {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.at-row__sep {
+  color: var(--text3);
+}
+
+.at-row__project {
+  color: var(--text2);
+}
+
+.at-row__score {
+  color: var(--text2);
+}
+
+.at-row__time {
+  color: var(--text3);
+  margin-left: auto;
+}
+
+.at-row__revoked {
+  color: var(--text3);
+  font-style: italic;
+}
+
+/* Inline Revoke button — small ghost variant matching the page density. */
+.at-row__revoke {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Summary callout card ─────────────────────────────────────────────────── */
+/* Three-stat strip above the feed: total approvals, revert rate, health
+   signal. Denser than the full stat-grid — the strip is context, not the
+   main event. */
+.at-summary {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.at-summary__stat {
+  flex: 1;
+  padding: 14px 20px;
+  border-right: 1px solid var(--border);
+}
+
+.at-summary__stat:last-child {
+  border-right: none;
+}
+
+.at-summary__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.at-summary__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+
+.at-summary__sub {
+  font-size: 0.72rem;
+  color: var(--text3);
+  margin-top: 3px;
+}
+
+/* ── Batch avatar chips ───────────────────────────────────────────────────── */
+/* Round coloured chip replaces the raw icon so human vs auto is scannable
+   by colour, not icon shape alone. Blue = human, purple = auto. */
+.at-batch__avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.at-batch__avatar--auto  { background: var(--purple-bg); color: var(--purple); }
+.at-batch__avatar--human { background: var(--blue-bg);   color: var(--blue);   }
+
+/* ── Score pill ───────────────────────────────────────────────────────────── */
+/* Wraps .badge — tabular numerals keep score columns from jumping. */
+.at-score-pill {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Health badge inside the summary callout — slightly larger than the
+   default .badge so it reads as the headline stat in its cell. */
+.at-summary__health-badge {
+  font-size: 0.85rem;
+  padding: 3px 10px;
+}
+
+/* Avg-score chip rendered inline on auto batches — smaller than .badge
+   defaults so it sits visually subordinate to the batch headline. */
+.at-batch__avg-badge {
+  font-size: 0.68rem;
+}
+
+/* ── Responsive: 600px ────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .at-summary {
+    flex-direction: column;
+  }
+
+  .at-summary__stat {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+  }
+
+  .at-summary__stat:last-child {
+    border-bottom: none;
+  }
+}

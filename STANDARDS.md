@@ -283,6 +283,8 @@ Non-cookie auth strategies are automatically CSRF-exempt — no manual carve-out
 Sentri supports **SQLite** (default) and **PostgreSQL** (via `DATABASE_URL` env var). Both adapters expose the same interface so all repository modules work unchanged. See REFERENCE.md for the full adapter and repository listing.
 
 - **Repository pattern**: All DB access goes through repository modules in `backend/src/database/repositories/`. Never write raw SQL in route handlers.
+- **Service layer (`backend/src/services/`)**: When a route handler accumulates more than ~15 lines of business logic — especially logic that's reused across multiple handlers (e.g. provenance shapes, multi-table aggregates, mutation invariants) — extract it into a service module. Routes stay thin (HTTP shape + ACL); services own the business rules. See `services/approvalService.js` (AUTO-003b) for the canonical example: `PROVENANCE_CLEAR`, `humanApproval()`, and `computeStats()` are imported by both `routes/tests.js` and the bulk-action handler, so all four approve/restore paths stay byte-identical.
+- **Cross-side constants**: Event-type literals and enum strings referenced by both backend and frontend live under `backend/src/constants/` (canonical source) and are duplicated in `frontend/src/constants/` (kept in sync manually). A repo-root `shared/` directory would break the Docker builds — both Dockerfiles only copy their own package's directory (`backend/Dockerfile` copies `backend/`; `frontend/Dockerfile` copies `frontend/`), so neither image can reach a sibling or cross-import at build time. The duplication is a deliberate tradeoff: a workspace package (`packages/shared`) would remove it but force a monorepo restructure (lockfile, tooling, docker layering) for what is currently a 14-string map. Revisit if the shared surface grows. See `backend/src/constants/activityTypes.js` + `frontend/src/constants/activityTypes.js` — extracted after a `"test.approve"` vs `"test.approved"` typo regression.
 - **JSON columns**: `steps`, `tags`, `results`, `testQueue`, `credentials`, etc. are stored as JSON strings and auto-serialized/deserialized by the repository layer.
 - **Boolean columns**: `isJourneyTest`, `assertionEnhanced`, `isApiTest` are stored as `0`/`1` integers and converted to `true`/`false` by `testRepo`.
 - **ID generation**: Use `idGenerator.js` for domain objects (projects, tests, runs). Use `uuid` only for internal sub-records.
@@ -297,7 +299,7 @@ Schema is defined in `backend/src/database/schema.sql` (all `CREATE TABLE IF NOT
 
 ### AI Provider
 
-All LLM calls go through `aiProvider.js`. Do not import Anthropic, OpenAI, or Google SDKs directly anywhere else.
+All LLM calls go through `aiProvider.js`. Do not import Anthropic, OpenAI, Google, or OpenRouter SDKs directly anywhere else.
 
 ```js
 // ✅
@@ -591,7 +593,8 @@ The frontend follows a clear separation of concerns between pages:
 | Page | Role | Key actions |
 |---|---|---|
 | **Dashboard** | Read-only analytics hub | Pass rate, trends, defects, recent activity |
-| **Tests** (`Tests.jsx`) | **Central command centre** for all test creation | Crawl a project, Generate from story, Run regression, Review drafts |
+| **Tests** (`Tests.jsx`) | Test inventory & review | List/filter tests, Run regression, Review drafts, Record-a-test |
+| **TestLab** (`/test-lab`, `/projects/:id/test-lab`) | **Dedicated workspace for AI test generation** | Crawl & Generate, Generate from Requirement, Queue (live SSE pipeline) |
 | **ProjectDetail** | Project-scoped execution & review | Run regression, review/approve/reject, export |
 | **Automation** (`/automation`) | Cross-project automation hub | CI/CD trigger tokens, scheduled runs, integration snippets |
 | **Projects** | Project list & creation | Create/delete projects |
@@ -599,4 +602,4 @@ The frontend follows a clear separation of concerns between pages:
 | **ChatHistory** (`/chat`) | Full-page AI chat with session history | New/rename/delete sessions, search, export |
 | **Settings** | AI provider & system config | API keys, Ollama, system info, Recycle Bin |
 
-**Important**: Crawl and test generation are **only** triggered from the Tests page. The ProjectDetail page links back to Tests via a "Generate more tests →" button — it does not have its own crawl controls.
+**Important**: Crawl and AI test generation are triggered from the **Test Lab** page (`/test-lab` or the project-scoped `/projects/:id/test-lab`). The Tests page's "Crawl" and "Generate" quick-action cards now navigate to Test Lab — the legacy `CrawlProjectModal` and `GenerateTestModal` have been removed. Recording (`RecorderModal`) remains a modal launched from the Tests page since it is inherently overlay-oriented (live screencast).

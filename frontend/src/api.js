@@ -9,6 +9,16 @@
  * On 401 responses the stored token is cleared and the user is redirected
  * to the login page so stale sessions don't silently fail.
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file groups ~24 endpoint families
+ * into one object literal. Splitting into per-domain modules
+ * (`api/projects.js`, `api/tests.js`, `api/activities.js`, etc.) would
+ * shrink each file, surface duplicates at lint time (the previous bug
+ * where `getActivities` was defined twice would have been impossible),
+ * and let unused families tree-shake out of bundles. The split is
+ * mechanical but global — every consumer's `import { api } from "./api.js"`
+ * has to resolve to the same shape — so it deserves its own PR rather
+ * than bundling with feature work. Tracked as a follow-up MNT item.
+ *
  * @example
  * import { api } from "./api.js";
  *
@@ -132,6 +142,13 @@ export const api = {
   updateProject: (id, data) => req("PATCH", `/projects/${id}`, data),
   /** @param {string} id - Deletes project and all its tests, runs, and history. */
   deleteProject: (id)   => req("DELETE", `/projects/${id}`),
+  /**
+   * List candidate URLs for the recorder Start-URL dropdown — seed URL plus
+   * any pages discovered on the latest successful crawl.
+   * @param {string} id - Project ID.
+   * @returns {Promise<{urls: string[]}>}
+   */
+  getProjectPages: (id) => req("GET", `/projects/${id}/pages`),
 
   // ── Crawl & Run ─────────────────────────────────────────────────────────────
   /**
@@ -178,8 +195,59 @@ export const api = {
    * @returns {Promise<{draft: number, approved: number, rejected: number, total: number}>}
    */
   getTestCounts: (id) => req("GET", `/projects/${id}/tests/counts`),
+  /**
+   * Workspace-wide per-status test counts — powers the Review Queue's
+   * tab badges in one round-trip. Same filter shape as `getAllTestsPaged`
+   * minus `reviewStatus` (which is what we're partitioning) and `sortBy`
+   * (irrelevant for COUNT). Replaces the previous trio of `pageSize: 1`
+   * paginated probes that fired on every filter change.
+   *
+   * @param {Object} [filters]
+   * @param {string} [filters.category]   - "api" | "ui" | "journey"
+   * @param {string} [filters.search]
+   * @param {string} [filters.projectId]  - Narrow to a single project.
+   * @param {boolean} [filters.stale]
+   * @returns {Promise<{draft: number, approved: number, rejected: number, total: number}>}
+   */
+  getReviewQueueCounts: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.category && filters.category !== "all") params.set("category", filters.category);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.projectId && filters.projectId !== "all") params.set("projectId", filters.projectId);
+    if (filters.stale) params.set("stale", "true");
+    const qs = params.toString();
+    return req("GET", `/tests/counts${qs ? `?${qs}` : ""}`);
+  },
   /** @returns {Promise<Array>} All tests across all projects. */
   getAllTests:   ()                  => req("GET",    "/tests"),
+  /**
+   * Cross-project paginated tests with optional filters — used by the
+   * Review Queue so it doesn't have to fetch the entire workspace.
+   * @param {number} [page=1]
+   * @param {number} [pageSize=50]
+   * @param {Object} [filters]
+   * @param {string} [filters.reviewStatus] - "draft" | "approved" | "rejected"
+   * @param {string} [filters.category]     - "api" | "ui"
+   * @param {string} [filters.search]
+   * @param {string} [filters.projectId]    - Narrow to a single project (must be in workspace).
+   * @param {string} [filters.sortBy]       - "newest" | "oldest" | "quality" | "name".
+   *                                          Forwarded as-is to the backend so the
+   *                                          ORDER BY happens BEFORE pagination —
+   *                                          a client-side sort would only reorder
+   *                                          the current page's rows. Unknown
+   *                                          values fall back to "newest" server-side.
+   * @returns {Promise<{data: Object[], meta: {total: number, page: number, pageSize: number, hasMore: boolean}}>}
+   */
+  getAllTestsPaged: (page = 1, pageSize = 50, filters = {}) => {
+    const params = new URLSearchParams({ page, pageSize });
+    if (filters.reviewStatus && filters.reviewStatus !== "all") params.set("reviewStatus", filters.reviewStatus);
+    if (filters.category && filters.category !== "all") params.set("category", filters.category);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.projectId && filters.projectId !== "all") params.set("projectId", filters.projectId);
+    if (filters.stale) params.set("stale", "true");
+    if (filters.sortBy) params.set("sortBy", filters.sortBy);
+    return req("GET", `/tests?${params}`);
+  },
   /** @param {string} testId */
   getTest:      (testId)            => req("GET",    `/tests/${testId}`),
   /** @param {string} testId @param {Object} data - Fields to update. */
@@ -203,6 +271,44 @@ export const api = {
   rejectTest:      (projectId, testId) => req("PATCH", `/projects/${projectId}/tests/${testId}/reject`),
   /** @param {string} projectId @param {string} testId - Restore to Draft. */
   restoreTest:     (projectId, testId) => req("PATCH", `/projects/${projectId}/tests/${testId}/restore`),
+  /**
+   * Revoke an approval (auto- or human-approved) back to draft (AUTO-003b).
+   * Clears the four provenance columns (`approvalSource`, `approvalThreshold`,
+   * `approvedAt`, `approvedBy`) so a future approval writes a fresh
+   * decision-time snapshot. `qa_lead`+ on the backend.
+   * @param {string} testId
+   */
+  revokeApproval:  (testId) => req("POST", `/tests/${testId}/revoke`),
+  /**
+   * List activity-log rows, optionally filtered by `type` and/or `projectId`.
+   * Workspace-scoped on the backend (`backend/src/routes/system.js`).
+   * Used by `pages/ApprovalsTimeline.jsx` to fetch `test.auto_approve` and
+   * `test.approve` rows for the daily-grouped audit feed.
+   * @param {{ type?: string, projectId?: string, limit?: number }} [filters]
+   */
+  getActivities:   (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.type) params.set("type", filters.type);
+    if (filters.projectId) params.set("projectId", filters.projectId);
+    if (filters.after) params.set("after", filters.after);
+    if (filters.before) params.set("before", filters.before);
+    if (filters.limit != null) params.set("limit", String(filters.limit));
+    if (filters.offset != null) params.set("offset", String(filters.offset));
+    const qs = params.toString();
+    return req("GET", `/activities${qs ? `?${qs}` : ""}`);
+  },
+  /**
+   * Approval-decision counts for a project (AUTO-003b) — powers the
+   * project-settings calibration line under the `autoApproveThreshold` input.
+   * @param {string} projectId
+   * @returns {Promise<{human: number, auto: number, draft: number, total: number}>}
+   */
+  getApprovalStats: (projectId) => req("GET", `/projects/${projectId}/approval-stats`),
+
+  // AUTO-015b: most-recent deployment-triggered run for this project within
+  // the last 24h. Powers the "Last deployment run" badge on the project
+  // header. Returns `{ run: null }` when there's no qualifying activity.
+  getLastDeploymentRun: (projectId) => req("GET", `/projects/${projectId}/last-deployment-run`),
   /**
    * Bulk update tests.
    * @param {string}   projectId
@@ -308,6 +414,7 @@ export const api = {
     req("GET", `/projects/${id}/runs?page=${page}&pageSize=${pageSize}`),
   /** @param {string} runId - Get full run detail with per-test results. */
   getRun:    (runId) => req("GET", `/runs/${runId}`),
+  getRunCompare: (runId, otherRunId) => req("GET", `/runs/${runId}/compare/${otherRunId}`),
   /** @param {string} runId - Abort a running crawl or test run. */
   abortRun:  (runId) => req("POST", `/runs/${runId}/abort`),
 
@@ -356,6 +463,52 @@ export const api = {
    */
   deleteQualityGates: (projectId) => req("DELETE", `/projects/${projectId}/quality-gates`),
 
+  // ── Web Vitals Budgets (AUTO-017) ───────────────────────────────────────────
+  /**
+   * Get the Web Vitals budgets config for a project, or null if unconfigured.
+   * Viewer+ can read.
+   * @param {string} projectId
+   * @returns {Promise<{webVitalsBudgets: {lcp?: number, cls?: number, inp?: number, ttfb?: number} | null}>}
+   */
+  getWebVitalsBudgets: (projectId) => req("GET", `/projects/${projectId}/web-vitals-budgets`),
+  /**
+   * Create or update the Web Vitals budgets config (qa_lead+).
+   * Server validates each field as a non-negative finite number; payload must
+   * include at least one of `lcp`, `cls`, `inp`, `ttfb`.
+   * @param {string} projectId
+   * @param {{lcp?: number, cls?: number, inp?: number, ttfb?: number}} budgets
+   * @returns {Promise<{webVitalsBudgets: Object|null}>}
+   */
+  updateWebVitalsBudgets: (projectId, budgets) =>
+    req("PATCH", `/projects/${projectId}/web-vitals-budgets`, { webVitalsBudgets: budgets }),
+  /**
+   * Clear the Web Vitals budgets (qa_lead+) — runs will report `webVitalsResult: null`.
+   * @param {string} projectId
+   * @returns {Promise<{ok: boolean, webVitalsBudgets: null}>}
+   */
+  deleteWebVitalsBudgets: (projectId) => req("DELETE", `/projects/${projectId}/web-vitals-budgets`),
+
+  // ── Project metric samples (MET-001 / AUTO-017.3) ───────────────────────────
+  /**
+   * Read a project's time-series samples for a single `metricKey`. Powers
+   * the `<TrendChart>` instances in `ProjectQualityCard`'s Web Vitals tab
+   * (`webVitals.lcp` / `.cls` / `.inp` / `.ttfb`) and any future per-project
+   * trend surface. Server caps `limit` at 200; the chart slices to 30.
+   *
+   * @param {string} projectId
+   * @param {string} metricKey - e.g. `"webVitals.lcp"`.
+   * @param {Object} [opts]
+   * @param {number} [opts.since=0] - Lower-bound timestamp (epoch ms).
+   * @param {number} [opts.limit=200]
+   * @returns {Promise<{samples: Array<{ts: number, value: number, tags: Object|null}>}>}
+   */
+  getProjectMetric: (projectId, metricKey, { since = 0, limit = 200 } = {}) => {
+    const params = new URLSearchParams({ key: metricKey });
+    if (since) params.set("since", String(since));
+    if (limit !== 200) params.set("limit", String(limit));
+    return req("GET", `/projects/${projectId}/metrics?${params}`);
+  },
+
   // ── Notifications (FEA-001) ──────────────────────────────────────────────────
   /**
    * Get the notification settings for a project, or null if none exist.
@@ -401,6 +554,24 @@ export const api = {
   // ── Dashboard ───────────────────────────────────────────────────────────────
   /** @returns {Promise<Object>} Analytics: pass rate, defects, flaky tests, MTTR, etc. */
   getDashboard: () => req("GET", "/dashboard"),
+
+  // ── Healing Dashboard (CAP-004) ─────────────────────────────────────────────
+  /**
+   * Self-healing telemetry summary across the current workspace.
+   * Powers the `/healing` page: per-strategy success rates, top-healed
+   * selectors (deduplicated, sorted by real heal count), the
+   * "tests that would have failed without healing" estimate, and the
+   * `healing.savings` metric-sample trend (merged across all projects in
+   * the workspace by timestamp).
+   *
+   * @returns {Promise<{
+   *   strategies: Array<{ strategyIndex: number, total: number, successes: number, successRate: number }>,
+   *   topSelectors: Array<{ selector: string, healCount: number, totalCount: number }>,
+   *   estimates: { testsThatWouldHaveFailed: number },
+   *   savingsTrend: Array<{ ts: number, value: number }>,
+   * }>}
+   */
+  getHealingSummary: () => req("GET", "/healing/summary"),
 
   // ── Config & Settings ───────────────────────────────────────────────────────
   /** @returns {Promise<Object>} Active AI provider info `{ hasProvider, providerName, model }`. */
@@ -632,6 +803,11 @@ export const api = {
   getSystemInfo:   () => req("GET",    "/system"),
   /** @returns {Promise<{cleared: number}>} Clear all run history. */
   clearRuns:       () => req("DELETE", "/data/runs"),
+  // NOTE: `getActivities` is defined once above (in the Test review actions
+  // block). A duplicate definition previously lived here and silently won
+  // over the first per JS object-literal semantics, producing dead code and
+  // a subtle behaviour divergence (`filters.limit` truthy check vs
+  // `!= null`). Consolidated to a single definition — do not re-add here.
   /** @returns {Promise<{cleared: number}>} Clear activity log. */
   clearActivities: () => req("DELETE", "/data/activities"),
   /** @returns {Promise<{cleared: number}>} Clear self-healing history. */

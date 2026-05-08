@@ -1,7 +1,10 @@
 /**
  * testValidator.js — Rejects malformed or placeholder tests before they enter the DB
  *
- * Pure function — no external dependencies beyond the shared type enum.
+ * Mostly pure — only side effect is the lazy, memoised `.github/.gitleaks.toml`
+ * read performed by `secretScanner.loadSecretRules()` on first call to
+ * `scanForSecrets()` (the CAP-003 gate). That read happens at most once per
+ * process lifetime; the result is cached for subsequent calls.
  *
  * Exports:
  *   validateTest(test, projectUrl)          → string[]  (empty = valid)
@@ -14,6 +17,7 @@
 import { VALID_TEST_TYPES } from "./prompts/outputSchema.js";
 import { extractTestBody, stripPlaywrightImports, patchNetworkIdle, repairBrokenStringLiterals } from "../runner/codeParsing.js";
 import { looksLikeCssSelector } from "../utils/selectorHeuristics.js";
+import { scanForSecrets } from "./secretScanner.js";
 import { parse } from "acorn";
 
 const VALID_TYPES_SET = new Set(VALID_TEST_TYPES);
@@ -541,6 +545,19 @@ export function validateTest(test, projectUrl) {
     } catch (syntaxErr) {
       const loc = syntaxErr.loc ? ` (line ${syntaxErr.loc.line}, col ${syntaxErr.loc.column})` : "";
       issues.push(`playwrightCode has syntax error${loc}: ${syntaxErr.message}`);
+    }
+
+    // CAP-003: secret-scanner gate. Reject AI-generated tests that embed
+    // credentials harvested during crawl (Authorization headers, API keys,
+    // JWTs, AWS access keys). Findings are redacted before surfacing — the
+    // raw match is never echoed back into the issues list or persisted on
+    // the test record. Annotation lives on `test.secretScan` so the
+    // orchestrator / reviewer UI can flag the run via `run.secretScanBlocked`.
+    const secretFindings = scanForSecrets(test.playwrightCode);
+    if (secretFindings.length > 0) {
+      const formatted = secretFindings.map((f) => `${f.ruleId} (${f.match})`);
+      issues.push(`secret scan failed: ${formatted.join(", ")}`);
+      test.secretScan = { blocked: true, findings: secretFindings };
     }
   }
 

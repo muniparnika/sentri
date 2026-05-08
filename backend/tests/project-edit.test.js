@@ -146,6 +146,39 @@ async function main() {
       db.prepare("UPDATE workspace_members SET role = 'admin'").run();
     });
 
+    // ── PR #11: tightened isThresholdOnly bypass ─────────────────────────
+    //
+    // The threshold-only bypass at routes/projects.js skips the `name`/`url`
+    // validation gate so the AutoApprovalPanel can PATCH just
+    // `autoApproveThreshold`. After PR #11 the bypass requires the body to
+    // contain *only* `autoApproveThreshold` — any extra key forces the
+    // request back through `validateProjectPayload`.
+    await runner.test("PATCH with autoApproveThreshold ONLY succeeds (threshold-only bypass)", async () => {
+      const r = await req(base, `/api/projects/${projectId}`, {
+        method: "PATCH",
+        token,
+        body: { autoApproveThreshold: 0.85 },
+      });
+      assert.equal(r.res.status, 200, "single-key threshold patch must take the bypass");
+      assert.equal(projectRepo.getById(projectId).autoApproveThreshold, 0.85);
+    });
+
+    await runner.test("PATCH with autoApproveThreshold + extra keys does NOT take the bypass", async () => {
+      // Including an unrelated key alongside `autoApproveThreshold` forces
+      // the request back through validateProjectPayload; with no `name` or
+      // `url` it must be rejected. Pre-PR-#11 this would have been silently
+      // accepted because the bypass only checked that name/url were absent.
+      const r = await req(base, `/api/projects/${projectId}`, {
+        method: "PATCH",
+        token,
+        // `workspaceId` is the cross-tenant injection the tightened gate
+        // is meant to defend against — pair it with a threshold to mimic
+        // an attacker piggybacking on the bypass.
+        body: { autoApproveThreshold: 0.5, workspaceId: "WS-OTHER" },
+      });
+      assert.equal(r.res.status, 400, "multi-key payload must fail validation, not bypass");
+    });
+
     await runner.test("Unknown project id returns 404", async () => {
       const r = await req(base, "/api/projects/PRJ-DOES-NOT-EXIST", {
         method: "PATCH",

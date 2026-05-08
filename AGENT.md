@@ -88,7 +88,7 @@ backend/           Node.js 20+ ESM server (Express 4, Playwright, LLM SDKs)
       schema.sql           Table definitions, indexes, counter seeds
       migrate.js           One-time JSON → SQLite migration
       repositories/        Data access layer (counterRepo, userRepo, projectRepo, testRepo, runRepo, runLogRepo, activityRepo, healingRepo, passwordResetTokenRepo, verificationTokenRepo, webhookTokenRepo, scheduleRepo, workspaceRepo, notificationSettingsRepo, accountRepo, apiKeyRepo, baselineRepo)
-    aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/Ollama)
+    aiProvider.js          Multi-provider LLM abstraction (Anthropic/OpenAI/Google/OpenRouter/Ollama)
     selfHealing.js         Adaptive selector waterfall + healing history
     crawler.js             Link-crawl orchestrator
     testRunner.js          Parallel test execution orchestrator
@@ -135,6 +135,51 @@ docs/                      VitePress site + REST API reference
 - **Do not match stylistic conventions from memory — match the sibling file.** Before writing a new repo, route, page, or hook, open one existing sibling file and mirror its structure. "What the codebase does" beats "what I think is idiomatic."
 - **Do not import directly from `@playwright/test` in E2E specs.** Use `tests/e2e/utils/playwright.mjs` so the import surface stays single-source. If you need a new export, add it there.
 - **Do not write custom auth or CSRF logic in E2E specs.** Use `loginWithRetry()` and `SessionClient` from `tests/e2e/utils/`. New auth-related helpers belong in `auth.mjs` or `session.mjs`, not inline in a spec.
+- **Do not ship a backend route without its frontend consumer in the same PR (PROC-001).** Every new `router.<method>(…)` call in `backend/src/routes/*.js` must land alongside a helper in `frontend/src/api.js` **and** a callsite in `frontend/src/pages/*.jsx` or `frontend/src/components/**/*.jsx`. API-only PRs lose the invariant that "if it's on the server, a user can reach it" and accumulate dead endpoints. The only exception is genuinely UI-less endpoints (internal admin, healthchecks, machine-only triggers); opt out by adding the `[no-ui]` token to the PR title. The `.github/workflows/no-orphan-routes.yml` workflow enforces this — silently adding a route without its consumer fails CI.
+
+---
+
+## Issue-handling rule — every finding must produce an outcome
+
+Reviewing is expensive. When you (or a lifeguard / review tool / human comment) spot an issue while working on a PR, that effort must convert into a concrete outcome — never into a silent gap.
+
+### The rule
+
+1. **Default: fix it.** You are already in the file; context is loaded. Fix the issue in the current PR — even if it's outside the PR's stated scope. Small adjacent fixes are always welcome; note them in the changelog.
+
+2. **If the fix is large** (>1 hour of work, needs an architectural decision, blocked on external input, or would balloon the PR past a reviewable size):
+   - Add an entry to `ROADMAP.md` under the appropriate phase with a new ID (`AUTO-*`, `DIF-*`, `CAP-*`, etc. — match the surrounding naming).
+   - Add a `TODO(<ID>):` comment at the exact file:line where the issue lives, citing the new ROADMAP ID.
+   - List the new ID in the PR description's "Follow-ups" section.
+
+3. **Always document the finding.** Every issue spotted — fixed or deferred — gets mentioned in the PR description (under "Fixed in this PR" or "Follow-ups"). An un-mentioned finding is an invisible finding.
+
+4. **Surface loudly, never hide.** When you find an issue mid-task:
+   - Mention it immediately in your reply / PR comment: "While fixing X, I noticed Y at file:line."
+   - Do **not** bury it in a code comment hoping the next reviewer will catch it.
+   - Do **not** drop it silently because it's "out of scope."
+   - Do **not** tick a checkbox when the underlying item is partially implemented.
+
+### Forbidden outcomes
+
+These are never acceptable ways to handle a spotted issue:
+
+- A block comment in the code explaining why something wasn't done, with no tracker entry.
+- "Follow-up" / "TODO later" / "will fix" mentions in chat replies that never make it into the repo (ROADMAP.md, PR description, or `TODO(<ID>)` marker).
+- An unchecked NEXT.md checklist box without a linked ROADMAP ID explaining why.
+- Ticking a NEXT.md checkbox when the item is documented but not implemented.
+- "I noticed but decided it's out of scope" with no ROADMAP entry.
+
+If your reviewer or a lifeguard spotted it, their time produced a signal. Silently dropping that signal wastes it and ships gaps. **Every finding → fix, or ROADMAP entry. No third option.**
+
+### Stop-and-ask is for ambiguity, not for "should I bother"
+
+Stop and ask the human **only** when:
+- The fix itself requires a product / architectural decision ("should X behave as A or B?").
+- The issue conflicts with an explicit NEXT.md acceptance criterion (fixing it would violate the spec).
+- You are unsure whether the fix belongs in this PR or a follow-up ROADMAP entry.
+
+**Do not** stop and ask for permission to fix a bug that's clearly a bug. Default is fix.
 
 ---
 

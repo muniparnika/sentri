@@ -14,6 +14,8 @@ const files = [
   "tests/command-palette.test.js",
   "tests/query-client.test.js",
   "tests/extractCodeBlock.test.js",
+  "tests/automation-status.test.js",
+  "tests/approval-provenance.test.js",
 ];
 
 let passed = 0;

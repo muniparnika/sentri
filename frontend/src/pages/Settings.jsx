@@ -65,6 +65,20 @@ const PROVIDERS = [
     warning: "Free tier is limited to 20 requests/day — hits rate limits quickly on large crawls.",
   },
   {
+    id: "openrouter",
+    name: "OpenRouter",
+    company: "OpenRouter",
+    model: "openrouter/auto",
+    placeholder: "sk-or-v1-...",
+    docsUrl: "https://openrouter.ai/keys",
+    color: "#8385f4",
+    borderColor: "rgba(100,102,241,0.3)",
+    bg: "rgba(100,102,241,0.06)",
+    description: "Unified gateway to 200+ models (Claude, GPT, Llama, Mixtral, etc.) with one key.",
+    badge: "Multi-model",
+    badgeColor: "var(--accent)",
+  },
+  {
     id: "local",
     name: "Ollama",
     company: "Local / Self-hosted",
@@ -325,7 +339,7 @@ function ProviderCard({ provider, activeProvider, maskedKey, ollamaBaseUrl, olla
           background: isActive ? provider.bg : "var(--bg3)",
           border: `1px solid ${isActive ? provider.borderColor : "var(--border)"}`,
         }}>
-          {provider.id === "anthropic" ? "🔶" : provider.id === "openai" ? "🟢" : provider.id === "local" ? "🦙" : "🔷"}
+          {provider.id === "anthropic" ? "🔶" : provider.id === "openai" ? "🟢" : provider.id === "openrouter" ? "🧭" : provider.id === "local" ? "🦙" : "🔷"}
         </div>
         <div className="flex-1">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -523,12 +537,30 @@ function fmtUptime(seconds) {
 }
 
 const SETTINGS_TABS = [
-  { key: "providers",   label: "AI Providers",  icon: <Zap size={14} /> },
-  { key: "members",     label: "Members",       icon: <Users size={14} /> },
-  { key: "execution",   label: "Execution",     icon: <Cpu size={14} /> },
-  { key: "data",        label: "Data",          icon: <Database size={14} /> },
-  { key: "account",     label: "Account",       icon: <Shield size={14} /> },
+  { key: "providers",   label: "AI Providers",  icon: <Zap size={14} />,      adminOnly: true },
+  { key: "members",     label: "Members",       icon: <Users size={14} />,    adminOnly: true },
+  { key: "execution",   label: "Execution",     icon: <Cpu size={14} />,      adminOnly: false },
+  { key: "data",        label: "Data",          icon: <Database size={14} />, adminOnly: true },
+  { key: "account",     label: "Account",       icon: <Shield size={14} />,   adminOnly: false },
 ];
+
+// Renders in place of an admin-only tab body when a non-admin lands on it
+// (e.g. via deep link / stale tab state). UI gate only — backend mutation
+// routes still enforce requireRole("admin") as the authoritative ACL.
+function AdminLockedSection({ feature, role }) {
+  return (
+    <div className="card card-padded" style={{ textAlign: "center", padding: "40px 24px" }}>
+      <Shield size={28} color="var(--text3)" style={{ marginBottom: 12 }} />
+      <div className="font-bold" style={{ fontSize: "1.05rem", marginBottom: 6 }}>
+        {feature} requires admin access
+      </div>
+      <div className="text-sm text-muted" style={{ maxWidth: 420, margin: "0 auto" }}>
+        Your current role is <strong>{role || "viewer"}</strong>. Ask a workspace admin to grant you
+        the <strong>admin</strong> role if you need to change these settings.
+      </div>
+    </div>
+  );
+}
 
 
 // ── Members tab (ACL-002) ─────────────────────────────────────────────────────
@@ -1024,7 +1056,11 @@ function AccountTab() {
 export default function Settings() {
   usePageTitle("Settings");
   const navigate = useNavigate();
-  const [tab, setTab]           = useState("providers");
+  const { user } = useAuth();
+  const isAdmin = user?.workspaceRole === "admin";
+  const visibleTabs = SETTINGS_TABS.filter(t => isAdmin || !t.adminOnly);
+  // Default to first visible tab so non-admins don't land on a locked section.
+  const [tab, setTab]           = useState(visibleTabs[0]?.key || "account");
 
   const bundleQuery = useSettingsBundleQuery();
 
@@ -1066,7 +1102,7 @@ export default function Settings() {
 
       {/* ── Tab bar ── */}
       <div className="tab-bar">
-        {SETTINGS_TABS.map(t => (
+        {visibleTabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -1077,8 +1113,18 @@ export default function Settings() {
         ))}
       </div>
 
+      {/* Defense-in-depth: if `tab` ever points at an admin-only section for a
+          non-admin (stale state, deep link), short-circuit with a locked card
+          instead of rendering the admin UI. */}
+      {!isAdmin && SETTINGS_TABS.find(t => t.key === tab)?.adminOnly && (
+        <AdminLockedSection
+          feature={SETTINGS_TABS.find(t => t.key === tab)?.label}
+          role={user?.workspaceRole}
+        />
+      )}
+
       {/* ── Tab: AI Providers ── */}
-      {tab === "providers" && <>
+      {tab === "providers" && isAdmin && <>
       {/* Active provider banner */}
       {!loading && config && (
         <div className="st-provider-banner" style={{
@@ -1142,7 +1188,7 @@ export default function Settings() {
       </>}
 
       {/* ── Tab: Members ── */}
-      {tab === "members" && <MembersTab />}
+      {tab === "members" && isAdmin && <MembersTab />}
 
       {/* ── Tab: Execution (runtime defaults + system info) ── */}
       {tab === "execution" && <>
@@ -1200,7 +1246,7 @@ export default function Settings() {
       </>}
 
       {/* ── Tab: Data (data management + recycle bin) ── */}
-      {tab === "data" && <>
+      {tab === "data" && isAdmin && <>
       <SectionTitle icon={<Database size={16} color="var(--amber)" />} title="Data Management" sub="Clear in-memory data — all data is ephemeral and resets on server restart" />
       <div className="flex-col gap-md">
         <DataAction icon={<Activity size={16} />} label="Run History" sub="All crawl and test run records, including logs and results" count={sysInfo?.runs} btnLabel="Clear Runs" onAction={async () => { const r = await api.clearRuns(); await reload(); return r; }} />

@@ -36,6 +36,7 @@ import { sanitiseProjectForClient } from "../utils/projectSanitiser.js";
 import { reloadSchedule, stopSchedule, getNextRunAt } from "../scheduler.js";
 import { requireRole } from "../middleware/requireRole.js";
 import * as notificationSettingsRepo from "../database/repositories/notificationSettingsRepo.js";
+import * as metricSamplesRepo from "../database/repositories/metricSamplesRepo.js";
 import { generateNotificationSettingId } from "../utils/idGenerator.js";
 import { validateUrl } from "../utils/ssrfGuard.js";
 import cron from "node-cron";
@@ -66,6 +67,20 @@ function validateQualityGates(payload) {
     return "qualityGates must contain at least one gate field (minPassRate, maxFlakyPct, maxFailures)";
   }
   return gates;
+}
+
+
+function validateWebVitalsBudgets(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "webVitalsBudgets must be an object";
+  const out = {};
+  for (const key of ["lcp", "cls", "inp", "ttfb"]) {
+    if (payload[key] != null) {
+      if (!Number.isFinite(payload[key]) || payload[key] < 0) return `${key} must be a non-negative number`;
+      out[key] = payload[key];
+    }
+  }
+  if (Object.keys(out).length === 0) return "webVitalsBudgets must include at least one of: lcp, cls, inp, ttfb";
+  return out;
 }
 
 
@@ -124,13 +139,37 @@ router.patch("/:id", requireRole("qa_lead"), (req, res) => {
   const existing = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!existing) return res.status(404).json({ error: "not found" });
 
-  const validationErr = validateProjectPayload(req.body);
-  if (validationErr) return res.status(400).json({ error: validationErr });
+  // Allow threshold-only PATCHes (from AutoApprovalPanel) to skip the
+  // name/url validation gate. To keep this bypass tight, require the body
+  // to contain *only* `autoApproveThreshold` — any extra keys (e.g. an
+  // attempted `status` or `workspaceId` injection) force the request
+  // back through `validateProjectPayload` and the field whitelist below.
+  // Allow threshold-only PATCHes (from AutoApprovalPanel) to skip the
+  // name/url validation gate. To keep this bypass tight, require the body
+  // to contain *only* `autoApproveThreshold` — any extra keys (e.g. an
+  // attempted `status` or `workspaceId` injection) force the request
+  // back through `validateProjectPayload` and the field whitelist below.
+  const bodyKeys = req.body && typeof req.body === "object" ? Object.keys(req.body) : [];
+  const isThresholdOnly = bodyKeys.length === 1 && bodyKeys[0] === "autoApproveThreshold";
+  if (!isThresholdOnly) {
+    const validationErr = validateProjectPayload(req.body);
+    if (validationErr) return res.status(400).json({ error: validationErr });
+  }
 
-  const name = sanitise(req.body.name, 200);
-  const url  = req.body.url?.trim() || "";
+  const name = req.body.name !== undefined ? sanitise(req.body.name, 200) : existing.name;
+  const url  = req.body.url !== undefined ? (req.body.url?.trim() || "") : existing.url;
 
   const fields = { name, url };
+  if (Object.hasOwn(req.body, "autoApproveThreshold")) {
+    const threshold = req.body.autoApproveThreshold;
+    // Disallow 0 to prevent a footgun: with `confidenceScore >= 0` always
+    // true, threshold=0 would auto-approve every generated test (including
+    // zero-quality ones). Use `null` to disable auto-approval.
+    if (threshold !== null && (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1)) {
+      return res.status(400).json({ error: "autoApproveThreshold must be null or a number greater than 0 and at most 1." });
+    }
+    fields.autoApproveThreshold = threshold;
+  }
 
   if (req.body.credentials === null) {
     fields.credentials = null;
@@ -233,6 +272,31 @@ router.delete("/:id", requireRole("admin"), (req, res) => {
 });
 
 
+/**
+ * GET /api/v1/projects/:id/pages
+ * Return URLs discovered on the latest successful crawl (or recorder run)
+ * for this project, with the project's seed URL prepended so the dropdown
+ * is never empty.
+ *
+ * Backed by `runRepo.getLatestDiscoveredPageUrls()` so the query is a
+ * single `SELECT pages LIMIT 1` instead of `SELECT *` + per-row JSON parse
+ * of every run's heavy columns — the dropdown is fetched on every
+ * recorder modal open and previously scaled poorly on projects with long
+ * run history. We intentionally do NOT filter on `status = 'completed'`:
+ * `crawler.js` flips status to `"completed_empty"` when a crawl finishes
+ * without generating tests (auth-walled sites, SPAs with no interactive
+ * elements, AI-rate-limited runs), but those runs still persist a valid
+ * `run.pages` array — filtering them out caused the dropdown to show only
+ * the seed URL on any project whose latest crawl didn't yield tests.
+ */
+router.get("/:id/pages", requireRole("viewer"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const pages = runRepo.getLatestDiscoveredPageUrls(req.params.id);
+  const unique = Array.from(new Set([project.url, ...pages].filter(Boolean)));
+  res.json({ urls: unique });
+});
+
 router.get("/:id/quality-gates", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "not found" });
@@ -254,6 +318,55 @@ router.delete("/:id/quality-gates", requireRole("qa_lead"), (req, res) => {
   if (!project) return res.status(404).json({ error: "not found" });
   projectRepo.update(req.params.id, { qualityGates: null });
   res.json({ ok: true, qualityGates: null });
+});
+
+
+router.get("/:id/web-vitals-budgets", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  res.json({ webVitalsBudgets: project.webVitalsBudgets || null });
+});
+
+router.patch("/:id/web-vitals-budgets", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const validated = validateWebVitalsBudgets(req.body?.webVitalsBudgets ?? req.body);
+  if (typeof validated === "string") return res.status(400).json({ error: validated });
+  projectRepo.update(req.params.id, { webVitalsBudgets: validated });
+  const updated = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  res.json({ webVitalsBudgets: updated.webVitalsBudgets || null });
+});
+
+router.delete("/:id/web-vitals-budgets", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  projectRepo.update(req.params.id, { webVitalsBudgets: null });
+  res.json({ ok: true, webVitalsBudgets: null });
+});
+
+
+/**
+ * GET /api/v1/projects/:id/metrics?key=<metricKey>&since=<ms>&limit=<n>
+ *
+ * Read a project's time-series samples for a single metric (MET-001 +
+ * AUTO-017.3). Powers the `<TrendChart>` instances in
+ * `ProjectQualityCard`'s Web Vitals tab. Workspace-scoped — falls through
+ * to the same 404 as every other project route when the caller isn't a
+ * member.
+ */
+router.get("/:id/metrics", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  const key = typeof req.query.key === "string" ? req.query.key : "";
+  if (!key) return res.status(400).json({ error: "key is required" });
+  const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+  const rawLimit = Number(req.query.limit);
+  // Cap at 200 to match `getSeries`'s default ceiling — keeps the
+  // `<TrendChart>` last-30 window cheap and prevents callers from
+  // pulling the whole table.
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 200;
+  const samples = metricSamplesRepo.getSeries(req.params.id, key, { since, limit });
+  res.json({ samples });
 });
 
 // ─── Schedule endpoints ───────────────────────────────────────────────────────

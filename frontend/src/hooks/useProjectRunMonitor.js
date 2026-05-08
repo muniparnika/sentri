@@ -14,10 +14,14 @@ import { useRunSSE } from "./useRunSSE.js";
  *
  * @param {string|null} activeRunId
  * @param {(run: object) => void} [onSettled]
- * @returns {{ sseDown: boolean, retryIn: number|null, initialStatus: string|undefined }}
+ * @returns {{ sseDown: boolean, retryIn: number|null, initialStatus: string|undefined, pagesChanged: object|null }}
  */
 export default function useProjectRunMonitor(activeRunId, onSettled) {
   const [initialStatus, setInitialStatus] = useState(undefined);
+  // AUTO-002: latest `pages_changed` SSE event payload — exposed to the
+  // Test Lab live view so it can render "N pages changed since last crawl"
+  // instead of the generic progress bar. Reset whenever a new run starts.
+  const [pagesChanged, setPagesChanged] = useState(null);
   // Use a ref for onSettled so the initial-fetch effect doesn't re-run when
   // the callback identity changes (it's rebuilt on every render via useCallback
   // in the parent, but its semantic meaning is stable).
@@ -28,8 +32,10 @@ export default function useProjectRunMonitor(activeRunId, onSettled) {
     let alive = true;
     if (!activeRunId) {
       setInitialStatus(undefined);
+      setPagesChanged(null);
       return;
     }
+    setPagesChanged(null);
     api.getRun(activeRunId)
       .then((run) => {
         if (!alive) return;
@@ -48,6 +54,18 @@ export default function useProjectRunMonitor(activeRunId, onSettled) {
 
   const handleEvent = useCallback((evt) => {
     if (!evt) return;
+    // AUTO-002: capture diff-aware crawl summary so the Test Lab live view
+    // can show "N changed / M removed / K unchanged" in place of the
+    // generic progress bar. The crawler emits this exactly once per run,
+    // right after fingerprint diffing.
+    if (evt.type === "pages_changed") {
+      setPagesChanged({
+        changedPages: evt.changedPages || [],
+        removedPages: evt.removedPages || [],
+        unchangedPages: evt.unchangedPages || [],
+      });
+      return;
+    }
     if (evt.type === "snapshot" && evt.run?.status && evt.run.status !== "running") {
       onSettled?.(evt.run);
       return;
@@ -59,5 +77,5 @@ export default function useProjectRunMonitor(activeRunId, onSettled) {
 
   const { sseDown, retryIn } = useRunSSE(activeRunId, handleEvent, initialStatus);
 
-  return { sseDown, retryIn, initialStatus };
+  return { sseDown, retryIn, initialStatus, pagesChanged };
 }

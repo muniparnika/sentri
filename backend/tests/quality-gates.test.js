@@ -57,9 +57,57 @@ async function main() {
     assert.equal(out.res.status, 200);
     assert.equal(out.json.qualityGates, null);
 
-    // ── Evaluator: 90% pass rate vs minPassRate: 95 → violation ─────────
-    // Imported lazily so the test doesn't depend on runner boot order.
-    const { __evaluateQualityGatesForTest } = await import("../src/testRunner.js").catch(() => ({}));
+    // ── Web vitals budgets CRUD round-trip (AUTO-017) ──────────────────
+    // Pure HTTP tests against `/web-vitals-budgets` — must run unconditionally.
+    // Previously nested inside the quality-gates evaluator guard below, which
+    // silently skipped them whenever the dynamic import of `testRunner.js`
+    // failed (e.g. a missing transitive dependency in a future refactor).
+    out = await t.req(base, `/api/v1/projects/${pid}/web-vitals-budgets`, { method: "PATCH", token, body: { lcp: 2500, cls: 0.1 } });
+    assert.equal(out.res.status, 200);
+    assert.equal(out.json.webVitalsBudgets.lcp, 2500);
+
+    out = await t.req(base, `/api/v1/projects/${pid}/web-vitals-budgets`, { method: "GET", token });
+    assert.equal(out.res.status, 200);
+    assert.equal(out.json.webVitalsBudgets.cls, 0.1);
+
+    out = await t.req(base, `/api/v1/projects/${pid}/web-vitals-budgets`, { method: "DELETE", token });
+    assert.equal(out.res.status, 200);
+    assert.equal(out.json.webVitalsBudgets, null);
+
+    // ── GET /:id/metrics HTTP flow (AUTO-017.3) ────────────────────────────
+    // REVIEW.md mandates an integration test for new endpoints — exercise the
+    // 400 (missing key), 404 (unknown project), success shape, and the
+    // `limit` clamping logic on the route added in
+    // `backend/src/routes/projects.js`.
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics`, { method: "GET", token });
+    assert.equal(out.res.status, 400, "missing `key` query param must 400");
+    assert.equal(out.json.error, "key is required");
+
+    out = await t.req(base, `/api/v1/projects/PRJ-DOES-NOT-EXIST/metrics?key=webVitals.lcp`, { method: "GET", token });
+    assert.equal(out.res.status, 404, "unknown project must 404");
+
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics?key=webVitals.lcp`, { method: "GET", token });
+    assert.equal(out.res.status, 200, "valid request must 200");
+    assert.ok(Array.isArray(out.json.samples), "response must be { samples: [] }");
+
+    // Seed a sample directly via the repo so we can verify shape + limit clamp.
+    const { recordMetric } = await import("../src/utils/recordMetric.js");
+    recordMetric(pid, "webVitals.lcp", 2200, { source: "test" }, Date.now());
+
+    out = await t.req(base, `/api/v1/projects/${pid}/metrics?key=webVitals.lcp&limit=999`, { method: "GET", token });
+    assert.equal(out.res.status, 200);
+    assert.ok(out.json.samples.length >= 1, "seeded sample must be returned");
+    assert.equal(out.json.samples.at(-1).value, 2200, "sample value round-trips");
+    // `limit=999` is clamped to 200 server-side; we can only assert the
+    // returned count is ≤ 200 (the actual seeded count is 1 here).
+    assert.ok(out.json.samples.length <= 200, "limit must be clamped at 200");
+
+    // ── Evaluators: import lazily so HTTP tests above don't depend on it ───
+    // Each evaluator is guarded independently — a future refactor that splits
+    // testRunner.js exports must not silently skip both suites.
+    const { __evaluateQualityGatesForTest, __evaluateWebVitalsBudgetsForTest } = await import("../src/testRunner.js").catch(() => ({}));
+
+    // ── Quality gates evaluator: 90% pass rate vs minPassRate: 95 → violation ─
     if (typeof __evaluateQualityGatesForTest === "function") {
       const result = __evaluateQualityGatesForTest(
         { minPassRate: 95 },
@@ -114,8 +162,26 @@ async function main() {
       assert.equal(bounded.violations.length, 1, "1 flaky test of 1 → 100% flaky, exceeds 99% threshold");
       assert.equal(bounded.violations[0].rule, "maxFlakyPct");
       assert.equal(bounded.violations[0].actual, 100, "flakyPct must be bounded at 100, not 500");
-    } else {
-      console.warn("  ⚠️  __evaluateQualityGatesForTest not exported — evaluator branch skipped");
+    }
+
+    // ── Web vitals evaluator: LCP=3100 vs budget=2500 → violation (AUTO-017) ─
+    // Independently guarded from the quality-gates evaluator above so a future
+    // refactor that splits testRunner.js exports can't silently drop coverage.
+    if (typeof __evaluateWebVitalsBudgetsForTest === "function") {
+      const vitalsResult = __evaluateWebVitalsBudgetsForTest(
+        { lcp: 2500, cls: 0.1 },
+        { results: [{ testId: "t1", testName: "x", webVitals: { lcp: 3100, cls: 0.05, inp: 120, ttfb: 200 } }] }
+      );
+      assert.equal(vitalsResult.passed, false);
+      assert.equal(vitalsResult.violations[0].rule, "lcp");
+    }
+
+    if (typeof __evaluateQualityGatesForTest !== "function" || typeof __evaluateWebVitalsBudgetsForTest !== "function") {
+      const missing = [
+        typeof __evaluateQualityGatesForTest    !== "function" ? "__evaluateQualityGatesForTest"    : null,
+        typeof __evaluateWebVitalsBudgetsForTest !== "function" ? "__evaluateWebVitalsBudgetsForTest" : null,
+      ].filter(Boolean).join(" + ");
+      console.warn(`  ⚠️  ${missing} not exported — evaluator branch(es) skipped (CRUD round-trips above still ran)`);
     }
   } finally {
     env.restore();

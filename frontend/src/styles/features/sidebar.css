@@ -229,6 +229,47 @@
 .sidebar-nav__item-icon { flex-shrink: 0; }
 .sidebar-nav__item-chevron { margin-left: auto; flex-shrink: 0; }
 
+/* AUTO-003b: "🤖 N auto today" badge on the Approvals nav entry. Sits
+   between the label and the active-route chevron via `margin-left: auto`,
+   so it stays right-aligned regardless of label width. The amber palette
+   matches `.badge-amber` elsewhere — auto-approval is a pending-review
+   signal, not a success or error, so amber reads correctly. */
+.sidebar-nav__auto-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* When the route is active the chevron also wants `margin-left: auto`;
+   we rely on DOM order (badge before chevron) so the badge wins the
+   auto-margin and the chevron sits flush against it. */
+.sidebar-nav__item.active .sidebar-nav__auto-badge + .sidebar-nav__item-chevron {
+  margin-left: 6px;
+}
+
+/* AUTO-003b: rail-mode dot — a small amber pip in the top-right of the
+   Approvals icon when there's auto-approval activity today. Uses the
+   nav-item's relative positioning so the absolute placement anchors to
+   the icon's bounds rather than the sidebar. */
+.sidebar-rail__nav-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  /* Subtle ring so the dot reads as a notification on both light and
+     dark backgrounds without relying on a single contrast assumption. */
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
 /* ── Settings footer (expanded) ────────────────────────────────────── */
 .sidebar-footer {
   padding: 10px 10px 14px;
@@ -249,3 +290,7 @@
   background: var(--accent-bg);
   font-weight: 600;
 }
+.sidebar a,
+.sidebar a:hover,
+.sidebar-rail__logo-btn,
+.sidebar-rail__workspace-btn { text-decoration: none; }

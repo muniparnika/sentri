@@ -238,6 +238,108 @@
   box-shadow: var(--shadow);
 }
 
+/* ── AUTO-003b: Auto-Approval panel + first-enable preview modal ──────────
+   Per STANDARDS.md §Styling, all visual rules live here as `var(--token)`
+   references. The panel lives inside `.auto-card__expanded` (Auto-Approval
+   inner tab); the modal portals to `document.body` so its containing-block
+   isn't the accordion. */
+.aap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aap-field-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+
+.aap-field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.aap-input {
+  width: 120px;
+}
+
+.aap-stats {
+  font-size: 0.75rem;
+  color: var(--text2);
+}
+
+/* Visible "calibration stats unavailable" fallback — same density as
+   `.aap-stats` but uses the amber palette to signal the trust signal
+   is missing without alarming the user. */
+.aap-stats-error {
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  border: 1px solid var(--amber-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
+/* Modal — portal'd to document.body so it overlays the viewport regardless
+   of any ancestor's containing-block transforms. */
+.aap-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.aap-modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.aap-modal__title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.aap-modal__desc {
+  font-size: 0.8rem;
+  color: var(--text2);
+  margin-top: 0;
+}
+
+.aap-modal__sample {
+  font-size: 0.75rem;
+  max-height: 200px;
+  overflow: auto;
+  padding-left: 18px;
+  margin: 8px 0;
+}
+
+.aap-modal__sample-score {
+  color: var(--text3);
+}
+
+.aap-modal__sample-overflow {
+  color: var(--text3);
+}
+
+.aap-modal__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .auto-integ-icon {
   width: 38px;
   height: 38px;
@@ -257,5 +359,234 @@
   .auto-token-reveal__value {
     font-size: 0.72rem;
     padding: 8px 10px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Automation redesign — tab-based layout (added below original classes)
+   All new selectors use .auto-page-* and .auto-inner-* namespaces to avoid
+   collision with the existing .auto-card__* and .auto-token-* rules above.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page header + top-level tab bar ─────────────────────────────────────── */
+.auto-page-header {
+  margin-bottom: 20px;
+}
+
+.auto-page-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.auto-page-subtitle {
+  font-size: 0.85rem;
+  color: var(--text3);
+  margin: 0 0 16px;
+}
+
+.auto-page-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.auto-page-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--text3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.auto-page-tab:hover {
+  color: var(--text);
+}
+
+.auto-page-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Tab body — consistent vertical spacing ───────────────────────────────── */
+/* `display: flex` would override the browser's user-agent `[hidden] { display: none }`
+ * rule because author stylesheets win at equal specificity. The `[hidden]`
+ * attribute is how WAI-ARIA tabs hide inactive tabpanels (see Automation.jsx
+ * tabpanel comment), so all four panels would otherwise remain visible as
+ * empty flex boxes, adding ~48px of spurious whitespace. The `:not([hidden])`
+ * guard keeps the flex layout on the active panel only. */
+.auto-tab-body:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+/* ── Redesigned project accordion card ────────────────────────────────────── */
+.auto-card {
+  overflow: hidden;
+}
+
+/* Override original .auto-card__header padding to tighten it */
+.auto-card .auto-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 14px 20px;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.auto-card .auto-card__header:hover {
+  background: var(--bg2);
+}
+
+.auto-card__title-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.auto-card__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auto-card__url {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text3);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status chip row in the header */
+.auto-card__chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.auto-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.auto-chip--green { background: var(--green-bg); color: var(--green);   border: 1px solid #86efac; }
+.auto-chip--blue  { background: var(--blue-bg);  color: var(--blue);    border: 1px solid #93c5fd; }
+.auto-chip--gray  { background: var(--bg3);      color: var(--text3);   border: 1px solid var(--border); }
+.auto-chip--amber { background: var(--amber-bg); color: var(--amber);   border: 1px solid #fcd34d; }
+
+.auto-card__chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+/* ── Expanded card body ────────────────────────────────────────────────────── */
+.auto-card__expanded {
+  border-top: 1px solid var(--border);
+}
+
+/* ── Inner tab bar (inside each project accordion) ────────────────────────── */
+.auto-inner-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+
+.auto-inner-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--text3);
+  transition: background 0.1s, color 0.1s;
+}
+
+.auto-inner-tab:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.auto-inner-tab.active {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+/* View project link — pushed to right side of inner tab bar */
+.auto-inner-tabs__project-link {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Inner tab content area ────────────────────────────────────────────────── */
+.auto-inner-content {
+  padding: 20px 22px;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .auto-page-tab {
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    gap: 4px;
+  }
+
+  .auto-card .auto-card__header {
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .auto-card__chips {
+    order: 3;
+    width: 100%;
+    padding-left: 44px; /* align with text, past icon */
+  }
+
+  .auto-inner-content {
+    padding: 14px 16px;
   }
 }

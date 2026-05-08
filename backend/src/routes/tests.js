@@ -2,6 +2,16 @@
  * @module routes/tests
  * @description Test CRUD, AI generation, single-test run, review, bulk actions, and export. Mounted at `/api/v1` (INF-005).
  *
+ * REFACTOR-NOTE (post-AUTO-003b): this file mixes 8 concerns — CRUD, AI
+ * generation, single-test runs, review actions, approvals (revoke +
+ * approval-stats), interactive recorder, visual baselines, and exports.
+ * Splitting along those lines (`routes/approvals.js`, `routes/recorder.js`,
+ * `routes/baselines.js`, `routes/exports.js`) is sensible but should land
+ * in a dedicated PR rather than bundled with feature work — the route-
+ * order constraints below ("bulk must be declared BEFORE :testId
+ * wildcards") are easy to regress in a mechanical move. Tracked as a
+ * follow-up MNT item.
+ *
  * ### Endpoints
  * | Method   | Path                                             | Description                         |
  * |----------|--------------------------------------------------|-------------------------------------|
@@ -28,6 +38,8 @@ import { Router } from "express";
 import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
+import { PROVENANCE_CLEAR, humanApproval, computeStats, APPROVAL_SOURCE } from "../services/approvalService.js";
+import { ACTIVITY_TYPES } from "../constants/activityTypes.js";
 import { generateTestId, generateRunId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort } from "../utils/runWithAbort.js";
@@ -55,6 +67,63 @@ import { randomUUID } from "crypto";
 
 const router = Router();
 
+/**
+ * Normalise a `tags` query-string value into a clean string[] suitable for
+ * `filters.tags` on the testRepo paged/count helpers. Accepts either a
+ * repeated query param (Express parses `?tags=a&tags=b` as an array) or a
+ * single comma-joined string (`?tags=a,b`). Empty strings and whitespace-
+ * only entries are dropped. Returns `undefined` when there's nothing to
+ * filter on so callers can omit the key from the filters object entirely
+ * (the repo treats a missing key and an empty array differently — empty
+ * array would match nothing).
+ */
+const parseTags = (raw) => {
+  if (!raw) return undefined;
+  const arr = Array.isArray(raw) ? raw : String(raw).split(",");
+  const cleaned = arr.map((s) => String(s).trim()).filter(Boolean);
+  return cleaned.length ? cleaned : undefined;
+};
+
+/**
+ * Return `desiredName` if it's free within the project, otherwise append
+ * ` (2)`, ` (3)`, … until a non-colliding name is found. Compares
+ * case-insensitively (manual testers expect "Login" and "login" to be
+ * treated as the same name) and ignores soft-deleted tests because
+ * `testRepo.getByProjectId()` already filters them out.
+ *
+ * Used by the recorder stop handler so two recordings saved with the same
+ * name (or two no-name saves whose default ISO-timestamp collides at the
+ * same millisecond) don't produce two indistinguishable rows in the Tests
+ * list. Also covers the recorded-test path's MAX_RECORDING_MS auto-timeout
+ * recovery branch — both routes funnel through `dedupeTestName`.
+ *
+ * Hot-path consideration: `getByProjectId` does one indexed
+ * `SELECT * WHERE projectId = ?`. Recorder stop is a low-frequency event
+ * (one per user save), so the in-process scan is fine — we don't want to
+ * add a `(projectId, name)` UNIQUE index because the AI pipeline already
+ * suffixes its own names and adding a hard constraint would break
+ * legacy rows where duplicates already exist.
+ *
+ * @param {string} projectId
+ * @param {string} desiredName
+ * @returns {string} A name that doesn't collide with any existing test.
+ */
+function dedupeTestName(projectId, desiredName) {
+  const base = String(desiredName || "").trim();
+  if (!base) return base; // caller is responsible for never passing empty
+  const existing = testRepo.getByProjectId(projectId);
+  const taken = new Set(existing.map((t) => String(t.name || "").trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  // Walk suffix counters until we find a free slot. Cap at 999 to avoid an
+  // infinite loop on a pathological project — beyond that, fall through to
+  // the timestamped form which is effectively guaranteed unique.
+  for (let i = 2; i <= 999; i++) {
+    const candidate = `${base} (${i})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} (${new Date().toISOString()})`;
+}
+
 // ─── Test CRUD ────────────────────────────────────────────────────────────────
 
 router.get("/projects/:id/tests", (req, res) => {
@@ -62,13 +131,15 @@ router.get("/projects/:id/tests", (req, res) => {
   const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
   if (!project) return res.status(404).json({ error: "project not found" });
 
-  const { page, pageSize, reviewStatus, category, search, stale } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, tags } = req.query;
   if (page !== undefined || pageSize !== undefined) {
     const filters = {};
     if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
     if (category && category !== "all") filters.category = category;
     if (search) filters.search = search;
     if (stale === "true") filters.stale = true;
+    const parsedTags = parseTags(tags);
+    if (parsedTags) filters.tags = parsedTags;
     return res.json(testRepo.getByProjectIdPaged(req.params.id, page, pageSize, filters));
   }
   res.json(testRepo.getByProjectId(req.params.id));
@@ -79,11 +150,54 @@ router.get("/tests", (req, res) => {
   const wsProjects = projectRepo.getAll(req.workspaceId);
   const projectIds = wsProjects.map(p => p.id);
 
-  const { page, pageSize } = req.query;
+  const { page, pageSize, reviewStatus, category, search, stale, projectId, sortBy, tags } = req.query;
   if (page !== undefined || pageSize !== undefined) {
-    return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize));
+    const filters = {};
+    if (reviewStatus && reviewStatus !== "all") filters.reviewStatus = reviewStatus;
+    if (category && category !== "all") filters.category = category;
+    if (search) filters.search = search;
+    if (stale === "true") filters.stale = true;
+    // `projectId` is honoured by the repo only if it falls inside the
+    // workspace-scoped set, so a malicious client cannot use it to escape ACL.
+    if (projectId && projectId !== "all") filters.projectId = projectId;
+    // `sortBy` is whitelisted in the repo (SORT_BY_CLAUSES); unknown values
+    // fall back to "newest" — we still pass it through unchanged so the
+    // frontend's UI sort dropdown drives the SQL ORDER BY directly.
+    if (sortBy) filters.sortBy = sortBy;
+    const parsedTags = parseTags(tags);
+    if (parsedTags) filters.tags = parsedTags;
+    return res.json(testRepo.getAllPagedByProjectIds(projectIds, page, pageSize, filters));
   }
   res.json(testRepo.getAllByProjectIds(projectIds));
+});
+
+// GET /api/v1/tests/counts — workspace-wide review-queue tab counts.
+//
+// Powers the Review Queue's Draft/Approved/Rejected badges in a single
+// round-trip. Previously the page fired three `pageSize: 1` paginated
+// requests (one per status) on every filter / page change; this aggregate
+// returns all three in one query.
+//
+// Accepts the same filter params as `GET /tests` minus `reviewStatus`
+// (which is what we're partitioning) and `sortBy` (irrelevant for COUNT).
+// `projectId` is ACL-narrowed inside the repo.
+//
+// Declared BEFORE `/tests/:testId` so the literal "counts" path doesn't
+// get captured by the wildcard.
+router.get("/tests/counts", (req, res) => {
+  const wsProjects = projectRepo.getAll(req.workspaceId);
+  const projectIds = wsProjects.map(p => p.id);
+
+  const { category, search, stale, projectId, tags } = req.query;
+  const filters = {};
+  if (category && category !== "all") filters.category = category;
+  if (search) filters.search = search;
+  if (stale === "true") filters.stale = true;
+  if (projectId && projectId !== "all") filters.projectId = projectId;
+  const parsedTags = parseTags(tags);
+  if (parsedTags) filters.tags = parsedTags;
+
+  res.json(testRepo.countReviewQueueByProjectIds(projectIds, filters));
 });
 
 router.get("/tests/:testId", (req, res) => {
@@ -545,9 +659,18 @@ router.patch("/projects/:id/tests/:testId/approve", requireRole("qa_lead"), (req
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "approved", reviewedAt });
-  logActivity({ ...actor(req),
-    type: "test.approve", projectId: req.params.id, projectName: project.name,
+  // AUTO-003b: populate provenance columns on human approvals too so the
+  // approval-stats counter and audit trail carry full decision-time data.
+  // `humanApproval()` returns the four provenance fields keyed to this
+  // actor — see backend/src/services/approvalService.js for the contract.
+  const actorInfo = actor(req);
+  testRepo.update(test.id, {
+    reviewStatus: "approved",
+    reviewedAt,
+    ...humanApproval(actorInfo),
+  });
+  logActivity({ ...actorInfo,
+    type: ACTIVITY_TYPES.TEST_APPROVE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test approved — "${test.name}"`,
   });
@@ -571,9 +694,15 @@ router.patch("/projects/:id/tests/:testId/reject", requireRole("qa_lead"), (req,
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
   const reviewedAt = new Date().toISOString();
-  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt });
+  // AUTO-003b: clear the four provenance columns alongside `reviewStatus`
+  // so a rejected auto-approved test doesn't keep stale `approvalSource:
+  // "auto"` / `approvedBy: "auto-approver"` — the response from GET
+  // `/tests/:id` would otherwise show a rejected test that still looks
+  // auto-approved, which is a confusing audit-trail lie. Matches the
+  // restore / revoke / bulk-restore paths that also clear provenance.
+  testRepo.update(test.id, { reviewStatus: "rejected", reviewedAt, ...PROVENANCE_CLEAR });
   logActivity({ ...actor(req),
-    type: "test.reject", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_REJECT, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test rejected — "${test.name}"`,
   });
@@ -594,13 +723,71 @@ router.patch("/projects/:id/tests/:testId/restore", requireRole("qa_lead"), (req
   const test = testRepo.getById(req.params.testId);
   if (!test || test.projectId !== req.params.id)
     return res.status(404).json({ error: "not found" });
-  testRepo.update(test.id, { reviewStatus: "draft", reviewedAt: null });
+  // AUTO-003b: clear the four provenance columns alongside reviewStatus/reviewedAt
+  // via the shared `PROVENANCE_CLEAR` shape so this stays in lock-step with
+  // bulk restore + revoke (see backend/src/services/approvalService.js).
+  testRepo.update(test.id, {
+    reviewStatus: "draft",
+    reviewedAt: null,
+    ...PROVENANCE_CLEAR,
+  });
   logActivity({ ...actor(req),
-    type: "test.restore", projectId: req.params.id, projectName: project.name,
+    type: ACTIVITY_TYPES.TEST_RESTORE, projectId: req.params.id, projectName: project.name,
     testId: test.id, testName: test.name,
     detail: `Test restored to draft — "${test.name}"`,
   });
   res.json(testRepo.getById(test.id));
+});
+
+// POST /api/v1/tests/:testId/revoke (AUTO-003b)
+//
+// Revoke an approved test (auto- or human-approved) back to draft. Clears
+// the provenance columns so a future approval writes a fresh decision-time
+// snapshot, and emits an activity row so the audit trail records who pulled
+// the test back. Workspace-scoped via the test's parent project (ACL-001).
+router.post("/tests/:testId/revoke", requireRole("qa_lead"), (req, res) => {
+  const test = testRepo.getById(req.params.testId);
+  if (!test) return res.status(404).json({ error: "not found" });
+  const project = projectRepo.getByIdInWorkspace(test.projectId, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+  // Capture the previous source from the snapshot read above for the audit
+  // row's `meta.wasAutoApproved` flag. By the time the UPDATE runs the row
+  // has been cleared, so we can't read provenance off the post-state.
+  const previousSource = test.approvalSource;
+  // AUTO-003b: atomic check-and-update — `revokeApprovalIfApproved` bakes
+  // the `reviewStatus = 'approved'` predicate into the UPDATE's WHERE clause
+  // so two concurrent revokes can't both succeed. Returns `false` when the
+  // row was already in a different state (e.g. another reviewer revoked
+  // first); we map that to the same 400 the previous read-then-check path
+  // produced. This stays correct on PostgreSQL pools where read snapshots
+  // could otherwise let both requests pass the read-side guard.
+  if (!testRepo.revokeApprovalIfApproved(test.id)) {
+    return res.status(400).json({ error: "only approved tests can be revoked" });
+  }
+  logActivity({ ...actor(req),
+    type: ACTIVITY_TYPES.TEST_REVOKE, projectId: project.id, projectName: project.name,
+    testId: test.id, testName: test.name,
+    detail: `Approval revoked — "${test.name}" (was ${previousSource === APPROVAL_SOURCE.AUTO ? "auto-approved" : "human-approved"})`,
+    // `wasAutoApproved` lets the project approval-stats handler compute the
+    // 7-day revert rate without correlating testIds across activity types
+    // — see GET /api/v1/projects/:id/approval-stats below.
+    meta: { wasAutoApproved: previousSource === APPROVAL_SOURCE.AUTO },
+  });
+  res.json(testRepo.getById(test.id));
+});
+
+// GET /api/v1/projects/:id/approval-stats (AUTO-003b)
+//
+// Returns approval-decision counts (human / auto / draft) plus a 7-day
+// revert rate, used by the project-settings calibration line under the
+// `autoApproveThreshold` input.
+router.get("/projects/:id/approval-stats", requireRole("qa_lead"), (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "project not found" });
+  // Aggregation lives in `services/approvalService.js` — keeping the route
+  // handler thin lets the service be reused (e.g. a future workspace-wide
+  // rollup) and keeps the test surface focused on auth/HTTP shape vs. logic.
+  res.json(computeStats(project.id));
 });
 
 // NOTE: bulk must be declared BEFORE :testId wildcard routes to avoid conflict
@@ -634,18 +821,57 @@ router.post("/projects/:id/tests/bulk", requireRole("qa_lead"), (req, res) => {
 
   const statusMap = { approve: "approved", reject: "rejected", restore: "draft" };
   const reviewedAt = action === "restore" ? null : new Date().toISOString();
-  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt);
+  // AUTO-003b: bulk approve must populate provenance, and bulk restore must
+  // clear it. Reuse the same `humanApproval()` / `PROVENANCE_CLEAR` shapes
+  // the single-test handlers use (services/approvalService.js) so all four
+  // approve/restore paths stay byte-identical.
+  //
+  // Provenance is passed through `bulkUpdateReviewStatus` so it lands in the
+  // SAME UPDATE statement as `reviewStatus`/`reviewedAt`, inside the same
+  // transaction. A two-phase pattern (status update, then per-row provenance
+  // writes) could leave tests approved with null provenance if the request
+  // was aborted between phases, miscounting them as human-approved on the
+  // approval-stats endpoint. The returned rows are re-read after the UPDATE
+  // so the response reflects the persisted provenance.
+  // Reject + restore both clear provenance. Reject clears it so a rejected
+  // auto-approved test doesn't carry stale `approvalSource: "auto"` on the
+  // response (matches the single-test reject handler above); restore clears
+  // it because the test is going back to draft for re-review. Only approve
+  // writes new provenance.
+  const extraFields = action === "approve"
+    ? humanApproval(actor(req))
+    : (action === "restore" || action === "reject")
+      ? PROVENANCE_CLEAR
+      : {};
+  const updated = testRepo.bulkUpdateReviewStatus(testIds, req.params.id, statusMap[action], reviewedAt, extraFields);
+
+  // Map the action verb onto the canonical ACTIVITY_TYPES values so the
+  // bulk path emits the same `type` literals as the single-test handlers
+  // (approve at L673, reject at L705, restore at L735). Previously this
+  // used `\`test.${action}\`` interpolation which happened to match today
+  // but reopened the `"test.approve"` vs `"test.approved"` drift class
+  // the constants were introduced to prevent.
+  const PER_TEST_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_REJECT,
+    restore: ACTIVITY_TYPES.TEST_RESTORE,
+  };
+  const BULK_TYPES = {
+    approve: ACTIVITY_TYPES.TEST_BULK_APPROVE,
+    reject:  ACTIVITY_TYPES.TEST_BULK_REJECT,
+    restore: ACTIVITY_TYPES.TEST_BULK_RESTORE,
+  };
 
   if (updated.length) {
     for (const test of updated) {
       logActivity({ ...actor(req),
-        type: `test.${action}`, projectId: req.params.id, projectName: project.name,
+        type: PER_TEST_TYPES[action], projectId: req.params.id, projectName: project.name,
         testId: test.id, testName: test.name,
         detail: `Test ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "restored to draft"} (bulk) — "${test.name}"`,
       });
     }
     logActivity({ ...actor(req),
-      type: `test.bulk_${action}`, projectId: req.params.id, projectName: project.name,
+      type: BULK_TYPES[action], projectId: req.params.id, projectName: project.name,
       detail: `Bulk ${action} — ${updated.length} test${updated.length !== 1 ? "s" : ""}`,
     });
     // DIF-013: emit ONE bulk event (not N per-test) to keep PostHog volume
@@ -982,6 +1208,14 @@ router.post("/projects/:id/record", requireRole("qa_lead"), expensiveOpLimiter, 
       type: "record",
       status: "running",
       startedAt: new Date().toISOString(),
+      // Persist the starting URL so the Recorder modal's start-URL dropdown
+      // (`GET /api/v1/projects/:id/pages`) can surface URLs from past
+      // recordings as suggestions for new recordings on the same project.
+      // The `runs` table has no dedicated `url` column, but `pages` is a
+      // JSON column already used by the crawler to persist discovered URLs
+      // — reuse it here with a single `{url, status: "recorded"}` entry so
+      // the same /pages aggregator works for both crawl + record sources.
+      pages: [{ url: startUrl, title: startUrl, status: "recorded" }],
       workspaceId: project.workspaceId || null,
     });
     await startRecording({ sessionId, projectId: project.id, startUrl });
@@ -1083,10 +1317,18 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
 
   // Close out the stub `runs` row created by POST /record so the SSE channel
   // releases its listener and orphan recovery doesn't pick this up later.
+  // Also update `pages` to the actual landed URL — the stub row created by
+  // POST /record persisted the caller-supplied `startUrl` (pre-redirect),
+  // but `startRecording` resolved it to `stopResult.url` after any
+  // server-side redirects. Without this update, the Recorder Start-URL
+  // dropdown (`GET /api/v1/projects/:id/pages`) would surface the
+  // pre-redirect URL on every subsequent recording launch, causing an
+  // unnecessary redirect each time (http→https, apex→www, OAuth callbacks).
   try {
     runRepo.update(req.params.sessionId, {
       status: "completed",
       finishedAt: new Date().toISOString(),
+      pages: [{ url: stopResult.url, title: stopResult.url, status: "recorded" }],
     });
   } catch { /* row may have been cleaned up already */ }
 
@@ -1136,11 +1378,24 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
   // step-based edit/regeneration that indexes by position).
   const emittableActions = filterEmittableActions(dedupedActions);
 
+  // Dedupe the requested name against existing tests in the same project so
+  // two recordings saved with the same name (or two no-name saves whose
+  // default ISO-timestamp default collides at the same millisecond) don't
+  // produce two indistinguishable rows in the Tests list. If a collision
+  // resolves, the generated `playwrightCode` still carries the *original*
+  // name — regenerate the body with the deduped name so the code's `test(...)`
+  // label and the persisted `name` column stay in sync (test runners surface
+  // the embedded label in failure reports).
+  const uniqueName = dedupeTestName(project.id, name);
+  const playwrightCode = uniqueName !== name
+    ? actionsToPlaywrightCode(uniqueName, stopResult.url, emittableActions)
+    : stopResult.playwrightCode;
+
   const testId = generateTestId();
   const test = {
     id: testId,
     projectId: project.id,
-    name,
+    name: uniqueName,
     description: `Recorded from ${stopResult.url}`,
     // Match the human-readable step convention used by the AI generate/crawl
     // pipeline (`outputSchema.js`) and the manual-test creation path: short
@@ -1150,7 +1405,7 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
     // so visual alignment matters — recorder tests previously stuck out as the
     // only ones showing engineer-shaped output.
     steps: emittableActions.map((a) => recordedActionToStepText(a)),
-    playwrightCode: stopResult.playwrightCode,
+    playwrightCode,
     priority: "medium",
     type: "recorded",
     sourceUrl: stopResult.url,
@@ -1173,8 +1428,8 @@ router.post("/projects/:id/record/:sessionId/stop", requireRole("qa_lead"), asyn
 
   logActivity({ ...actor(req),
     type: "test.record_stop", projectId: project.id, projectName: project.name,
-    testId, testName: name,
-    detail: `Recorder captured ${stopResult.actions.length} actions → Draft test`, status: "success",
+    testId, testName: uniqueName,
+    detail: `Recorder captured ${stopResult.actions.length} actions → Draft test${uniqueName !== name ? ` (renamed to "${uniqueName}" to avoid duplicate)` : ""}`, status: "success",
   });
 
   res.status(201).json({
@@ -1216,7 +1471,7 @@ router.post("/projects/:id/record/:sessionId/input", requireRole("qa_lead"), asy
     return res.status(404).json({ error: "recording session not found" });
   }
 
-  const VALID_TYPES = new Set(["mousePressed", "mouseReleased", "mouseMoved", "keyDown", "keyUp", "char", "scroll"]);
+  const VALID_TYPES = new Set(["mousePressed", "mouseReleased", "mouseMoved", "keyDown", "keyUp", "char", "scroll", "shortcutCapture"]);
   const { type } = req.body || {};
   if (!type || !VALID_TYPES.has(type)) {
     return res.status(400).json({ error: `Invalid event type. Must be one of: ${[...VALID_TYPES].join(", ")}` });

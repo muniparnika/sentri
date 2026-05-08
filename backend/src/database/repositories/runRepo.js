@@ -32,7 +32,8 @@ export { parsePagination };
 const JSON_FIELDS = [
   "tests", "results", "testQueue", "generateInput",
   "promptAudit", "pipelineStats", "feedbackLoop", "videoSegments",
-  "qualityAnalytics", "pages", "gateResult",
+  "qualityAnalytics", "pages", "gateResult", "webVitalsResult",
+  "changedPages", "removedPages", // AUTO-002: diff-aware crawl page-change summary
 ];
 
 function rowToRun(row) {
@@ -62,6 +63,12 @@ function runToRow(r) {
   // Never serialise the in-memory logs array back to the runs table —
   // log lines are stored in run_logs exclusively.
   delete row.logs;
+  // CAP-003: SQLite has no native boolean; better-sqlite3 rejects JS booleans.
+  // The orchestrator sets `run.secretScanBlocked = true`; coerce to 0/1 here so
+  // both create() and update()/save() paths persist it cleanly.
+  if (typeof row.secretScanBlocked === "boolean") {
+    row.secretScanBlocked = row.secretScanBlocked ? 1 : 0;
+  }
   return row;
 }
 
@@ -76,6 +83,9 @@ const INSERT_COLS = [
   "retryCount", "failedAfterRetry", // AUTO-005: aggregated retry telemetry
   "networkCondition", // AUTO-006: fast | slow3g | offline (migration 012)
   "gateResult", // AUTO-012: quality gate pass/fail summary
+  "webVitalsResult", // AUTO-017: web vitals budget pass/fail summary
+  "secretScanBlocked", // CAP-003: set when post-generation secret scanner rejects any test (migration 015)
+  "changedPages", "removedPages", // AUTO-002: diff-aware crawl page-change summary (migration 020)
 ];
 
 const INSERT_SQL = `INSERT INTO runs (${INSERT_COLS.join(", ")})
@@ -90,6 +100,7 @@ const LEAN_COLS = [
   "browser", // DIF-002 — surfaces browser badge on runs list without a second query
   "networkCondition", // AUTO-006 — surfaces network-condition badge on runs list without a second query
   "gateResult", // AUTO-012 — surfaces gate badge on runs list without a second query
+  "webVitalsResult", // AUTO-017 — surfaces vitals status without second query
 ].join(", ");
 
 const LEAN_WITH_FEEDBACK_COLS = `${LEAN_COLS}, feedbackLoop, pipelineStats`;
@@ -119,6 +130,13 @@ function parseLeanJson(row) {
       try { row.gateResult = JSON.parse(row.gateResult); } catch { row.gateResult = null; }
     } else {
       row.gateResult = null;
+    }
+  }
+  if ("webVitalsResult" in row) {
+    if (row.webVitalsResult) {
+      try { row.webVitalsResult = JSON.parse(row.webVitalsResult); } catch { row.webVitalsResult = null; }
+    } else {
+      row.webVitalsResult = null;
     }
   }
   return row;
@@ -178,6 +196,40 @@ export function getByProjectId(projectId) {
   return db.prepare(
     "SELECT * FROM runs WHERE projectId = ? AND deletedAt IS NULL ORDER BY startedAt DESC"
   ).all(projectId).map(rowToRun);
+}
+
+/**
+ * Lean accessor for the recorder's Start-URL dropdown
+ * (`GET /api/v1/projects/:id/pages`). Returns only the URLs persisted on the
+ * most recent crawl or recorder run that has a non-empty `pages` JSON array,
+ * deduplicated and oldest-first within the run.
+ *
+ * Avoids the heavy `SELECT *` + per-row `rowToRun()` JSON parse fan-out of
+ * {@link getByProjectId} — the dropdown is fetched on every recorder modal
+ * open, so loading every run's `results` / `tests` / `promptAudit` /
+ * `qualityAnalytics` blob just to read one column would scale poorly on
+ * projects with long run history. We `LIMIT 1` to the most recent qualifying
+ * run since the previous in-process implementation already only used the
+ * latest match.
+ *
+ * @param {string} projectId
+ * @returns {string[]} URLs from the latest crawl/record run, or `[]` when
+ *   no run has discovered pages yet.
+ */
+export function getLatestDiscoveredPageUrls(projectId) {
+  const db = getDatabase();
+  const row = db.prepare(
+    `SELECT pages FROM runs
+     WHERE projectId = ? AND deletedAt IS NULL
+       AND type IN ('crawl', 'record')
+       AND pages IS NOT NULL AND pages != '[]'
+     ORDER BY startedAt DESC LIMIT 1`
+  ).get(projectId);
+  if (!row?.pages) return [];
+  let parsed;
+  try { parsed = JSON.parse(row.pages); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((p) => p?.url).filter((u) => typeof u === "string" && u);
 }
 
 /**
@@ -308,6 +360,10 @@ export function create(run) {
   // generate runs) that never set retry telemetry.
   if (params.retryCount == null) params.retryCount = 0;
   if (params.failedAfterRetry == null) params.failedAfterRetry = 0;
+  // CAP-003: migration 015 declares secretScanBlocked NOT NULL DEFAULT 0.
+  // Coerce undefined/null to 0 for runs without secret-scan findings
+  // (runToRow already normalised any boolean value to 0/1).
+  if (params.secretScanBlocked == null) params.secretScanBlocked = 0;
   db.prepare(INSERT_SQL).run(params);
 }
 

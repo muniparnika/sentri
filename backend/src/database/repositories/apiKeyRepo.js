@@ -19,7 +19,7 @@ import { encryptCredentials, decryptCredentials } from "../../utils/credentialEn
 import { formatLogLine } from "../../utils/logFormatter.js";
 
 // Valid provider identifiers — mirrors CLOUD_KEY_MAP + local in aiProvider.js
-const VALID_PROVIDERS = ["anthropic", "openai", "google", "local"];
+const VALID_PROVIDERS = ["anthropic", "openai", "google", "openrouter", "local"];
 
 /**
  * Encrypt a string value using the credential encryption utility.
@@ -61,7 +61,7 @@ function decryptValue(encryptedBlob) {
  * Cloud provider values are encrypted before storage.
  * Ollama config is JSON-serialised (not sensitive) then encrypted for consistency.
  *
- * @param {string} provider - `"anthropic"` | `"openai"` | `"google"` | `"local"`.
+ * @param {string} provider - `"anthropic"` | `"openai"` | `"google"` | `"openrouter"` | `"local"`.
  * @param {string|Object} value - Plaintext API key string, or Ollama config object.
  * @throws {Error} If provider is not a recognised value.
  */

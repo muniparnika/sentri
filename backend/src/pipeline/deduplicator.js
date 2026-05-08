@@ -218,57 +218,109 @@ export function hashTest(test) {
   return fingerprintHash(signature);
 }
 
+// Quality-score rubric — single source of truth for both the numeric score
+// and the per-factor breakdown surfaced in the Review Queue's "why was this
+// drafted?" explainer.
+//
+// Each factor has a stable `id` (keyed by the frontend so display copy can
+// evolve without breaking historical data), a short human-readable `label`,
+// the `delta` it contributes when the `hit(test, code)` predicate returns
+// true, and a `kind` so consumers can render rewards (✓) and penalties (✗)
+// differently. **Append-only:** never edit IDs in place — they're persisted
+// per-test in the `qualityScoreFactors` JSON column and shipped over the API.
+const HIGH_VALUE_TYPES = new Set([
+  // Legacy intent-based types (from crawl pipeline)
+  "form", "form_submission", "auth", "checkout", "crud", "search",
+  // Industry-standard types (from new prompt templates)
+  "functional", "smoke", "regression", "e2e", "integration",
+  "accessibility", "security", "performance",
+]);
+
+const QUALITY_FACTORS = [
+  // ── Strong assertions ──
+  { id: "assert.url",        label: "URL assertion",          delta:  20, kind: "reward",  hit: (_, c) => c.includes("toHaveURL") },
+  { id: "assert.title",      label: "Title assertion",        delta:  15, kind: "reward",  hit: (_, c) => c.includes("toHaveTitle") },
+  { id: "assert.visible",    label: "Visibility assertion",   delta:  15, kind: "reward",  hit: (_, c) => c.includes("toBeVisible") },
+  { id: "assert.text",       label: "Text assertion",         delta:  15, kind: "reward",  hit: (_, c) => c.includes("toHaveText") || c.includes("toContainText") },
+  { id: "assert.enabled",    label: "Enabled-state check",    delta:  10, kind: "reward",  hit: (_, c) => c.includes("toBeEnabled") },
+  { id: "assert.value",      label: "Value assertion",        delta:  10, kind: "reward",  hit: (_, c) => c.includes("toHaveValue") },
+  { id: "assert.multiple",   label: "Multiple assertions",    delta:  20, kind: "reward",  hit: (_, c) => (c.match(/expect\(/g) || []).length >= 2 },
+  // ── Weak / missing assertions ──
+  { id: "assert.weak",       label: "Weak assertions",        delta: -20, kind: "penalty", hit: (_, c) => c.includes("toBeTruthy") || c.includes("toBeDefined") },
+  { id: "assert.none",       label: "No assertions",          delta: -30, kind: "penalty", hit: (_, c) => !c.includes("expect(") },
+  // ── Test metadata ──
+  { id: "name.descriptive",  label: "Descriptive name",       delta:   5, kind: "reward",  hit: (t)    => !!t.name && t.name.length > 10 },
+  { id: "priority.high",     label: "High priority",          delta:  10, kind: "reward",  hit: (t)    => t.priority === "high" },
+  { id: "priority.medium",   label: "Medium priority",        delta:   5, kind: "reward",  hit: (t)    => t.priority === "medium" },
+  { id: "type.high-value",   label: "High-value test type",   delta:  15, kind: "reward",  hit: (t)    => HIGH_VALUE_TYPES.has((t.type || "").toLowerCase()) },
+  // ── Selectors ──
+  { id: "selector.semantic", label: "Semantic selectors",     delta:  10, kind: "reward",  hit: (_, c) => c.includes("getByRole") || c.includes("getByLabel") || c.includes("getByText") },
+  { id: "selector.testid",   label: "Test-ID selectors",      delta:  10, kind: "reward",  hit: (_, c) => c.includes("data-testid") || c.includes("test-id") },
+  { id: "selector.fragile",  label: "Fragile nth selectors",  delta: -10, kind: "penalty", hit: (_, c) => (c.match(/\.nth\(|nth-child|nth-of-type/g) || []).length > 2 },
+];
+
+/**
+ * scoreTestWithFactors(test) → { score: number, factors: Array<{ id, label, delta, kind }> }
+ *
+ * Companion to {@link scoreTest} that *also* returns the list of factors that
+ * applied. Drives the Review Queue's "why was this drafted?" explainer so a
+ * reviewer can see at a glance which rewards and penalties produced the score
+ * — without inspecting the test code.
+ *
+ * The numeric score is identical to `scoreTest()`'s output; the two functions
+ * share the {@link QUALITY_FACTORS} rubric so they can never drift.
+ *
+ * @param {object} test
+ * @returns {{ score: number, factors: Array<{ id: string, label: string, delta: number, kind: "reward"|"penalty" }> }}
+ */
+export function scoreTestWithFactors(test) {
+  const code = test.playwrightCode || "";
+  const factors = [];
+  let raw = 0;
+  for (const f of QUALITY_FACTORS) {
+    if (f.hit(test, code)) {
+      factors.push({ id: f.id, label: f.label, delta: f.delta, kind: f.kind });
+      raw += f.delta;
+    }
+  }
+  return { score: Math.max(0, Math.min(100, raw)), factors };
+}
+
+/**
+ * normalizeQualityToConfidence(quality) → number 0–1
+ *
+ * Single source of truth for converting the 0–100 quality rubric output
+ * (`scoreTest` / `_quality`) into the 0–1 `confidenceScore` scale used by
+ * AUTO-003b's `autoApproveThreshold` comparison. Previously this `/100`
+ * normalization was inlined in three places (`deduplicator.js`,
+ * `pipelineOrchestrator.js`, `testPersistence.js`); centralizing avoids
+ * drift if the rubric range ever changes.
+ *
+ * Coerces non-finite / negative inputs to 0 and clamps to [0, 1] so callers
+ * can safely use the result without revalidating.
+ *
+ * @param {number} quality — 0–100 score from scoreTest / scoreTestWithFactors
+ * @returns {number} 0–1 confidence
+ */
+export function normalizeQualityToConfidence(quality) {
+  const q = Number.isFinite(quality) ? quality : 0;
+  if (q <= 0) return 0;
+  if (q >= 100) return 1;
+  return q / 100;
+}
+
 /**
  * scoreTest(test) → number 0–100
  *
  * Quality score used to pick the best test when duplicates are found.
  * Higher = better quality test to keep.
+ *
+ * Thin wrapper around {@link scoreTestWithFactors} — kept as a separate
+ * export so existing call sites (`deduplicateTests`, `testPersistence`) and
+ * unit tests don't need to know about the factor breakdown.
  */
 export function scoreTest(test) {
-  let score = 0;
-  const code = test.playwrightCode || "";
-
-  // Reward strong assertions
-  if (code.includes("toHaveURL")) score += 20;
-  if (code.includes("toHaveTitle")) score += 15;
-  if (code.includes("toBeVisible")) score += 15;
-  if (code.includes("toHaveText") || code.includes("toContainText")) score += 15;
-  if (code.includes("toBeEnabled")) score += 10;
-  if (code.includes("toHaveValue")) score += 10;
-  if ((code.match(/expect\(/g) || []).length >= 2) score += 20; // multiple assertions
-
-  // Penalize weak assertions
-  if (code.includes("toBeTruthy") || code.includes("toBeDefined")) score -= 20;
-  if (!(code.includes("expect("))) score -= 30; // no assertions at all
-
-  // Reward meaningful test names
-  if (test.name && test.name.length > 10) score += 5;
-
-  // Reward high priority
-  if (test.priority === "high") score += 10;
-  if (test.priority === "medium") score += 5;
-
-  // Reward by test type — covers both legacy intent-based types (auth, checkout,
-  // form_submission) and new industry-standard types (functional, e2e, smoke, etc.)
-  // Uses a Set with exact match to avoid false positives from substring matching
-  // (e.g. "form" matching "performance").
-  const HIGH_VALUE_TYPES = new Set([
-    // Legacy intent-based types (from crawl pipeline)
-    "form", "form_submission", "auth", "checkout", "crud", "search",
-    // Industry-standard types (from new prompt templates)
-    "functional", "smoke", "regression", "e2e", "integration",
-    "accessibility", "security", "performance",
-  ]);
-  if (HIGH_VALUE_TYPES.has((test.type || "").toLowerCase())) score += 15;
-
-  // Reward stable selectors
-  if (code.includes("getByRole") || code.includes("getByLabel") || code.includes("getByText")) score += 10;
-  if (code.includes("data-testid") || code.includes("test-id")) score += 10;
-
-  // Penalize fragile selectors
-  if ((code.match(/\.nth\(|nth-child|nth-of-type/g) || []).length > 2) score -= 10;
-
-  return Math.max(0, Math.min(100, score));
+  return scoreTestWithFactors(test).score;
 }
 
 /**
@@ -293,8 +345,17 @@ export function deduplicateTests(tests) {
   // ── Layer 1: structural hash ────────────────────────────────────────────
   for (const test of tests) {
     const hash = hashTest(test);
-    const quality = scoreTest(test);
-    const testWithScore = { ...test, _hash: hash, _quality: quality };
+    const { score: quality, factors } = scoreTestWithFactors(test);
+    const testWithScore = {
+      ...test,
+      _hash: hash,
+      _quality: quality,
+      _qualityFactors: factors,
+      // `quality` is on a 0–100 scale (see scoreTestWithFactors); the
+      // `autoApproveThreshold` config is on a 0–1 scale per AUTO-003b.
+      // Normalize here so a single comparison in testPersistence.js works.
+      confidenceScore: normalizeQualityToConfidence(quality),
+    };
 
     if (!hashMap.has(hash)) {
       hashMap.set(hash, testWithScore);

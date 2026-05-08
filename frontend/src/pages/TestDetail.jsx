@@ -8,7 +8,7 @@ import {
   Link2, Tag, Clipboard, Wand2, MoreHorizontal,
 } from "lucide-react";
 import { api } from "../api.js";
-import { queryClient, testQueryKeys } from "../queryClient.js";
+import { queryClient, testQueryKeys, invalidateAutoApprovalsCache } from "../queryClient.js";
 import { useTestDetailQuery } from "../hooks/queries/useTestDetailQuery.js";
 const DiffView    = lazy(() => import("../components/ai/DiffView.jsx"));
 const AiFixPanel  = lazy(() => import("../components/ai/AiFixPanel.jsx"));
@@ -16,7 +16,7 @@ import { cleanTestName } from "../utils/formatTestName.js";
 import { testTypeBadgeClass, testTypeLabel, isBddTest } from "../utils/testTypeLabels.js";
 import { exportCsv } from "../utils/exportCsv.js";
 import { StatusBadge, ReviewBadge, ScenarioBadges } from "../components/shared/TestBadges.jsx";
-import { fmtDate, fmtDateTime } from "../utils/formatters.js";
+import { fmtDate, fmtDateTime, fmtRelativeTimeFull } from "../utils/formatters.js";
 import highlightCode from "../utils/highlightCode.js";
 import playwrightToCurl from "../utils/playwrightToCurl.js";
 import splitCodeBySteps from "../utils/splitCodeBySteps.js";
@@ -111,6 +111,41 @@ export default function TestDetail() {
   // ── More-actions dropdown ──
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
+
+  // AUTO-003b: two-step revoke confirmation. Revoking is consequential
+  // (test drops out of scheduled runs until re-approved) but the spec
+  // requires a one-click affordance — this pattern threads the needle:
+  // the first click arms a danger-styled "Click again to confirm" state
+  // for 4s; a second click within that window fires `api.revokeApproval`.
+  // The auto-disarm avoids a stuck danger state if the user clicks once
+  // and walks away. Same shape as Settings → Account's two-click delete
+  // (`docs/changelog.md` SEC-003).
+  const [revokeArmed, setRevokeArmed] = useState(false);
+  const revokeArmTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(revokeArmTimerRef.current), []);
+  function handleRevokeClick() {
+    if (!revokeArmed) {
+      setRevokeArmed(true);
+      revokeArmTimerRef.current = setTimeout(() => setRevokeArmed(false), 4000);
+      return;
+    }
+    clearTimeout(revokeArmTimerRef.current);
+    setRevokeArmed(false);
+    // Invalidate the shared auto-approvals cache after the revoke lands so
+    // the sidebar badge + ReviewQueue tray refresh on next render rather
+    // than waiting for the 60s background tick.
+    api.revokeApproval(testId).then(() => {
+      invalidateAutoApprovalsCache();
+      return load();
+    }).catch(() => {
+      // Refetch on failure so the UI shows the real server-side state
+      // (e.g. another user may have revoked first → 400 "only approved
+      // tests can be revoked"). Without this, the armed state clears but
+      // the test data isn't refreshed, leaving the user thinking the
+      // revoke succeeded when it didn't.
+      load();
+    });
+  }
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -858,14 +893,52 @@ export default function TestDetail() {
 
           {/* Quick actions */}
           <div className="td-sidebar-actions">
+            {/*
+             * AUTO-003b: visible approval provenance line. NEXT.md:83 calls out
+             * an explicit anti-pattern of surfacing provenance only on hover —
+             * so the auto/human source, score, threshold, and approval time
+             * all render inline above the Revoke button. The button keeps its
+             * tooltip as a secondary affordance for screen-reader / keyboard
+             * users hovering for context. `approvedAt` is epoch ms (migration
+             * 017), so we hand it to `fmtRelativeTimeFull` as an ISO string.
+             */}
+            {test.reviewStatus === "approved" && (
+              <div className="td-approval-provenance">
+                {test.approvalSource === "auto" ? (
+                  <>
+                    🤖 Auto-approved
+                    {Number.isFinite(test.confidenceScore) && <> · score {test.confidenceScore.toFixed(2)}</>}
+                    {Number.isFinite(test.approvalThreshold) && <> · threshold {test.approvalThreshold.toFixed(2)}</>}
+                    {test.approvedAt && <> · {fmtRelativeTimeFull(new Date(test.approvedAt).toISOString())}</>}
+                  </>
+                ) : (
+                  <>
+                    👤 Approved{test.approvedBy ? <> by @{test.approvedBy}</> : ""}
+                    {test.approvedAt && <> · {fmtRelativeTimeFull(new Date(test.approvedAt).toISOString())}</>}
+                  </>
+                )}
+              </div>
+            )}
             {test.reviewStatus !== "approved" && (
               <button className={`btn btn-sm td-approve-btn`} onClick={() => api.approveTest(test.projectId, testId).then(load)}>
                 <CheckCircle2 size={13} /> Approve Test
               </button>
             )}
             {test.reviewStatus === "approved" && (
-              <button className="btn btn-ghost btn-sm td-draft-btn" onClick={() => api.restoreTest(test.projectId, testId).then(load)}>
-                <RotateCcw size={13} /> Move to Draft
+              <button
+                className={`btn btn-sm td-draft-btn${revokeArmed ? " td-draft-btn--armed" : " btn-ghost"}`}
+                title={
+                  revokeArmed
+                    ? "Click again to confirm — test will return to draft and drop out of scheduled runs"
+                    : test.approvalSource === "auto"
+                      ? `Auto-approved at confidence ${test.confidenceScore?.toFixed?.(2) ?? "?"} (threshold ${test.approvalThreshold?.toFixed?.(2) ?? "?"}) — revoking returns to draft`
+                      : "Revoke approval and return to draft"
+                }
+                onClick={handleRevokeClick}
+                aria-pressed={revokeArmed}
+              >
+                <RotateCcw size={13} />
+                {revokeArmed ? "Click again to confirm" : "Revoke approval"}
               </button>
             )}
             <button className="btn btn-primary btn-sm td-run-sidebar-btn" onClick={handleRunTest} disabled={running}>

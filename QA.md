@@ -23,65 +23,70 @@ If the user asks for… read only this section:
 
 | User intent | Section (anchor) | Lines |
 |---|---|---|
-| "Run / write all happy paths" | [Golden E2E Happy Path](#-golden-e2e-happy-path-must-pass-before-release) | 240–339 |
-| "Write Playwright tests for the deployed app" | [Canonical UI test shape](#canonical-ui-test-shape--emit-this-by-default) + [Tests Page §3](#-tests-page) | 94–108, 418–453 |
-| "Write an API test" | [Tests Page §4](#-tests-page) + [API Test Imports](#-api-test-imports-openapi-har-plain-english-api) | 418–453, 943–958 |
-| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 521–543 |
-| "Record a test" | [Recorder](#-recorder) | 457–491 |
-| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 495–517 |
-| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 547–575 |
-| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 579–602 |
-| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 606–622 |
+| "Run / write all happy paths" | [Golden E2E Happy Path](#-golden-e2e-happy-path-must-pass-before-release) | 241–342 |
+| "Write Playwright tests for the deployed app" | [Canonical UI test shape](#canonical-ui-test-shape--emit-this-by-default) + [Tests Page §3](#-tests-page) | 95–109, 430–467 |
+| "Write an API test" | [Tests Page §4](#-tests-page) + [API Test Imports](#-api-test-imports-openapi-har-plain-english-api) | 430–467, 1108–1124 |
+| "Fix a failing test" | [AI Fix](#-ai-fix-failed-test-recovery) | 650–673 |
+| "Record a test" | [Recorder](#-recorder) | 474–515 |
+| "Run tests / regression" | [Runs](#%EF%B8%8F-runs) | 518–541 |
+| "Review / approve / reject drafts" | [Review Queue](#-review-queue) | 544–579 |
+| "Auto-approve tests / revoke / calibration" | [Auto-Approval](#-auto-approval-auto-003b) | 582–647 |
+| "Edit test code / steps" | [Test Code Editing](#%EF%B8%8F-test-code-editing-steps--source) | 676–724 |
+| "Schedule / trigger from CI" | [Automation](#-automation-cicd--scheduled-runs) | 727–758 |
+| "Visual / screenshot testing" | [Visual Testing](#%EF%B8%8F-visual-testing) | 818–835 |
 | "Verify permissions" | [`permissions.json`](./backend/src/middleware/permissions.json) **(canonical, read this, not prose)** | — |
-| "Verify security / authorization" | [Security](#-security) | 783–810 |
-| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 890–917 |
-| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1065–1098 |
+| "Verify security / authorization" | [Security](#-security) | 997–1025 |
+| "Bulk actions / keyboard shortcuts" | [Bulk Actions](#%EF%B8%8F-bulk-actions--keyboard-shortcuts) | 1104–1149 |
+| "Report a bug" | [Bug Reporting Template](#-bug-reporting-template) | 1306–1339 |
 
 ### Section index (line ranges, for `sed -n 'A,Bp'` / partial reads)
 
 ```yaml
 # Feature sections
-authentication:      { lines: 353-376 }
-workspaces:          { lines: 379-395 }
-projects:            { lines: 399-414 }
-tests-page:          { lines: 418-453 }
-recorder:            { lines: 457-491 }
-runs:                { lines: 495-517 }
-ai-fix:              { lines: 521-543 }
-test-code-editing:   { lines: 547-575 }
-automation:          { lines: 579-602 }
-visual-testing:      { lines: 606-622 }
-dashboard:           { lines: 626-642 }
-ai-chat:             { lines: 646-675 }
-settings:            { lines: 679-696 }
-account-gdpr:        { lines: 700-709 }
-email-verification:  { lines: 713-720 }
-recycle-bin:         { lines: 724-733 }
-audit-log:           { lines: 737-745 }
-notifications:       { lines: 749-779 }
-security:            { lines: 783-810 }
-reports-pdf:         { lines: 814-829 }
-system-diagnostics:  { lines: 833-842 }
-new-project:         { lines: 846-857 }
-runs-list:           { lines: 861-871 }
-project-detail:      { lines: 875-886 }
-bulk-actions:        { lines: 890-917 }
-modals:              { lines: 921-939 }
-api-test-imports:    { lines: 943-958 }
-onboarding:          { lines: 962-971 }
-demo-mode:           { lines: 975-986 }
-settings-data-tab:   { lines: 990-1004 }
-workspace-switcher:  { lines: 1008-1016 }
+authentication:      { lines: 356-381 }
+workspaces:          { lines: 384-401 }
+projects:            { lines: 404-427 }
+tests-page:          { lines: 430-467 }
+recorder:            { lines: 474-515 }
+runs:                { lines: 518-541 }
+review-queue:        { lines: 544-579 }     # NEW (PR #7)
+auto-approval:       { lines: 582-647 }     # NEW (AUTO-003b)
+ai-fix:              { lines: 650-673 }
+test-code-editing:   { lines: 676-724 }
+automation:          { lines: 727-758 }
+quality-gates:       { lines: 761-815 }     # NEW (AUTO-012)
+visual-testing:      { lines: 818-835 }
+dashboard:           { lines: 838-856 }
+ai-chat:             { lines: 860-889 }
+settings:            { lines: 893-910 }
+account-gdpr:        { lines: 914-924 }
+email-verification:  { lines: 927-934 }
+recycle-bin:         { lines: 938-948 }
+audit-log:           { lines: 951-959 }
+notifications:       { lines: 963-994 }
+security:            { lines: 997-1025 }
+reports-pdf:         { lines: 1028-1043 }
+system-diagnostics:  { lines: 1047-1056 }
+new-project:         { lines: 1060-1071 }
+runs-list:           { lines: 1075-1086 }
+project-detail:      { lines: 1089-1101 }
+bulk-actions:        { lines: 1104-1149 }
+modals:              { lines: 1152-1180 }
+api-test-imports:    { lines: 1184-1199 }
+onboarding:          { lines: 1203-1212 }
+demo-mode:           { lines: 1216-1227 }
+settings-data-tab:   { lines: 1231-1245 }
+workspace-switcher:  { lines: 1249-1257 }
 
 # Meta sections
-golden-happy-path:       { lines: 240-339 }
-canonical-ui-test-shape: { lines: 94-108 }
-permissions-matrix:      { lines: 151-199 }
-setup:                   { lines: 203-237 }
-cross-cutting-checks:    { lines: 1020-1046 }
-known-issues:            { lines: 1050-1061 }
-bug-template:            { lines: 1065-1098 }
-coverage-checklist:      { lines: 1102-1146 }
+golden-happy-path:       { lines: 241-342 }
+canonical-ui-test-shape: { lines: 95-109 }
+permissions-matrix:      { lines: 152-200 }
+setup:                   { lines: 204-237 }
+cross-cutting-checks:    { lines: 1185-1213 }
+known-issues:            { lines: 1217-1228 }
+bug-template:            { lines: 1232-1263 }
+coverage-checklist:      { lines: 1267-1313 }
 ```
 
 > **Read-only boundary:** line ranges are approximate and can drift ±5 lines after edits — always stop at the next `### ` heading. Don't read beyond the listed range for a given section.
@@ -266,14 +271,14 @@ Run this single end-to-end journey **as User A (admin)** in a fresh browser. Eve
 
 
 ### 6. Record — manual recorder
-10. Click **Record a test** → Playwright browser opens via CDP screencast.
+10. Open Test Lab (`/projects/:id/test-lab` via the "Test Lab" quick-action card on the Tests page) → click the red **Record a test** CTA in the topbar → Playwright browser opens via CDP screencast. The Tests page no longer has its own Record button (PR #5 — recorder launch consolidated into Test Lab).
 11. Perform: click, fill, press, select, navigate. Stop.
-12. New Draft test appears with `safeClick` / `safeFill` calls and per-step entries.
+12. New Draft test appears with `safeClick` / `safeFill` calls and per-step entries; user is navigated to the Test Detail view.
 
 ### 7. Review — approve / reject
-13. Open a Draft → review steps **and** Playwright code via the **Steps / Source toggle** on TestDetail.
-14. Reject one obviously bad test → archived, excluded from regression.
-15. Approve at least 3 tests → moved to active suite.
+13. Open the **Review Queue** at `/review-queue` (also reachable via the "Review Drafts" quick-action card on the Tests page). Draft tab active by default; the first draft auto-selects in the detail pane showing steps + Playwright code (with the same Steps/Source rendering used on TestDetail).
+14. Reject one obviously bad test via the styled confirmation modal → archived, excluded from regression. Switch to the Rejected tab to verify it lands there.
+15. Approve at least 3 tests (use the `a` keyboard shortcut for speed) → moved to active suite. Watch the Draft tab badge tick down and the Approved tab badge tick up — both update via the single `GET /tests/counts` aggregate query.
 
 ### 8. Edit — verify auto-generated Playwright code
 16. Open an approved test → switch to **Source** tab → confirm code uses role-based selectors (`getByRole`, `getByLabel`, `getByText`), starts with `await page.goto(...)`, has ≥ 3 `expect(...)` assertions, no `import` lines (`backend/src/routes/tests.js:218-224`).
@@ -299,10 +304,11 @@ Run this single end-to-end journey **as User A (admin)** in a fresh browser. Eve
 
 ### 12. Run results, artifacts & reports
 30. On RunDetail verify: per-test status, per-step screenshots, per-step timing, video, network logs, browser badge, parallelism used.
-31. Download/inspect artifacts (screenshots, video, trace zip) — files exist and open.
+31. Download/inspect artifacts (screenshots, video, trace zip) — files exist and open. **🔍 Open Trace** (DIF-005, #9): on a run with a captured trace, click the **Open Trace** action on RunDetail → a new browser tab opens at `/trace-viewer/?trace=<signed-url>` and loads Playwright's embedded trace viewer with the run's trace pre-loaded; verify the viewer's timeline / actions / network panels render. The Trace ZIP download link continues to work alongside as a fallback (served from `backend/public/trace-viewer/` via `backend/src/middleware/appSetup.js`).
+31a. **Compare runs** (AUTO-019, #10) — on a project with ≥ 2 completed test runs, open the newer RunDetail and click the **Compare** action in the header. The page renders a comparison card with summary chips (`Flipped: N · Added: N · Removed: N · Unchanged: N`) and per-test diff rows showing each test's `currentStatus` vs `previousStatus` with a `flipped` / `added` / `removed` / `unchanged` change-type badge (`backend/src/routes/runs.js` `GET /api/v1/runs/:runId/compare/:otherRunId`; `frontend/src/components/run/RunCompareView.jsx`). When > 1 prior test run exists, a `Compare against:` `<select>` picker appears above the card — switching the picker re-fetches the diff against the chosen run. The default target is the chronological predecessor (run immediately before the current one). The Compare action is suppressed for crawl and generate runs. Negative checks: outsider hitting `/api/v1/runs/:runId/compare/:otherRunId` for another workspace's runs → 404; unknown `otherRunId` → 404; no auth token → 401.
 32. Open **`/reports`** page → renders run/test reports for the workspace.
 33. From Dashboard, export the **executive PDF report** → file downloads, opens, contains pass-rate / defect breakdown / trends matching on-screen widgets.
-34. **Out of scope (planned, not shipped):** embedded Playwright trace viewer (`DIF-005`), public/shareable report links. Do not test these. Standalone Playwright project export (`DIF-006`) **is** shipped — it has its own line item under "Export & traceability" below.
+34. **Out of scope (planned, not shipped):** public/shareable report links. Do not test these. Standalone Playwright project export (`DIF-006`) and the embedded Playwright trace viewer (`DIF-005`) **are** shipped — DIF-006 has its own line item under "Export & traceability" below; DIF-005 is verified inline at step 31 above.
 
 ### 13. Notifications
 35. Configure Teams + email + generic webhook for PRJ-Demo. Trigger a failing run → notification arrives on each enabled channel within ~1 min, with project / test / runId / failure reason / link.
@@ -471,13 +477,18 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 
 **Steps & expected:**
 1. Start recorder on any stable site (same target as the Tests crawl step) → recording indicator visible. Recorder uses Playwright CDP screencast; the canvas is **interactive** — pointer / keyboard / wheel events are forwarded to the headless browser via the new `POST /api/v1/projects/:id/record/:sessionId/input` route (see `docs/changelog.md` DIF-015 + PR #115). Persists a Draft test with `safeClick` / `safeFill`.
+1a. **Starting URL suggestions (PR #11)** — the Starting URL field renders a `<datalist>` dropdown populated by `GET /api/v1/projects/:id/pages`: the project's seed URL plus pages discovered on the latest successful crawl (or prior recorder run). Projects with no crawl history show just the seed URL. Verify suggestions appear as you focus the field; pick one → it populates the input.
+1b. **Two-phase step display (PR #11)** — newly captured actions briefly render as a dim italic raw locator (`click → role=button[…]`) for ~600 ms, then flip to human-readable prose (`Click the 'Sign in' button`) with a yellow highlight flash (1.2 s animation). Verify both phases render on the first few actions of a fresh recording.
+1c. **Flush-before-navigate (PR #11)** — type into a search box, hit **Enter** to submit the form. Verify the fill IS captured (Step: "Fill in the 'Search' field with 'iphone'") and ordered BEFORE the resulting `goto`, not swallowed by the navigation. Same check for submit-button click on a form: type → click Submit → the fill step appears in the recorded list, not just the goto.
 2. Perform actions captured by the recorder (PR #115 + #118 expanded scope): **click, double-click, right-click, hover, fill (type), press (keyboard shortcut), select (dropdown), check / uncheck, file upload, drag-and-drop, and navigate**. Mouse moves and scroll are forwarded to the headless browser but not stored as discrete steps. Mouse moves are throttled to ~30 fps client-side.
    - **Hover with intent** — pointer rests on the same interactive element for ≥ 600 ms IS captured as a discrete `hover` step. Drive-by mouseovers are filtered out by the dwell timer (`backend/src/runner/recorder.js:282-309`).
    - **Double-click** — the two preceding `click` events captured for the same selector are dropped within the OS double-click window (`TIMINGS.DBLCLICK_WINDOW_MS` = 500 ms) so the recorded action list reads as a single dblclick, not click-click-dblclick (`backend/src/runner/recorder.js:931-944`).
    - **Right-click** records as `rightClick` and emits `locator.click({ button: 'right' })` so context-menu-driven flows replay correctly.
    - **File upload** captures filenames only (no full paths — would leak tmpdir). The generated code emits a `safeUpload(sel, [])` placeholder + a `// NOTE: recorder captured filenames […]` comment; reviewers must wire up real fixture paths before running outside the recorder.
    - **Drag-and-drop** pairs `dragstart` + `drop` → `locator.dragTo(targetLocator)` in the generated code.
-   - **Printable characters typed into INPUT/TEXTAREA/contenteditable** are intentionally NOT captured as `press` steps — the `input` event handler captures them as a debounced `fill`, so emitting per-keystroke `keyboard.press` would double-type the value at replay (`backend/src/runner/recorder.js:370-372`). Keyboard chords with `Ctrl`/`Cmd` modifiers, plus editing keys (Enter, Tab, Backspace, arrows, Escape), still flow through to `press` actions.
+   - **Printable characters typed into INPUT/TEXTAREA/contenteditable** are intentionally NOT captured as `press` steps by default — the `input` event handler captures them as a debounced `fill`, so emitting per-keystroke `keyboard.press` would double-type the value at replay. Keyboard chords with `Ctrl`/`Cmd` modifiers, plus editing keys (Enter, Tab, Backspace, arrows, Escape), still flow through to `press` actions.
+   - **Paste (DIF-015c Gap 1, PR #11)** — pasting a token / address / JSON block into an `<input>` or `<textarea>` emits a single `safeFill` with the post-paste field value (500-char truncated), NOT a stream of per-keystroke `press` actions. The post-paste `input` event is deduplicated against the paste so exactly one fill is captured. Verify by pasting a long string into a search box — the Steps sidebar must show one "Fill in … with '…'" entry, not N `press` rows.
+   - **Opt-in keyboard shortcut capture (DIF-015c Gap 1, PR #11)** — to record a shortcut like `Ctrl+A` / `Cmd+V` on an editable field, click the **Record keyboard shortcut** button in `RecorderModal` before pressing the chord. The button arms an N-keystroke budget (default 3) via `POST /record/:sessionId/input` with `type: "shortcutCapture"`; the next 3 printable keydowns on editable fields flow through to `press` instead of being suppressed. Budget auto-decrements to 0 so modifier noise is never permanent. Button label flips to "Shortcut capture armed (next 3 keys)" for 4s after arming.
    - **Manual assertions** (PR #118) — while recording, use the "Add assertion" form in `RecorderModal` to insert assertion steps. Four assertion kinds are supported: `assertVisible`, `assertText`, `assertValue`, `assertUrl` (`backend/src/routes/tests.js:1164-1184`, `backend/src/runner/recorder.js:827-855`). Server-side validation rejects assertions missing required fields (selector for visible/text/value, value for text/value/url) with a 400.
    - **Expected:** Each captured action is a discrete step with selector + action type; no empty/null steps. Persisted `steps[]` are short English sentences with **single quotes** (`User clicks the 'Sign in' button`, `User fills in the 'Email' field with 'user@example.com'`, `The 'Toast' is visible`) — **never raw selectors** like `role=button[name="…"]` or `#login`. Generated `playwrightCode` uses `safeClick` / `safeFill` / `safeSelect` / `safeCheck` / `safeUncheck` / `safeUpload` so self-healing engages at run time. The persisted `steps[]` count exactly matches the `// Step N:` comment count in `playwrightCode` — the shared `filterEmittableActions` predicate (`backend/src/runner/recorder.js:634-665`) drops actions missing required fields from both outputs identically (PR #118).
 3. Stop and save → test appears in Tests page with all steps intact after refresh. The Test Detail Steps panel renders the recorded test identically to AI-generated and manually-created tests (no engineer-shaped strings).
@@ -487,7 +498,8 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 **Negative / edge:**
 - ⚠️ Known: empty-steps bug (legacy) — verify every recorded step has a selector and action. PR #118's `filterEmittableActions` drops ill-formed actions from both `steps[]` and `playwrightCode` so the two stay in lock-step.
 - Record on SPA with client-side routing → navigations captured correctly. Consecutive `goto` actions to the **exact same URL** collapse to a single Step (e.g. `framenavigated` echoes); query-string-distinct navigations (`/search?q=iphone` → `/search?q=macbook`, pagination `?page=N`) are preserved as separate Steps so query-driven flows replay correctly (PR #115 + PR #118 fix).
-- Record on iframe / shadow DOM content → recorder captures iframe-scoped actions and emits the correct `frameLocator(…)` chain in generated code (`backend/src/runner/recorder.js:677-707` — `ensureFrame` helper). Selector quality inside iframes still tracked under DIF-015b.
+- Record on iframe content (DIF-015b Gap 3, PR #11) → `actionsToPlaywrightCode` emits `page.frameLocator('iframe[src*="<frameUrl>"]').first()` for any captured action carrying a `frameUrl`, replacing the old `ensureFrame(...)` polling helper with Playwright's built-in locator chain. Verify by recording a click inside an `<iframe>` (e.g. Stripe checkout demo) and confirming the generated Source tab uses `frameLocator(...)`, not `ensureFrame`.
+- Record on shadow DOM content → shadow-root traversal is handled by Playwright's `InjectedScript` on the primary `window.__playwrightSelector` delegation path (PR #4), which walks boundaries via `>> ` piercing selectors natively. Verify replay succeeds against the recorded target.
 - Record across tabs/popups → popups are aliased as `popup1`, `popup2`, etc., and the generated code includes an `ensurePopup(alias)` helper (`backend/src/runner/recorder.js:688-700`). The `pageAlias` field on each captured action routes the replay through the correct page.
 - Close tab mid-recording → partial recording saved or discarded cleanly (no corrupted state). The `MAX_RECORDING_MS` safety-net teardown closes the stub `runs` row so subsequent runs on the project are not blocked (PR #115). Operators who hit "Stop & Save" within `RECORDER_COMPLETED_TTL_MS` (default 2 min) of the auto-teardown still recover their captured actions from the completed-recordings cache (`backend/src/runner/recorder.js:143-162`).
 - Record on site with dynamic IDs → selectors are stable (data-testid / role+name / label / text / placeholder fallback chain), not brittle.
@@ -526,6 +538,112 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 - Viewer attempts to trigger run → blocked.
 - `qa_lead` stops another user's run → **allowed** (no per-user "own runs" gate exists in code, `routes/runs.js:257` only requires `qa_lead`). If product intent is to restrict to the run's owner, file as security enhancement.
 - Browser close mid-run → run continues on backend; status visible on return.
+
+---
+
+### 📥 Review Queue
+
+**Preconditions:** Workspace has ≥ 1 draft test. Open `/review-queue`. Reachable via the **Review Drafts** quick-action card on the Tests page (`frontend/src/pages/Tests.jsx`) or by direct URL. Replaces the legacy `ReviewModal` (deleted in PR #7).
+
+**Layout:**
+- Two-pane: left list (sort, search, category chips, multi-select) + right detail pane (steps, generated Playwright code, quality score).
+- Tab bar at top: **Draft** / **Rejected** / **Approved** with live counts from `GET /api/v1/tests/counts` (single aggregate query — partitions Draft / Approved / Rejected via `SUM(CASE WHEN reviewStatus = ...)`).
+- URL-driven state: `?tab=`, `?projectId=`, `?q=` are deep-linkable.
+- Header project filter (dropdown) — narrows list, counts, and the Review Drafts deep-link target on the Tests page.
+
+**Steps & expected:**
+1. Open `/review-queue` → Draft tab active by default; first draft auto-selected in the detail pane.
+2. Click any test row → detail pane shows description, steps, syntax-highlighted Playwright code (with one-click copy), and a sidebar with quality-score bar, project, type, priority, last run, generated-time, source URL.
+3. Click the `Q:NN ▾` chip on a row or in the sidebar → factor-breakdown popover lists rewards (`✓ +20 URL assertion`) and penalties (`✗ -30 No assertions`) that produced the score. Backed by `qualityScoreFactors` JSON column populated by `scoreTestWithFactors()` in `backend/src/pipeline/deduplicator.js` (re-scored after assertion enhancement, so the persisted breakdown matches the persisted code).
+4. **Sort dropdown** (newest / oldest / quality / name) → server-side `ORDER BY` via `?sortBy=` (whitelisted by `SORT_BY_CLAUSES` in `backend/src/database/repositories/testRepo.js`). Switching from "newest" to "quality" reorders **across all pages**, not just the current page; pager resets to page 1.
+5. **Search input** → debounced 300 ms before committing to URL `?q=` and firing the server query (`useReviewQueueQuery`).
+6. **Category chips** (All / Web / API / Journey) → server-side filter; "Journey" maps to `isJourneyTest = 1` (orthogonal to api/ui).
+7. **Approve a draft** — click Approve in the detail-pane header, sidebar Quick-decision group, or press `a` → `PATCH /projects/:id/tests/:testId/approve` fires (no confirmation modal — primary action stays one-click). Active selection advances to the next visible test before the cache invalidation lands.
+8. **Reject a draft** — click Reject or press `r` → styled `<ModalShell>` confirmation dialog → execute → `PATCH /projects/:id/tests/:testId/reject`.
+9. **Switch to Rejected tab** → only Restore-to-Draft action is available (no direct rejected→approved path; verify by inspecting the sidebar Quick-decision group and the detail-pane header). Pressing `a` on this tab is a no-op (tab-gated).
+10. **Restore a rejected test** → `PATCH /projects/:id/tests/:testId/restore` returns it to Draft so it re-enters the queue for re-review.
+11. **Switch to Approved tab** → only Reject is available (no Approve duplication).
+12. **Bulk approve / bulk reject** — select ≥ 2 drafts via checkboxes → bulk bar appears at bottom of list pane → both routes go through the styled confirmation modal.
+13. **Per-row delete** (qa_lead+) → trash icon hidden until row is hovered or active; soft-deletes to recycle bin via styled confirmation.
+14. **Inbox-zero coaching** — when the Draft tab is empty (no search/filter active), the page renders a green-check coaching layout: "Inbox zero" headline + workspace approval count + "Generate more tests →" primary CTA (deep-links to `/projects/:id/test-lab` if a project is selected, otherwise `/test-lab`) + "Audit recent approvals" secondary CTA (switches to Approved tab).
+15. **Mobile layout** (< 640px) — single-pane "back-to-list" pattern: picking a row hides the list and shows only the detail pane; a `<` button in the detail header returns to the list.
+16. **Tab counts** — single aggregate query (not three `pageSize:1` probes) so flipping projects / search updates all three badges in lock-step.
+
+**Negative / edge:**
+- Search returns no matches → "No matches" empty state (does not surface the inbox-zero coaching).
+- Pressing `a` / `r` while inside the search input → no-op (input-focus guard).
+- Rapid `a`/`r` keypresses → guarded by `actionLoading` so the same test cannot fire two concurrent mutations.
+- Project deleted while open in detail pane → next refetch drops the test; auto-select advances to the first visible row.
+- Workspace switch → all Review Queue queries reset (TanStack Query cache invalidation is workspace-scoped via the parent project filter).
+- Viewer attempts approve/reject/restore → 403 (`requireRole("qa_lead")` on the underlying endpoints).
+
+---
+
+### 🤖 Auto-Approval (AUTO-003b)
+
+**Preconditions:** Project exists with `qa_lead` or `admin` access. Endpoints documented in `backend/src/routes/projects.js` (PATCH threshold), `backend/src/routes/tests.js` (revoke + approval-stats), and `backend/src/middleware/permissions.json`.
+
+**Threshold configuration** (`/automation` → expand a project → **Auto-Approval** inner tab, `frontend/src/components/automation/ProjectQualityCard.jsx`):
+1. Default state: `autoApproveThreshold` is `null` → all generated tests still land in **Draft** (zero behaviour change for projects that haven't opted in).
+2. Enter a threshold of `0.8` and click **Save** → since this is the *first* enable, a confirmation modal appears showing how many of the last 30 generated tests would have been auto-approved at this threshold (`getTests()` + client-side filter on `confidenceScore >= threshold`).
+3. Click **Enable auto-approval** in the modal → `PATCH /api/v1/projects/:id` with body `{ autoApproveThreshold: 0.8 }` → toast "Auto-approval threshold set to 0.8".
+4. Re-enable / change threshold (project already had a non-null value) → no preview modal; saves immediately. Disable (clear input → `null`) → no preview modal; toast "Auto-approval disabled".
+5. Stats line below the input renders `N auto-approved · N human-approved · N draft` from `GET /api/v1/projects/:id/approval-stats`. When auto-approvals exist, a `X% revert rate (7d)` chip appears with a tooltip `M of N auto-approvals were revoked in the last 7 days`.
+
+**Validation (each must return 400):**
+6. PATCH with `autoApproveThreshold: 0` → 400 "must be null or a number greater than 0 and at most 1" (the route disallows 0 as a footgun — `confidenceScore >= 0` would auto-approve everything).
+7. PATCH with `autoApproveThreshold: 1.5` → 400 (out of range).
+8. PATCH with `autoApproveThreshold: "0.8"` (string) → 400 (must be finite number or null).
+9. PATCH body `{ autoApproveThreshold: 0.8 }` with no `name` / `url` → succeeds (threshold-only PATCHes bypass the name/url validator; `backend/src/routes/projects.js:145-151`).
+
+**Auto-approval at generation time** (`backend/src/pipeline/testPersistence.js`):
+10. With threshold set to `0.8`, generate tests → tests with `confidenceScore >= 0.8` persist as `reviewStatus: "approved"` with `approvalSource: "auto"`, `approvalThreshold: 0.8` (captured at decision time), `approvedAt` (epoch ms), `approvedBy: "auto-approver"`.
+11. Tests with `confidenceScore < 0.8` persist as `reviewStatus: "draft"` with all four provenance columns null.
+12. Each auto-approval emits one `test.auto_approved` activity row with `userName: "auto-approver"` and structured `meta: { score, threshold }`.
+13. After raising the threshold to `0.9`, historical auto-approvals retain their original `approvalThreshold: 0.8` — provenance is captured at decision time, not refreshed against the current setting.
+
+**Tests page badges** (`frontend/src/pages/Tests.jsx`):
+14. Auto-approved tests render `🤖 Auto · 0.91` (purple). Human-approved render `👤 Human` (green). Draft renders `📝 Draft · 0.62` (amber). Provenance is visible inline at table density — not hover-only (NEXT.md:100 anti-pattern).
+15. Filter pills row: `All Tests` / `Approved` (human only) / `Auto-approved` / `Draft`. Counts on the pills reflect partition: clicking `Approved` excludes auto-approved tests; clicking `Auto-approved` shows only `approvalSource === "auto"`.
+
+**Test Detail provenance + revoke** (`frontend/src/pages/TestDetail.jsx`):
+16. Open an auto-approved test → sidebar shows inline provenance line: `🤖 Auto-approved · score 0.91 · threshold 0.80 · 2h ago` (`fmtRelativeTimeFull`).
+17. Open a human-approved test → sidebar shows `👤 Approved by @alice · 3h ago`.
+18. Click **Revoke approval** → `POST /api/v1/tests/:testId/revoke` → test returns to `reviewStatus: "draft"`; all five columns (`reviewedAt`, `approvalSource`, `approvalThreshold`, `approvedAt`, `approvedBy`) clear; the page reloads showing the draft state. Tooltip on the button surfaces the original threshold for context.
+19. Try to revoke an already-draft test → 400 "only approved tests can be revoked".
+20. Revoke writes a `test.revoke` activity with `meta.wasAutoApproved` set to `true` for auto-approved tests, `false` for human-approved.
+
+**ReviewQueue 24h auto-approval tray** (`frontend/src/pages/ReviewQueue.jsx`, AUTO-003b):
+21. With a single project selected (project filter, not "All") AND `autoApproveThreshold` set, open the Draft tab → a tray strip renders above the draft list: `🤖 N auto-approved (24h):` followed by clickable test chips with `Q:NN` quality scores (`qualityColor()` styling).
+22. Click a chip → navigates to `/tests/:testId` for a 30-second spot-audit.
+23. Tray is suppressed on the Approved / Rejected tabs, when "All projects" is selected, or when the selected project has no threshold configured.
+24. Tray is empty (renders nothing) when no auto-approvals have fired in the last 24h.
+
+**ProjectHeader aggregate** (`frontend/src/components/project/ProjectHeader.jsx`):
+25. Open a project → header subtitle shows `N tests · N human · N auto 🤖 · N drafts` from `GET /api/v1/projects/:id/approval-stats`.
+26. Aggregate is non-fatal: if the endpoint errors, the line just doesn't render.
+
+**ApprovalsTimeline page** (`/approvals`, `frontend/src/pages/ApprovalsTimeline.jsx`):
+27. Sidebar → **Approvals** → daily-grouped audit feed renders. Each day splits into per-actor batches: `🤖 12 auto-approved (avg score 0.89)` and `👤 @alice approved 3`.
+28. Expand a batch → per-test rows with confidence/threshold (read from `activity.meta`), project name, time, and a per-test **Revoke** button on auto-approval rows.
+29. Click Revoke on a row → toast "Approval revoked"; the row flips to italic `revoked` and the button hides. Failure surfaces as a "Revoke failed" toast.
+30. Activity log is the source of truth: revoked tests still appear here even after their provenance columns are cleared on the test row.
+
+**Bulk approve / restore provenance** (`backend/src/routes/tests.js`, AUTO-003b):
+31. Bulk approve via Review Queue → each test gets `approvalSource: "human"`, `approvedBy` (the actor's `userName` / `userId`), `approvedAt` (epoch ms), `approvalThreshold: null`. Verify by GET'ting the tests after the bulk action.
+32. Bulk restore → all four provenance columns clear (so a previously auto-approved test bulk-restored to draft doesn't retain stale `approvalSource: "auto"`).
+
+**Permissions:**
+33. `viewer` calling `POST /tests/:testId/revoke` → 403. `qa_lead` and `admin` succeed.
+34. `viewer` calling `GET /projects/:id/approval-stats` → 403. `qa_lead` and `admin` succeed.
+35. Cross-workspace ACL — outsider hitting `/projects/:id/approval-stats` for another workspace → 404.
+
+**Negative / edge:**
+- 7-day revert rate is clamped to `[0, 1]` — even if backfill produces more revokes than auto-approvals in the window, the UI renders at most "100%", never `117%`.
+- `meta.wasAutoApproved` flag on revoke rows lets approval-stats compute the rate without correlating testIds across activity types — verify by revoking a human-approved test (its `wasAutoApproved: false` row must NOT count toward the auto-approval revert rate).
+- Pre-AUTO-003b tests (created before the migration) have `confidenceScore: null` — they never auto-approve regardless of threshold; the Tests page renders them as `📝 Draft` without a score chip.
+- First-time enable preview gracefully degrades: if `getTests()` fails, the panel falls through to a direct save rather than blocking the user (the toast on persist surfaces any save error).
+- Disabling auto-approval (clearing the threshold) does NOT retroactively revoke previously auto-approved tests — those keep their provenance and remain approved. Reviewers who want to clear them must Revoke individually or via bulk restore.
 
 ---
 
@@ -610,12 +728,48 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 
 **Preconditions:** Project exists with at least one approved test. Open `/automation` (or use `?project=PRJ-X` deep-link).
 
-**CI/CD trigger tokens** (`docs/changelog.md` ENH-011):
+**Tabbed layout (PR #6):** `/automation` renders four top-level tabs — **Triggers & Schedules**, **Quality Gates**, **Integrations**, **Snippets** — with WAI-ARIA tab semantics (`role="tablist"` / `role="tab"` / `role="tabpanel"`, arrow-key + Home/End navigation, `aria-selected`, `aria-controls`). Only the active tab's content mounts. Per-project accordion cards live inside the relevant tab; collapsed headers render live status chips (`N tokens` / `Scheduled` vs `No schedule` on Triggers & Schedules; `Gates configured` / `Budgets set` vs `No gates` / `No budgets` on Quality Gates) so config state is visible without expanding. Verify before each section below:
+1. All four tabs render and switch on click; arrow-keys / Home / End move focus between tabs and activate the focused tab.
+2. `?project=PRJ-X` auto-expands the matching project card on whichever tab is active.
+3. The empty state ("No projects yet") renders in both **Triggers & Schedules** and **Quality Gates** when no projects exist.
+4. Below 640px: chips wrap under the project name, tab padding tightens, layout stays usable (no horizontal scroll).
+5. Status-chip API response shapes are pinned in `frontend/src/utils/automationStatus.js` with regression coverage in `frontend/tests/automation-status.test.js` — if a backend response renames `data.schedule.enabled` / `data.qualityGates` / `data.webVitalsBudgets`, the chips silently fall back to the unconfigured state.
+
+**CI/CD trigger tokens** (`docs/changelog.md` ENH-011) — under the **Triggers & Schedules** tab, expand a project card → inner tab bar switches between **CI/CD Tokens** and **Schedule**. The "View project" link is pushed to the right of the inner tab bar.
 1. Create a token via `POST /api/projects/:id/trigger-tokens` (UI button) → plaintext token shown **exactly once**; refresh and confirm only the SHA-256 hash is stored (never plaintext again).
 2. List tokens → no hashes leaked to UI.
 3. Trigger a run via `POST /api/projects/:id/trigger` with `Authorization: Bearer <token>` → returns **202 Accepted** with `{ runId, statusUrl }`. Poll `statusUrl`; final state matches RunDetail page.
 4. Optional `callbackUrl` → callback hits the URL on completion with run status.
 5. Revoke token via `DELETE /api/projects/:id/trigger-tokens/:tid` → subsequent trigger calls return 401.
+
+**Diff-aware CI crawl — `triggerCrawl: true`** (AUTO-002 + AUTO-015, PR #12, `backend/src/routes/trigger.js`):
+6. `POST /api/v1/projects/:id/trigger` with body `{ "triggerCrawl": true, "previewUrl": "https://your-preview.example.com" }` + valid Bearer token → returns **202** with `{ runId, statusUrl }`; the dispatched run has `type: "crawl"` (not `test_run`), and the `crawl.start` activity row reads `CI/CD triggered crawl — <previewUrl>`. Without `triggerCrawl`, the endpoint still runs the existing approved-tests flow (zero regression).
+7. **No-change short-circuit** — trigger a crawl twice against an unchanged site → second run ends as `completed_empty` with `run.noChangesDetected = true`, a `🟰 No page changes detected` log line, and zero LLM calls. Verify `run.changedPages` is `[]` and `run.removedPages` is `[]`.
+8. **Diff-scoped regeneration** — modify one page, re-crawl → only that URL appears in `run.changedPages`; untouched pages' approved tests remain untouched; pipeline summary log reads `Pages: 10 (3 changed → generated)` when the diff narrows generation scope.
+9. **Removed pages surfaced** — delete a page from the site, re-crawl → its URL appears in `run.removedPages`; baseline row dropped so it is not re-reported on subsequent crawls.
+10. **SSRF guard on previewUrl** — `POST /trigger` with `previewUrl: "http://169.254.169.254/latest/meta-data/"` or any RFC1918 address → 400 with the SSRF error (same validator as `callbackUrl`).
+
+**Deployment webhooks — Vercel + Netlify** (AUTO-015, PR #12):
+11. Set `VERCEL_WEBHOOK_SECRET` / `NETLIFY_WEBHOOK_SECRET` in `backend/.env` (see `docs/guide/env-vars.md` § Deployment Webhooks).
+12. Configure Vercel to POST to `/api/v1/projects/:id/trigger/vercel` with an `Authorization: Bearer <trigger-token>` header (dual-auth: HMAC signature + project-scoped Bearer). The Snippets tab on `/automation` renders a copy-pasteable payload template including both headers.
+13. Trigger a deployment → when Vercel fires `type: "deployment.ready"` (or `deployment.readyState: "READY"`) → backend returns **202** with `{ ok: true, provider: "vercel", runId, previewUrl }`; a `crawl.start.deployment` activity row is logged with `meta: { provider, previewUrl, runId }`; a diff-aware crawl against the preview URL launches.
+14. **Non-ready events ignored** — Vercel webhooks for `deployment.created` / `deployment.canceled` / `deployment.error` / `readyState: "BUILDING"` return **200** with `{ ignored: true, reason: "deployment not ready" }` and do NOT launch a run.
+15. **Netlify** — same dual-auth with `X-Netlify-Token` (HMAC-SHA256); payload uses `deploy_ssl_url` or `deploy_url`. Only fires when `state === "ready"`; non-ready states (`building`, `processing`, `error`, …) return **200** with `{ ignored: true, state }` and do NOT launch a run.
+16. **Tampered signature** — POST the correct payload with an invalid `X-Vercel-Signature` / `X-Netlify-Token` → **401 "invalid signature"** before any crawl work starts.
+17. **Missing / bogus Bearer token** — valid HMAC but no `Authorization` header, or a revoked token → **401** from `requireTrigger` BEFORE the HMAC check (dual-auth enforced in order).
+18. **Production baselines preserved on preview crawls** — the crawl against the preview URL must NOT overwrite the project's production baselines. Verify by running a production crawl, then a preview crawl, then another production crawl → the final production crawl should report `0 changed, 0 removed` (baselines intact).
+
+**Last deployment run badge** (AUTO-015b, `frontend/src/components/project/ProjectHeader.jsx`):
+19. After a deployment-triggered crawl completes, open the project's detail page → a **🚀 Last `<provider>` run · N changed** chip renders in the header. Click → navigates to `/runs/:runId`.
+20. Badge only renders when a `crawl.start.deployment` activity row exists within the last 24h (`GET /api/v1/projects/:id/last-deployment-run` returns `{ run: null }` otherwise).
+21. If the run failed, the chip tints red and the text reads `Last <provider> run · N changed` with a failed-state color. Hover tooltip shows the provider + preview URL.
+22. While the run is in flight, the chip reads **"Deployment crawl in progress"** in accent color.
+23. The endpoint is allowed for any authenticated workspace member (`backend/src/middleware/permissions.json` — `anyAuthenticatedMember` list). Outsiders hitting the URL directly → 404.
+
+**Diff-aware live view — `pages_changed` SSE** (AUTO-002, `frontend/src/components/project/ActiveRunBanner.jsx` via `useProjectRunMonitor`):
+24. Launch a crawl on a project with an existing baseline → the Test Lab live banner reads **"N pages changed → regenerating only those"** instead of the generic "Run in progress…", with a sub-line `N changed · M removed · K unchanged · live via SSE`.
+25. Launch a crawl on an unchanged site → banner reads **"No page changes since last crawl — skipping generation"**.
+26. First-ever crawl on a new project (no baseline yet) → banner falls back to the generic "Run in progress…" (no diff to report).
 
 **Scheduled runs** (`docs/changelog.md` ENH-006):
 1. Open `ScheduleManager` for a project → set a 5-field cron expression + IANA timezone via preset picker (hourly/daily/weekly).
@@ -666,8 +820,13 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 18. As `qa_lead` and `admin`, all three (GET / PATCH / DELETE) succeed.
 19. Cross-workspace isolation — outsider hitting another workspace's project → 404 (workspace scope enforced upstream by `workspaceScope` middleware).
 
-**UI surfaces (AUTO-012b):**
-20. ProjectDetail → **Settings** tab → "Quality Gates" panel renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows.
+**UI surfaces (AUTO-012b, updated by PR #6):**
+
+The Quality Gates and Web Vitals Budgets panels live exclusively on the `/automation` page now. The legacy ProjectDetail → Settings tab was removed in this PR (see the comment at `frontend/src/pages/ProjectDetail.jsx:601-603`); do not look for it.
+
+- **`/automation` → Quality Gates tab** (sole surface, PR #6) — per-project accordion (`ProjectQualityCard`) with inner tab bar switching between **Quality Gates** and **Web Vitals**. Collapsed header shows status chips (`Gates configured` / `No gates`, `Budgets set` / `No budgets`).
+
+20. On `/automation` → **Quality Gates** tab, expand a project → inner tab **Quality Gates** active by default → form renders. As `qa_lead`/`admin`, the form is editable; as `viewer`, fields are disabled and a "Read-only" hint shows.
 21. Configure thresholds and click **Save** → toast "Quality gates saved"; reload tab → values persist.
 22. Click **Clear all** → confirmation prompt → on confirm, gates removed; toast "Quality gates cleared"; subsequent runs report `gateResult: null`.
 23. Enter all-blank fields and click Save → server-side `DELETE` is sent (config cleared) instead of saving an empty object — toast reads "Quality gates cleared".
@@ -749,7 +908,7 @@ _(automated: smoke-level login → dashboard landing is covered in `tests/e2e/sp
 13. Sidebar nav → "AI Chat" entry visible and active when on `/chat`.
 
 **AI provider switching** (`README.md`):
-14. Header dropdown lists configured providers (Anthropic / OpenAI / Google / Ollama). Switch with one click → next chat message uses the new provider; auto-detection order is Anthropic → OpenAI → Google → Ollama.
+14. Header dropdown lists configured providers (Anthropic / OpenAI / Google / OpenRouter / Ollama). Switch with one click → next chat message uses the new provider; auto-detection order is Anthropic → OpenAI → Google → OpenRouter → Ollama.
 
 **Negative / edge:**
 - Ask about data in a workspace the user doesn't belong to → **must refuse**; no data leakage (severe bug if leaked).
@@ -975,47 +1134,70 @@ The settings API requires **at least one channel** to be enabled (confirmed by `
 
 **Preconditions:** Tests page (`/tests`) with ≥ 5 tests in mixed statuses.
 
-**Bulk actions** (`POST /api/v1/projects/:id/tests/bulk`, see `backend/src/routes/tests.js:19`):
-1. Select multiple tests via checkboxes → bulk bar appears showing "N selected" with **Approve**, **Reject**, **Clear selection** (`frontend/src/pages/Tests.jsx:914-927`).
-2. **Bulk approve** → all selected tests move to active suite; **one audit-log entry per test**, each tagged with the acting user (`docs/changelog.md` #78).
-3. **Bulk reject** → all selected archived; one activity per test.
-4. **Bulk delete** → soft-deletes selected tests into Recycle Bin.
-5. **Bulk restore** (from Recycle Bin) → restores all selected.
-6. Mixing roles: Viewer cannot use bulk actions → buttons hidden or 403.
+**Surface split (PR #7):** Bulk **approve / reject** moved to the **Review
+Queue** page (`/review-queue`) — see [Review Queue](#-review-queue) for that
+flow. The Tests page retains bulk **delete** only; review actions are
+intentionally one-surface to keep approval state consistent across tab counts.
 
-**Keyboard shortcuts** (`frontend/src/pages/Tests.jsx:508-518`):
-7. `/` → focuses search input (when no input is focused).
-8. `a` (with selection) → triggers bulk approve.
-9. `r` (with selection) → triggers bulk reject.
+**Bulk actions on Tests page** (`POST /api/v1/projects/:id/tests/bulk` with
+`action: "delete"`, see `backend/src/routes/tests.js`):
+1. Select multiple tests via checkboxes → bulk bar appears showing "N selected" with **Delete** + **Clear selection** (`frontend/src/pages/Tests.jsx`). Approve / Reject buttons are NOT shown here — those live in Review Queue.
+2. **Bulk delete** → soft-deletes selected tests into Recycle Bin; ≥ 2 selected → confirmation dialog. One audit-log entry per test, tagged with the acting user (`docs/changelog.md` #78).
+3. **Bulk restore** (from Recycle Bin) → restores all selected.
+4. Mixing roles: Viewer cannot use bulk actions → buttons hidden or 403.
+
+**Bulk actions on Review Queue page** (`/review-queue`):
+5. Select multiple drafts via the row checkboxes → bulk bar with **Approve N**, **Reject N**, **Clear** appears at the bottom of the list pane. Both approve and reject route through a styled `<ModalShell>` confirmation (no `window.confirm`).
+6. **Bulk approve** → groups selection by `projectId` and fires `POST /tests/bulk` per project via `Promise.allSettled`; partial failures surface in an inline amber banner.
+7. **Bulk reject** → same per-project grouping + confirmation flow.
+8. After mutation: `invalidateReviewQueueCache()` busts the list, tab-count badges, and the per-status counts; `invalidateProjectDataCache()` busts shared project state on Dashboard / Reports.
+
+**Keyboard shortcuts on Tests page** (`frontend/src/pages/Tests.jsx`):
+9. `/` → focuses search input (when no input is focused).
 10. `Esc` → clears selection.
 11. Typing in inputs/textareas / contenteditable → shortcuts **must NOT** fire (verify `INPUT`/`TEXTAREA`/`isContentEditable` guard).
+12. **`a` / `r` shortcuts removed** from the Tests page in PR #7 (they were tied to bulk approve/reject which moved). Use Review Queue for `a` approve / `r` reject.
+
+**Keyboard shortcuts on Review Queue page** (`frontend/src/pages/ReviewQueue.jsx`):
+13. `a` → approve the currently active draft (only fires on the **Draft** tab — gate matches the visible Approve button so a stray `a` on the Rejected tab cannot bypass the "rejected → draft → re-review" trust contract).
+14. `r` → reject the currently active draft (suppressed on the **Rejected** tab; on the **Approved** tab it routes through the styled confirmation modal).
+15. `j` / `↓` → next test; `k` / `↑` → previous test.
+16. `Esc` → clear selection.
+17. Same input-focus guard as Tests page — typing in the search input doesn't trigger shortcuts.
 
 **Command palette** (`⌘K` / `Ctrl+K`):
-12. Press `⌘K` (mac) or `Ctrl+K` (win/linux) → palette opens with navigation entries + AI chat entry.
-13. Type a page name → fuzzy match; `Enter` navigates.
-14. `Esc` closes the palette.
+18. Press `⌘K` (mac) or `Ctrl+K` (win/linux) → palette opens with navigation entries + AI chat entry.
+19. Type a page name → fuzzy match; `Enter` navigates.
+20. `Esc` closes the palette.
 
 **Negative / edge:**
 - Bulk action with 0 selected → action button disabled.
 - Bulk action mid-run on the same tests → handled gracefully (queued or rejected with clear error).
 - Refresh after partial bulk failure → state consistent (no half-applied bulk).
+- Tests page bulk delete fired with `a` or `r` keypress → must be a no-op (those shortcuts no longer exist on this page).
 
 ---
 
-### 🪟 Modals (Tests page)
+### 🪟 Modals & full-page surfaces (Tests page)
 
-**Preconditions:** Tests page open.
+**Preconditions:** Tests page open. Most legacy modals on the Tests page were
+migrated to dedicated pages in PR #5 (Test Lab) and PR #7 (Review Queue) — the
+remaining true modals are **Run Regression**, **Recorder**, and **AI Fix**.
+The Tests page now exposes three quick-action **cards** (Test Lab / Review
+Drafts / Run Tests, see `frontend/src/pages/Tests.jsx` quick-action grid)
+that navigate to those surfaces; the legacy `CrawlProjectModal`,
+`GenerateTestModal`, and `ReviewModal` no longer exist.
 
-For each modal: open → fill → submit → close behavior.
+For each surface: open → fill → submit → close behavior.
 
-| Modal | Trigger | Verify |
+| Surface | Trigger | Verify |
 |---|---|---|
-| **CrawlProjectModal** | "Crawl" quick action | Default project pre-selected; mode picker (Link Crawl / State Exploration); Test Dials presets; submit kicks off crawl + closes modal. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests |
-| **GenerateTestModal** | "Generate Test" | **Default output: UI / browser tests** from the crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests |
-| **RunRegressionModal** | "Run Regression" | Project picker, browser selector (Chromium/Firefox/WebKit), device dropdown, locale/timezone/geolocation (AUTO-007), network condition (`fast` / `slow3g` / `offline`, AUTO-006), parallelism 1–10; submit opens RunDetail |
-| **ReviewModal** | "Review" / opening a Draft | Step-by-step approval queue; Approve/Reject/Skip; advances to next test |
-| **RecorderModal** | "Record a test" | Live CDP screencast; record/stop controls; on stop saves Draft |
-| **AiFixPanel** | "Fix with AI" on failed test | SSE token stream; diff vs current code; Accept/Discard |
+| **Test Lab — Crawl & Generate tab** (page) | Tests page "Test Lab" quick-action card → navigates to `/projects/:id/test-lab?tab=crawl` (or `/test-lab?tab=crawl` when no project is selected) | Project pre-selected via the route or the in-page sidebar; mode picker (Link Crawl / State Exploration); Coverage / Perspectives / Quality chip groups; Test Count + Profile selects; Start button kicks off the 8-stage SSE pipeline. **Output: UI / browser tests** (Draft) — `page.goto` + role selectors + `safeClick` / `safeFill`; same-origin fetch/XHR additionally yields API tests. Migrated from the legacy `CrawlProjectModal` (deleted in PR #5). |
+| **Test Lab — Generate from Requirement tab** (page) | Tests page "Test Lab" quick-action card → switch to "Generate from Requirement" tab inside Test Lab | Project pre-selected via the route or sidebar; large requirement / user-story textarea; example prompts; Coverage + Quality chips. **Default output: UI / browser tests** from the supplied requirement plus crawl context. API-shaped inputs (plain-English endpoint, OpenAPI upload, HAR upload, `METHOD /path` paste) produce API tests only when explicitly used; submit creates Draft tests. Migrated from the legacy `GenerateTestModal` (deleted in PR #5). |
+| **Review Queue** (page, not modal) | Tests page "Review Drafts" quick-action card → navigates to `/review-queue` (or `/review-queue?projectId=<id>` when a project is selected) | Two-pane page: left list (sort, search, category chips, multi-select); right detail pane (steps, generated code, quality score with factor-breakdown popover). Tab bar (Draft / Rejected / Approved) with live counts; keyboard shortcuts `a` approve / `r` reject / `j`/`k` navigate / `Esc` clear. Replaces the legacy `ReviewModal` (deleted in PR #7). See [Review Queue](#-review-queue) for the full flow. |
+| **RunRegressionModal** | Tests page "Run Tests" quick-action card | Project picker, browser selector (Chromium/Firefox/WebKit), device dropdown, locale/timezone/geolocation (AUTO-007), network condition (`fast` / `slow3g` / `offline`, AUTO-006), parallelism 1–10; submit opens RunDetail. |
+| **RecorderModal** | Test Lab page topbar "Record a test" button (red CTA) — Tests page no longer has its own Record button | Live CDP screencast; record/stop controls; on stop saves Draft and navigates to Test Detail. Project is taken from the Test Lab's currently-selected project. |
+| **AiFixPanel** | "Fix with AI" on failed test (Test Detail) | SSE token stream; diff vs current code; Accept/Discard. |
 
 **Common checks for every modal:**
 - Click outside or `Esc` closes (only if no unsaved input — otherwise warns).
@@ -1028,7 +1210,7 @@ For each modal: open → fill → submit → close behavior.
 
 > Scope: this section covers **API test** generation paths only. UI / browser tests are generated from crawls and the Recorder — see [Tests Page §3](#-tests-page) and [Recorder](#-recorder).
 
-**Preconditions:** GenerateTestModal open.
+**Preconditions:** Test Lab page open at `/projects/:id/test-lab?tab=requirement` (formerly the `GenerateTestModal`).
 
 **Steps & expected:**
 1. **OpenAPI import** — upload a valid OpenAPI 3.x spec → tests generated cover documented endpoints with status + JSON-shape assertions.
@@ -1207,10 +1389,12 @@ Mark status per browser: ✅ pass · ❌ fail · ⚠️ partial · ⬜ not teste
 | API Test Generation (additional output) | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Recorder | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Runs (cross-browser, mobile, parallel, abort, self-heal) | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Review Queue (PR #7 — tabs, sort, search, bulk, keyboard, mobile, inbox-zero)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **AI Fix (manual + auto feedback loop)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Test Code Editing (Steps ↔ Source)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Automation (trigger tokens + schedules) | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Quality Gates (AUTO-012 — CRUD, evaluator, trigger response)** | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Run comparison (AUTO-019 — Compare action, prior-run picker, summary + diff rows)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Visual Testing | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Dashboard | ⬜ | ⬜ | ⬜ | ⬜ | |
 | AI Chat + Chat History | ⬜ | ⬜ | ⬜ | ⬜ | |
@@ -1228,7 +1412,8 @@ Mark status per browser: ✅ pass · ❌ fail · ⚠️ partial · ⬜ not teste
 | **Runs list (`/runs`)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Project Detail (`/projects/:id`)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Bulk actions + keyboard shortcuts + ⌘K palette** | ⬜ | ⬜ | ⬜ | ⬜ | |
-| **Modals (Crawl / Generate / Run / Review / Recorder / AiFix)** | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Test Lab page (Crawl / Generate tabs)** | ⬜ | ⬜ | ⬜ | ⬜ | |
+| **Modals (Run / Review / Recorder / AiFix)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Imports (OpenAPI / HAR / API description)** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Onboarding tour** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | **Demo mode + per-user quotas** | ⬜ | ⬜ | ⬜ | ⬜ | |
@@ -1236,7 +1421,7 @@ Mark status per browser: ✅ pass · ❌ fail · ⚠️ partial · ⬜ not teste
 | **Workspace switcher** | ⬜ | ⬜ | ⬜ | ⬜ | |
 | Cross-cutting checks | ⬜ | ⬜ | ⬜ | ⬜ | |
 
-> **Out of scope (not yet shipped):** embedded Playwright trace viewer (`DIF-005`), MFA/2FA (`SEC-004`), public/shareable test report links, Jira integration, billing, CLI. Do not test these — file enhancement requests instead. The `/reports` page, Dashboard PDF export, and standalone Playwright project export (`DIF-006`) **are** shipped and must be tested.
+> **Out of scope (not yet shipped):** MFA/2FA (`SEC-004`), public/shareable test report links, Jira integration, billing, CLI. Do not test these — file enhancement requests instead. The `/reports` page, Dashboard PDF export, standalone Playwright project export (`DIF-006`), and the embedded Playwright trace viewer (`DIF-005`, verified inline at Golden E2E step 31) **are** shipped and must be tested.
 
 ---
 

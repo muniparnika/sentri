@@ -10,7 +10,7 @@
  */
 
 import { throwIfAborted } from "../utils/abortHelper.js";
-import { deduplicateTests, deduplicateAcrossRuns } from "./deduplicator.js";
+import { deduplicateTests, deduplicateAcrossRuns, scoreTestWithFactors, normalizeQualityToConfidence } from "./deduplicator.js";
 import { enhanceTests } from "./assertionEnhancer.js";
 import { validateTest } from "./testValidator.js";
 import { applyHealingTransforms } from "../selfHealing.js";
@@ -61,6 +61,29 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
   log(run, `   ${enhancedCount} tests had assertions strengthened`);
   structuredLog("pipeline.enhance", { runId: run.id, enhanced: enhancedCount, total: enhancedTests.length });
 
+  // ── Step 6a: Re-score quality factors against the enhanced code ─────────
+  // The dedup stage (Step 5) attached `_quality` and `_qualityFactors` based
+  // on the *pre-enhancement* `playwrightCode`. Step 6 then injects assertions
+  // (toBeVisible, toHaveURL, …) which directly affect the rubric outcome —
+  // a test that hit `assert.none -30` before enhancement should no longer
+  // carry that penalty after the enhancer adds an `expect(...)`. Without
+  // this re-score, the Review Queue's "why was this drafted?" popover
+  // shows penalties that no longer apply to the persisted code, and
+  // `qualityScore` is systematically biased downward for any test that
+  // benefited from enhancement.
+  for (const t of enhancedTests) {
+    const { score, factors } = scoreTestWithFactors(t);
+    t._quality = score;
+    t._qualityFactors = factors;
+    // AUTO-003b: keep `confidenceScore` (0–1 scale) in lock-step with the
+    // re-scored `_quality` (0–100 scale) so `persistGeneratedTests` compares
+    // the post-enhancement score against `autoApproveThreshold`. Without
+    // this, `confidenceScore` would retain its pre-enhancement value set by
+    // `deduplicateTests` and a test strengthened by the assertion enhancer
+    // could miss the auto-approval threshold despite deserving to clear it.
+    t.confidenceScore = normalizeQualityToConfidence(score);
+  }
+
   // ── Step 6b: Apply self-healing transforms ────────────────────────────
   // Rewrite raw Playwright calls (page.click, page.fill, page.getByRole().click())
   // into self-healing helpers (safeClick, safeFill, safeExpect) BEFORE validation.
@@ -88,6 +111,13 @@ export async function runPostGenerationPipeline(rawTests, project, run, { snapsh
   let rejected = 0;
   for (const t of enhancedTests) {
     const issues = validateTest(t, project.url);
+    // CAP-003: validateTest() runs the secret scanner and annotates `t.secretScan`
+    // when findings exist. Promote that to a run-level flag here so callers
+    // (CI consumers, reviewer UI) can distinguish "rejected for malformed code"
+    // from "rejected because the AI leaked credentials into the test body".
+    if (t.secretScan?.blocked) {
+      run.secretScanBlocked = true;
+    }
     if (issues.length === 0) {
       validatedTests.push(t);
     } else {

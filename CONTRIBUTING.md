@@ -49,7 +49,7 @@ git clone https://github.com/RameshBabuPrudhvi/sentri.git
 cd sentri
 
 cp backend/.env.example backend/.env
-# Add at least one AI provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# Add at least one AI provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, etc.)
 
 docker compose up --build
 ```
@@ -104,6 +104,7 @@ Full rules are in [STANDARDS.md](STANDARDS.md). The most commonly violated ones:
 - **JSDoc**: Every exported backend function needs `@module`, `@param`, `@returns`, and `@throws` where applicable. Use JSDoc syntax, not TypeScript syntax — the CI JSDoc build will fail on `?` optionals and inline record types.
 - **Naming**: `camelCase.js` for backend modules, `PascalCase.jsx` for React components/pages, `useNoun.js` for hooks, `kebab-case.css` for stylesheets.
 - **No shared helpers duplicated inline.** New utilities go in `utils/`, not in the file that first needs them.
+- **No orphan backend routes (PROC-001).** Every new `router.<method>(…)` in `backend/src/routes/*.js` must ship its frontend consumer in the same PR — a helper added to `frontend/src/api.js` plus a callsite in `frontend/src/pages/*.jsx` or `frontend/src/components/**/*.jsx`. API-without-UI PRs are closed. Opt out for genuinely UI-less endpoints (internal admin, healthchecks, machine-only triggers) by adding `[no-ui]` to the PR title; the `.github/workflows/no-orphan-routes.yml` guard enforces this.
 
 ---
 

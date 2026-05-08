@@ -74,6 +74,47 @@ export function fmtRelativeDate(iso, fallback = "—") {
 }
 
 /**
+ * Long-form relative time — `"just now"`, `"3 minutes ago"`, `"5 hours ago"`,
+ * `"2 days ago"`, `"3 months ago"`, `"1 year ago"`.
+ *
+ * Uses {@link Intl.RelativeTimeFormat} so the output is automatically
+ * localised (Sentri ships English-only today, but switching to another
+ * locale flips this for free). Differs from {@link fmtRelativeDate}, which
+ * returns a fixed-format short string and falls back to a date for anything
+ * older than ~24 hours — this one keeps the relative phrasing all the way
+ * up to "X years ago".
+ *
+ * Used by Tests.jsx (run-time column) and ReviewQueue.jsx (Generated row in
+ * the detail sidebar). Both pages previously inlined this logic; this is
+ * the shared single-source export.
+ *
+ * @param {string|null|undefined} iso - ISO 8601 timestamp.
+ * @param {string} [fallback="—"]     - Returned when `iso` is falsy.
+ * @returns {string}
+ */
+const RELATIVE_TIME_UNITS = [
+  { max: 60,       divisor: 1,        unit: "second" },
+  { max: 3600,     divisor: 60,       unit: "minute" },
+  { max: 86400,    divisor: 3600,     unit: "hour"   },
+  { max: 2592000,  divisor: 86400,    unit: "day"    },
+  { max: 31536000, divisor: 2592000,  unit: "month"  },
+  { max: Infinity, divisor: 31536000, unit: "year"   },
+];
+
+export function fmtRelativeTimeFull(iso, fallback = "—") {
+  if (!iso) return fallback;
+  const diffSec = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diffSec < 10) return "just now";
+  for (const { max, divisor, unit } of RELATIVE_TIME_UNITS) {
+    if (diffSec < max) {
+      const val = Math.floor(diffSec / divisor);
+      return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-val, unit);
+    }
+  }
+  return fallback;
+}
+
+/**
  * Short date — `"Jan 12"` (no relative component).
  *
  * @param {string|null} iso - ISO 8601 timestamp.

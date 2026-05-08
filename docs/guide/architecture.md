@@ -27,7 +27,7 @@ sentri/
 - **Runtime:** Node.js 20+
 - **Framework:** Express
 - **Browser Automation:** Playwright (Chromium)
-- **AI Integration:** Anthropic SDK, OpenAI SDK, Google Generative AI, Ollama (HTTP)
+- **AI Integration:** Anthropic SDK, OpenAI SDK, Google Generative AI, OpenRouter (via OpenAI SDK), Ollama (HTTP)
 - **Database:** SQLite (default, better-sqlite3 with WAL mode) or PostgreSQL (via `pg` + `pg-native`) — set `DATABASE_URL=postgres://…` to switch. Adapter pattern ensures all repository modules work unchanged on either backend. Auto-migrates from legacy JSON on first startup.
 - **Redis:** Optional (`REDIS_URL`) — enables shared rate limiting (`rate-limit-redis`), cross-instance token revocation (pub/sub), and SSE event relay between server instances. Falls back to in-memory stores when not configured.
 - **Auth:** Custom JWT (HS256) with scrypt password hashing, email verification on registration

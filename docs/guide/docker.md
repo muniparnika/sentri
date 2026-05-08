@@ -59,6 +59,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 JWT_SECRET=your-32-char-secret
 NODE_ENV=production
 
+# Or use OpenRouter (one key, 200+ models — Claude, GPT, Llama, Mixtral, …):
+# OPENROUTER_API_KEY=sk-or-v1-...
+# OPENROUTER_MODEL=openrouter/auto   # or e.g. anthropic/claude-3.5-sonnet
+
 # Optional — PostgreSQL instead of SQLite:
 # DATABASE_URL=postgres://sentri:sentri@postgres:5432/sentri
 
