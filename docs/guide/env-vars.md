@@ -50,6 +50,12 @@ The distinct ID sent to PostHog is `sha256(hostname|cwd)` — no usernames, emai
 | `OLLAMA_MODEL` | `mistral:7b` | Model name for local inference |
 | `OLLAMA_MAX_PREDICT` | `4096` | Max output tokens for Ollama |
 | `OLLAMA_TIMEOUT_MS` | `120000` | Timeout for Ollama calls (ms) |
+| `ALLOW_PRIVATE_URLS` | `false` | When `"true"`, allows compat (`compat:<id>`) provider `baseUrl` to point at loopback / RFC1918 / link-local addresses (self-hosted vLLM, LiteLLM, LocalAI, internal proxies). **Scoped exclusively** to compat-slot saves and the per-call SSRF-guarded fetch — trigger callbacks, preview URLs, and notification webhooks remain SSRF-protected. Do not enable in multi-tenant deployments. See [AI Providers → Self-hosted endpoints](./ai-providers.md). |
+| `COMPAT_CONFIG_CACHE_TTL_MS` | `60000` | TTL (ms) for the in-memory compat-provider config cache that fronts SQLite + AES decryption on every AI call. When `REDIS_URL` is set, cache invalidations are broadcast over the `sentri:compat-config:invalidate` channel for cross-instance coherence. |
+
+::: info Compat providers are DB-only
+There is no `COMPAT_<ID>_API_KEY` env equivalent — OpenAI-compatible slots (DeepSeek, Groq, Mistral, xAI, vLLM, LiteLLM, …) must be configured via the Settings UI or `POST /api/v1/settings`. For pure env-driven setups, use **OpenRouter** (`OPENROUTER_API_KEY` + `OPENROUTER_MODEL`) instead. See [AI Providers → OpenAI-Compatible Providers](./ai-providers.md).
+:::
 
 ### Demo Mode
 
