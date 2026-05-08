@@ -109,8 +109,8 @@ function buildCrawlRun({ runId, project }) {
  * @param {object} args
  * @param {string} args.runId
  * @param {object} args.project - must carry `id` and (optionally) `workspaceId`.
- * @param {Array<{id: string, name: string, steps?: any[]}>} args.tests
- *   The approved tests this run will execute.
+ * @param {object[]} args.tests - The approved tests this run will execute.
+ *   Each entry must carry `id`, `name`, and optionally `steps` (defaults to []).
  * @param {number} args.parallelWorkers
  * @returns {object} the run record ready for `runRepo.create()`.
  */
