@@ -113,7 +113,11 @@ function getCloudName(provider) {
 
 
 function isCompatProvider(provider) {
-  return typeof provider === "string" && provider.startsWith("compat:");
+  // Match apiKeyRepo.isCompatProvider() — require a non-empty slot id after
+  // the "compat:" prefix so a malformed `provider: "compat:"` doesn't
+  // reach the DB layer (which would 500 on the empty key) or get treated
+  // as a usable provider by isProviderUsable() / detectProvider().
+  return typeof provider === "string" && provider.startsWith("compat:") && provider.length > "compat:".length;
 }
 
 function getCompatConfig(provider) {
