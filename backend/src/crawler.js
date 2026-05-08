@@ -346,6 +346,13 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
 
   let snapshots, snapshotsByUrl, journeys, classifiedPages, classifiedPagesByUrl, filteredSnapshots;
   let apiEndpoints = [];
+  // AUTO-002: track the total pages the crawl actually discovered (before
+  // diff-aware filtering reduces `snapshots` to just the changed subset).
+  // Reported to the user as "pages found" / telemetry — otherwise a crawl
+  // that discovered 10 pages with 3 changed would misleadingly report
+  // `pagesFound: 3`, skewing both the UI and the `crawl.complete`
+  // telemetry funnel which measures crawl quality.
+  let pagesCrawled = 0;
 
   if (mode === "state") {
     // ── State-based exploration (new engine) ─────────────────────────────
@@ -363,6 +370,7 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     snapshots = exploration.snapshots;
     snapshotsByUrl = exploration.snapshotsByUrl;
     apiEndpoints = exploration.apiEndpoints || [];
+    pagesCrawled = snapshots.length;
 
     throwIfAborted(signal);
 
@@ -381,9 +389,24 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // composite-key suffix and pass it through `fingerprintOf`. The
     // baseline stores it; the next run's diff compares apples to apples.
     if (snapshots.length > 0) {
+      // Build an O(n) reverse lookup (snapshot → fingerprint) once, rather
+      // than scanning `fpMap.entries()` per snapshot (O(n²)) AND — more
+      // importantly — avoiding the fragility of relying on object identity
+      // via `===`. stateExplorer.js:215-216 currently stores the SAME
+      // snapshot reference in `snapshotsByFp` and `ctx.snapshots`, but if
+      // any future refactor ever clones snapshots between those two stores,
+      // identity comparison silently collapses all states into one baseline
+      // row (defeating AUTO-002b's composite-key design). A WeakMap keyed
+      // on the snapshot object is the same one-liner but makes the identity
+      // dependency explicit; callers that produce a fresh snapshot simply
+      // fall through to the `snap.url` fallback on line below.
       const fpMap = exploration.stateGraph?.snapshotsByFp;
+      const snapshotToFp = new WeakMap();
+      if (fpMap) {
+        for (const [fp, s] of fpMap.entries()) snapshotToFp.set(s, fp);
+      }
       const stateKeyed = snapshots.map((snap) => {
-        const fp = fpMap ? [...fpMap.entries()].find(([, s]) => s === snap)?.[0] : null;
+        const fp = snapshotToFp.get(snap) || null;
         return fp ? { ...snap, url: `${snap.url}#fp=${fp}`, _stateFp: fp } : snap;
       });
       const stateDiff = runDiffAwareBaseline(project, run, stateKeyed, "state", {
@@ -454,6 +477,7 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     snapshots = crawlResult.snapshots;
     snapshotsByUrl = crawlResult.snapshotsByUrl;
     apiEndpoints = crawlResult.apiEndpoints || [];
+    pagesCrawled = snapshots.length;
 
     // ── Early failure: unreachable target ────────────────────────────────
     // If the crawl produced zero pages AND every navigation attempt failed
@@ -597,7 +621,12 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
   run.pages = filteredSnapshots.map(s => ({ url: s.url, title: s.title || s.url, status: "crawled" }));
   run.testsGenerated = run.tests.length;
   run.pipelineStats = buildPipelineStats({
-    pagesFound: snapshots.length, rawTests, removed, enhancedCount, rejected, journeys, dedupStats,
+    // pagesCrawled = total pages the crawl discovered, before AUTO-002 diff
+    // filtering. `snapshots.length` at this point has been narrowed to just
+    // the changed pages; reporting that as "pagesFound" would understate
+    // crawl breadth and break the telemetry funnel that distinguishes
+    // "small site" from "big site with few changes".
+    pagesFound: pagesCrawled, rawTests, removed, enhancedCount, rejected, journeys, dedupStats,
     apiEndpointsDiscovered: apiEndpoints.length,
   });
 
@@ -606,7 +635,12 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     run.duration = Date.now() - runStart;
     setStep(run, 8);
     log(run, `\n📊 Pipeline Summary:`);
-    log(run, `Pages: ${snapshots.length} | Raw tests: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length}`);
+    // Show both the crawl breadth AND the diff-aware generation scope when
+    // they differ, so reviewers can distinguish "big site with few changes"
+    // from "small site, everything generated". `pagesCrawled` is the full
+    // count, `snapshots.length` is the filtered subset that drove generation.
+    const scopeSuffix = pagesCrawled !== snapshots.length ? ` (${snapshots.length} changed → generated)` : "";
+    log(run, `Pages: ${pagesCrawled}${scopeSuffix} | Raw tests: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length}`);
     log(run, `Journey tests: ${validatedTests.filter(t => t.isJourneyTest).length} | API tests: ${validatedTests.filter(t => t._generatedFrom === "api_har_capture" || t._generatedFrom === "api_user_described").length} | Rejected: ${rejected} | Avg quality: ${dedupStats.averageQuality}/100`);
     if (apiEndpoints.length > 0) {
       log(run, `API endpoints discovered: ${apiEndpoints.length}`);
@@ -636,7 +670,11 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     }
     structuredLog("crawl.complete", {
       runId: run.id, projectId: project.id, mode,
-      pages: snapshots.length, tests: run.tests.length, durationMs: run.duration,
+      // `pages` = full crawl breadth; `pagesGenerated` = diff-filtered
+      // subset that actually drove generation. Splitting these lets
+      // telemetry funnels measure both crawl cost and generation scope.
+      pages: pagesCrawled, pagesGenerated: snapshots.length,
+      tests: run.tests.length, durationMs: run.duration,
       apiEndpoints: apiEndpoints.length,
     });
     // DIF-013: report crawl outcome with the same shape as crawl.start so
@@ -646,7 +684,10 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       projectId: project.id,
       mode,
       status: run.status,
-      pages: snapshots.length,
+      // pages = full crawl breadth (matches crawl.start funnel shape);
+      // pagesGenerated = diff-filtered subset that drove generation.
+      pages: pagesCrawled,
+      pagesGenerated: snapshots.length,
       testsGenerated: run.tests.length,
       apiEndpoints: apiEndpoints.length,
       rateLimitHit: !!run.rateLimitError,

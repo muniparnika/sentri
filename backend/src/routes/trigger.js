@@ -284,6 +284,30 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   res.status(202).json({ runId, statusUrl });
 });
 
+/**
+ * HMAC signature verification for deployment-webhook payloads.
+ *
+ * **Per-provider algorithm choice is dictated by each provider, not by us:**
+ * - Vercel: HMAC-**SHA1** over the raw body (`X-Vercel-Signature` header).
+ *   Vercel's current webhook spec still signs with SHA-1; any change would
+ *   have to come from Vercel. HMAC-SHA1 (unlike plain SHA-1) is not known
+ *   to be vulnerable — the keyed prefix construction defeats the collision
+ *   attacks that retired SHA-1 for certificate signing. Pre-image resistance
+ *   in HMAC depends on the key, not the hash, so an attacker who cannot
+ *   guess `VERCEL_WEBHOOK_SECRET` cannot forge a valid signature.
+ * - Netlify: HMAC-**SHA256** over the raw body (`X-Netlify-Token` header).
+ *
+ * If you're auditing this and wondering "why SHA-1?" — the answer is
+ * interoperability with the provider's signing scheme. When Vercel upgrades
+ * their webhook signatures, bump `algo` for the `"vercel"` branch here.
+ *
+ * @param {"vercel"|"netlify"} provider
+ * @param {Buffer|undefined} rawBody - captured by the webhook-scoped
+ *   express.json `verify` callback in `middleware/appSetup.js`.
+ * @param {string|undefined} signatureHeader - the provider's signature header
+ *   value; tolerates both raw hex and `"<algo>=<hex>"` prefix forms.
+ * @returns {boolean}
+ */
 function verifyWebhookSignature(provider, rawBody, signatureHeader) {
   const secret = provider === "vercel" ? process.env.VERCEL_WEBHOOK_SECRET : process.env.NETLIFY_WEBHOOK_SECRET;
   if (!secret || !signatureHeader || !rawBody) return false;
