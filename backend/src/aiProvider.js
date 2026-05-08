@@ -44,7 +44,7 @@ import { validateUrl } from "./utils/ssrfGuard.js";
  * `signal`, `body`, `headers`, `method`) untouched and return the raw
  * `Response` so the SDK still streams chunks and reads `Retry-After`.
  *
- * @returns {(input: string|URL|Request, init?: RequestInit) => Promise<Response>}
+ * @returns {Function} A fetch-compatible function `(input, init) => Promise<Response>`.
  */
 function createSsrfGuardedFetch() {
   return async (input, init) => {
@@ -59,7 +59,11 @@ function createSsrfGuardedFetch() {
       const err = await validateUrl(url);
       if (err) throw new Error(`SSRF guard rejected compat baseUrl: ${err}`);
     }
-    return fetch(input, init);
+    // SSRF defense-in-depth: block 3xx redirects so an attacker-controlled
+    // compat baseUrl can't redirect to a private/link-local/cloud-metadata
+    // address (which would bypass the initial validateUrl() check). Mirrors
+    // safeFetch() in utils/ssrfGuard.js.
+    return fetch(input, { ...init, redirect: "error" });
   };
 }
 

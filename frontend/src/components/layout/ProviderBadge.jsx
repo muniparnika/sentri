@@ -42,7 +42,11 @@ const COMPAT_PALETTE = ["#cd7f32", "#10a37f", "#4285f4", "#6466f1", "#0ea5e9", "
 function compatStyle(id) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return { color: COMPAT_PALETTE[h % COMPAT_PALETTE.length] };
+  const c = COMPAT_PALETTE[h % COMPAT_PALETTE.length];
+  // Provide all five style fields the dropdown reads (bg, border, color, dot,
+  // activeBg) so compat-slot rows render with a visible status dot and active
+  // highlight, matching built-in providers in PROVIDER_STYLES.
+  return { color: c, dot: c, bg: `${c}11`, border: `${c}44`, activeBg: `${c}14` };
 }
 
 // A provider is "saved" if getSettings() returns a non-empty masked key for it,
