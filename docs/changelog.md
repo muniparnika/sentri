@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-05-08
+
 ### Added
 - **AUTO-002 + AUTO-015 (in progress)**: Added crawl baseline primitives for diff-aware crawling (`crawl_baselines` table + `crawlBaselineRepo` + `crawlDiff`), wired `pages_changed` SSE emission with `changedPages`/`removedPages` metadata in the crawl pipeline, added CI trigger support for `triggerCrawl` + optional `previewUrl`, and added signed deployment webhook endpoints for Vercel (`X-Vercel-Signature`, HMAC-SHA1) and Netlify (`X-Netlify-Token`, HMAC-SHA256) with preview-URL extraction. Integration Snippets now includes copy-pasteable Vercel/Netlify webhook payload templates, and `backend/.env.example` documents `VERCEL_WEBHOOK_SECRET`/`NETLIFY_WEBHOOK_SECRET`. The `pages_changed` SSE event is consumed by `useProjectRunMonitor` and rendered in `ActiveRunBanner` so the Test Lab live view shows "N pages changed → regenerating only those" (or "No page changes since last crawl — skipping generation") in place of the generic "Run in progress…" line. No-change crawls flip to `completed_empty` with a clean log message instead of the misleading "AI returned empty / site behind auth" warning list. Migration `020_run_changed_pages.sql` adds `runs.changedPages` + `runs.removedPages` (registered in `runRepo.JSON_FIELDS` + `INSERT_COLS`) so both fields surface on `GET /runs/:runId` automatically. New `backend/tests/crawl-baseline-repo.test.js` covers all three exported repository functions per REVIEW.md's mandatory-tests rule.
 
