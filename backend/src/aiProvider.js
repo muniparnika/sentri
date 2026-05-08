@@ -379,9 +379,17 @@ function detectProvider() {
     return forced;
   }
 
-  // ── Auto-detect: first cloud provider with a key, then Ollama as fallback ─
+  // ── Auto-detect: first cloud provider with a key, then any configured
+  // compat:<id> slot, then Ollama as final fallback. Without the compat
+  // sweep, a server restart with ONLY compat slots configured would leave
+  // detectProvider() returning null until an admin manually re-selects.
   const detected = CLOUD_DETECT_ORDER.find(id => isProviderUsable(id));
   if (detected) return detected;
+
+  try {
+    const compatSlot = apiKeyRepo.listCompatSlots().find(id => isProviderUsable(id));
+    if (compatSlot) return compatSlot;
+  } catch { /* DB unavailable — fall through to Ollama */ }
 
   if (isProviderUsable("local") && hasOllamaConfig()) return "local";
 
@@ -910,7 +918,10 @@ function getFallbackProviders(primaryProvider) {
   // Cloud tier: try other cloud providers in detection order, then any
   // configured `compat:<id>` slots (AI-001) — they share the OpenAI wire
   // format and participate in the same circuit-breaker accounting per slot.
-  const compatSlots = apiKeyRepo.listCompatSlots();
+  // Wrap the DB read so a transient DB failure doesn't break cloud-only
+  // fallbacks (which have no DB dependency otherwise).
+  let compatSlots = [];
+  try { compatSlots = apiKeyRepo.listCompatSlots(); } catch { /* DB unavailable — cloud fallbacks still work */ }
   const candidates = [...CLOUD_DETECT_ORDER, ...compatSlots];
   return candidates.filter(p =>
     p !== primaryProvider &&

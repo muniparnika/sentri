@@ -208,12 +208,7 @@ test('compat slots: baseURL is honored and circuit breakers are per-slot', async
   }
 });
 
-// ── DNS-rebinding mitigation: per-call SSRF re-validation (NOT YET IMPLEMENTED) ─
-// Per-call SSRF re-validation is a future improvement; the OpenAI SDK is
-// currently constructed without a guarded fetch wrapper. Save-time validation
-// is the only boundary in this PR. Skipping the test until the wrapper lands.
-test.skip('compat slot: per-call SSRF guard rejects loopback baseUrl after save (DNS-rebinding mitigation)', () => {});
-/*
+// ── DNS-rebinding mitigation: per-call SSRF re-validation ────────────────────
 // The OpenAI SDK is constructed with a `fetch` wrapper that re-runs
 // validateUrl() before every outbound call (createSsrfGuardedFetch in
 // aiProvider.js). A baseUrl that passed validation at config-save time but
@@ -265,4 +260,3 @@ test('compat slot: per-call SSRF guard rejects loopback baseUrl after save (DNS-
     'per-call SSRF guard must block loopback baseUrl at request time',
   );
 });
-*/
