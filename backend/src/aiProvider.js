@@ -456,7 +456,27 @@ export function getConfiguredKeys() {
   // True only when Ollama has explicit config AND is not disabled — prevents
   // the dropdown from showing Ollama as "saved" when it's just the default URL.
   result.ollamaConfigured = !runtimeOllamaDisabled && hasOllamaConfig();
-  result.compatProviders = apiKeyRepo.listCompatSlots().map((provider) => ({ provider, ...(apiKeyRepo.get(provider) || {}) })).map((p)=>({ provider: p.provider, displayName: p.displayName || p.provider.replace("compat:",""), baseUrl: p.baseUrl || "", model: p.model || "", apiKey: maskKey(p.apiKey || "") }));
+  // Wrap the DB sweep in try/catch to match buildProviderMeta() / detectProvider()
+  // / getFallbackProviders() — without it, a transient DB failure would 500
+  // the GET /settings endpoint AND crash the demoQuota middleware on every
+  // request when demo mode is active (REVIEW.md: error responses must never
+  // leak internal details, and this path was leaking DB error messages).
+  try {
+    result.compatProviders = apiKeyRepo.listCompatSlots()
+      .map((provider) => ({ provider, ...(apiKeyRepo.get(provider) || {}) }))
+      .map((p) => ({
+        provider: p.provider,
+        displayName: p.displayName || p.provider.replace("compat:", ""),
+        baseUrl: p.baseUrl || "",
+        model: p.model || "",
+        apiKey: maskKey(p.apiKey || ""),
+      }));
+  } catch (err) {
+    // DB unavailable — log server-side and degrade to an empty list so the
+    // Settings UI still renders cloud + Ollama state correctly.
+    console.error(formatLogLine("error", null, `[aiProvider] Failed to list compat providers: ${err.message}`));
+    result.compatProviders = [];
+  }
   return result;
 }
 
