@@ -194,3 +194,56 @@ test('compat slots: baseURL is honored and circuit breakers are per-slot', async
     delete process.env.ALLOW_PRIVATE_URLS;
   }
 });
+
+// ── DNS-rebinding mitigation: per-call SSRF re-validation ────────────────────
+// The OpenAI SDK is constructed with a `fetch` wrapper that re-runs
+// validateUrl() before every outbound call (createSsrfGuardedFetch in
+// aiProvider.js). A baseUrl that passed validation at config-save time but
+// later resolves to a private/loopback address must be rejected at call time
+// rather than reaching the upstream. We don't have a real DNS-rebind primitive
+// in tests, so we install the slot with ALLOW_PRIVATE_URLS=true (lets a
+// loopback baseUrl save), then call WITHOUT the bypass — the per-call guard
+// should reject it.
+
+test('compat slot: per-call SSRF guard rejects loopback baseUrl after save (DNS-rebinding mitigation)', async (t) => {
+  process.env.LLM_MAX_RETRIES = '0';
+  process.env.LLM_BASE_DELAY_MS = '1';
+  process.env.DB_PATH = ':memory:';
+
+  // Save under the bypass so the loopback URL passes validateUrl().
+  process.env.ALLOW_PRIVATE_URLS = 'true';
+  const apiKeyRepo = await import('../src/database/repositories/apiKeyRepo.js');
+  const ai = await import('../src/aiProvider.js');
+  apiKeyRepo.setCompatSlot('rebind', {
+    baseUrl: 'http://127.0.0.1:1/v1',
+    model: 'test-model',
+    apiKey: 'test-fixture-key-rebind',
+    displayName: 'rebind',
+  });
+  // Drop the bypass — the per-call guard must now reject the loopback URL
+  // even though the saved config is unchanged.
+  delete process.env.ALLOW_PRIVATE_URLS;
+
+  // Disable cloud fallbacks so the call fails at the compat slot, not at a
+  // sibling provider that happens to be configured via env vars.
+  const savedKeys = {};
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'DEMO_GOOGLE_API_KEY']) {
+    savedKeys[k] = process.env[k];
+    delete process.env[k];
+  }
+
+  t.after(() => {
+    for (const [k, v] of Object.entries(savedKeys)) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    apiKeyRepo.deleteCompatSlot('rebind');
+    ai.setActiveProvider(null);
+  });
+
+  ai.setActiveProvider('compat:rebind');
+  await assert.rejects(
+    ai.generateText('hello', { responseFormat: 'text' }),
+    /SSRF guard rejected|private|reserved/i,
+    'per-call SSRF guard must block loopback baseUrl at request time',
+  );
+});

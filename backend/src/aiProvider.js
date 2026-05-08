@@ -31,6 +31,33 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { throwIfAborted } from "./utils/abortHelper.js";
 import { formatLogLine } from "./utils/logFormatter.js";
 import * as apiKeyRepo from "./database/repositories/apiKeyRepo.js";
+import { validateUrl } from "./utils/ssrfGuard.js";
+
+/**
+ * Build a `fetch` implementation that re-validates the target URL via the
+ * SSRF guard on every call before delegating to global `fetch`. Used by the
+ * OpenAI SDK for compat (`compat:<id>`) providers so a hostname that
+ * resolved to a public IP at config-save time can't be flipped to a
+ * private/loopback IP via DNS rebinding between save and call.
+ *
+ * Streaming + retry semantics are preserved: we forward `init` (including
+ * `signal`, `body`, `headers`, `method`) untouched and return the raw
+ * `Response` so the SDK still streams chunks and reads `Retry-After`.
+ *
+ * @returns {(input: string|URL|Request, init?: RequestInit) => Promise<Response>}
+ */
+function createSsrfGuardedFetch() {
+  return async (input, init) => {
+    const url = typeof input === "string" ? input
+      : input instanceof URL ? input.toString()
+      : input?.url;
+    if (url) {
+      const err = await validateUrl(url);
+      if (err) throw new Error(`SSRF guard rejected compat baseUrl: ${err}`);
+    }
+    return fetch(input, init);
+  };
+}
 
 // ── Runtime key store ────────────────────────────────────────────────────────
 // In-memory cache populated at startup from the DB (via loadKeysFromDatabase)
@@ -917,14 +944,15 @@ async function callProvider(provider, promptOrMessages, maxTokens, signal, respo
 
 
   if (provider === "openai_compatible" || isCompatProvider(provider)) {
-    // baseUrl is SSRF-validated at config-save time in routes/settings.js.
-    // Calling validateUrl() here would be no-op (it's async + returns a
-    // string, never throws) so we rely on the saved-time guard.
+    // baseUrl is SSRF-validated at config-save time in routes/settings.js
+    // AND re-validated per-call via createSsrfGuardedFetch() below — closes
+    // the DNS-rebinding window (a host that resolved to a public IP at save
+    // time can't be flipped to a private/loopback IP between save and call).
     const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
     const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
     const baseURL = compat?.baseUrl;
     const model = compat?.model || getCloudModel("openai_compatible");
-    const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    const client = new OpenAI({ apiKey, fetch: createSsrfGuardedFetch(), ...(baseURL ? { baseURL } : {}) });
     const messages = [];
     if (system) messages.push({ role: "system", content: system });
     messages.push({ role: "user", content: user });
@@ -1225,8 +1253,10 @@ export async function streamText(promptOrMessages, onToken, options = {}) {
       const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
       const baseURL = compat?.baseUrl;
       const model = compat?.model || getCloudModel("openai_compatible");
-      // SSRF-validated at config-save time in routes/settings.js.
-      const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      // SSRF-validated at config-save time in routes/settings.js AND
+      // re-validated per-call via createSsrfGuardedFetch() (DNS-rebinding
+      // mitigation — see callProvider compat branch for the rationale).
+      const client = new OpenAI({ apiKey, fetch: createSsrfGuardedFetch(), ...(baseURL ? { baseURL } : {}) });
       const messages = [];
       if (system) messages.push({ role: "system", content: system });
       messages.push({ role: "user", content: user });

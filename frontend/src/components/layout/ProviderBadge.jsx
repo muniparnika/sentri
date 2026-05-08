@@ -34,6 +34,17 @@ function getCompatIds(settings) {
   return (settings?.compatProviders || []).map((p) => p.provider);
 }
 
+// Deterministic palette so each `compat:<id>` slot gets a stable, distinct
+// chip color instead of all sharing OpenRouter purple. Palette mirrors the
+// existing PROVIDER_STYLES hues (orange / green / blue / purple / teal / pink)
+// so compat slots blend visually with built-in providers.
+const COMPAT_PALETTE = ["#cd7f32", "#10a37f", "#4285f4", "#6466f1", "#0ea5e9", "#ec4899"];
+function compatStyle(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return { color: COMPAT_PALETTE[h % COMPAT_PALETTE.length] };
+}
+
 // A provider is "saved" if getSettings() returns a non-empty masked key for it,
 // or (for Ollama) if the backend reports it as explicitly configured.
 function getSavedProviders(settings) {
@@ -201,7 +212,7 @@ export default function ProviderBadge({ style }) {
           {saved.length > 0 && (
             <div style={{ padding: "4px 0" }}>
               {saved.map(id => {
-                const sty      = PROVIDER_STYLES[id] || PROVIDER_STYLES.openrouter;
+                const sty      = PROVIDER_STYLES[id] || compatStyle(id);
                 const info     = getProviderInfo(config, id);
                 const isActive = config.provider === id;
                 const isBusy   = switching === id;
@@ -255,7 +266,7 @@ export default function ProviderBadge({ style }) {
                 Add provider
               </div>
               {unsaved.map(id => {
-                const sty  = PROVIDER_STYLES[id] || PROVIDER_STYLES.openrouter;
+                const sty  = PROVIDER_STYLES[id] || compatStyle(id);
                 const info = getProviderInfo(config, id);
                 return (
                   <button key={id} onClick={() => { setOpen(false); navigate("/settings"); }}

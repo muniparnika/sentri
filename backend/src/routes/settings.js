@@ -82,6 +82,14 @@ router.post("/settings", requireRole("admin"), async (req, res) => {
 
 
   if (isCompat) {
+    // Defense-in-depth: the frontend already enforces /^[a-z0-9_-]+$/ on the
+    // slot id, but the backend is the trust boundary — re-validate here so
+    // direct API callers can't smuggle exotic characters into the DB key
+    // (which would also confuse log filters and the compat slot listing).
+    const slotId = provider.slice("compat:".length);
+    if (!/^[a-z0-9_-]+$/.test(slotId)) {
+      return res.status(400).json({ error: "compat slot id must match /^[a-z0-9_-]+$/" });
+    }
     const normalizedBaseUrl = (baseUrl || "").trim();
     const normalizedModel = (model || "").trim();
     const normalizedApiKey = (apiKey || "").trim();
