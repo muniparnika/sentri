@@ -30,7 +30,7 @@ export function buildPageFingerprint(snapshot) {
  * @param {Array<{url: string}>|null|undefined} currentSnapshots
  *   Raw snapshots from the crawl. `null` / `undefined` → no URLs.
  * @param {object} [opts]
- * @param {(snap: object) => string} [opts.fingerprintOf]
+ * @param {function(object): string} [opts.fingerprintOf]
  *   AUTO-002b: optional override for fingerprint computation. State-mode
  *   callers pass a function that returns a pre-computed fingerprint
  *   keyed off the original snapshot identity, because the default

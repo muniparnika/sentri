@@ -75,20 +75,17 @@ import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
  * @param {object[]} snapshots - normalised snapshots (with synthetic .url for state mode)
  * @param {string} mode - "crawl" | "state"
  * @param {object} [opts]
- * @param {(snap: object) => string} [opts.fingerprintOf]
+ * @param {function(object): string} [opts.fingerprintOf]
  *   Forwarded to `diffCrawlSnapshots`. State mode supplies a function that
  *   returns a pre-computed fingerprint so the composite `url#fp=<fp>` key
  *   doesn't feed back into `fingerprintState`'s URL-derived computation
  *   (which would make every state-mode re-crawl look "changed" — the
  *   bug AUTO-002b's first round shipped with).
- * @returns {{
- *   noChanges: boolean,
- *   changedSet: Set<string>|null,
- *   skipped: boolean,
- * }} skipped=true when the diff was bypassed (preview crawl or zero snapshots).
- *    noChanges=true when there's an existing baseline and nothing changed.
- *    changedSet is the set of keys (URLs or composite keys) that changed; the
- *    caller decides whether to filter `snapshots[]` against it.
+ * @returns {{noChanges: boolean, changedSet: (Set<string>|null), skipped: boolean}}
+ *   `skipped=true` when the diff was bypassed (preview crawl or zero snapshots).
+ *   `noChanges=true` when there's an existing baseline and nothing changed.
+ *   `changedSet` is the set of keys (URLs or composite keys) that changed;
+ *   the caller decides whether to filter `snapshots[]` against it.
  */
 function runDiffAwareBaseline(project, run, snapshots, mode, opts = {}) {
   // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
