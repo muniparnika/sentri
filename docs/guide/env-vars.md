@@ -125,6 +125,15 @@ npm install bullmq
 
 BullMQ is detected automatically when both `REDIS_URL` is set and the `bullmq` package is installed. Set `MAX_WORKERS` to control how many runs can execute concurrently (default: 2).
 
+### Deployment Webhooks (AUTO-015)
+
+Optional HMAC secrets for Vercel and Netlify deployment-event webhooks. When set, the corresponding `POST /api/v1/projects/:id/trigger/<provider>` endpoint accepts signed deployment payloads and launches a diff-aware preview crawl. Both endpoints additionally require a project-scoped Bearer trigger token (dual-auth) — see `POST /api/v1/projects/:id/trigger-tokens`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `VERCEL_WEBHOOK_SECRET` | — | HMAC-SHA1 secret used to verify the `X-Vercel-Signature` header on Vercel deployment-event webhooks. When unset, the `/trigger/vercel` endpoint rejects all requests with 401. |
+| `NETLIFY_WEBHOOK_SECRET` | — | HMAC-SHA256 secret used to verify the `X-Netlify-Token` header on Netlify deployment-event webhooks. When unset, the `/trigger/netlify` endpoint rejects all requests with 401. |
+
 ### Email (Transactional)
 
 | Variable | Default | Description |

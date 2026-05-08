@@ -22,6 +22,7 @@ import * as projectRepo from "../database/repositories/projectRepo.js";
 import * as runRepo from "../database/repositories/runRepo.js";
 import * as testRepo from "../database/repositories/testRepo.js";
 import * as webhookTokenRepo from "../database/repositories/webhookTokenRepo.js";
+import * as activityRepo from "../database/repositories/activityRepo.js";
 import { generateRunId, generateWebhookTokenId } from "../utils/idGenerator.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { runWithAbort, runAbortControllers } from "../utils/runWithAbort.js";
@@ -246,6 +247,61 @@ router.get("/projects/:id/runs", (req, res) => {
   res.json(runs.map(signRunArtifacts));
 });
 
+
+/**
+ * GET /api/v1/projects/:id/last-deployment-run
+ *
+ * AUTO-015b: powers the "Last deployment run" badge on the project header
+ * (NEXT.md:69 acceptance criterion). Returns the most recent deployment-
+ * triggered crawl for this project **within the last 24 hours**, or `null`
+ * if none. The badge chip only renders when this endpoint returns a run.
+ *
+ * Data source: `activities.crawl.start.deployment` markers (emitted by
+ * `routes/trigger.js:launchPreviewCrawl`) — keyed by `meta.runId` so we can
+ * cross-reference the live run's status and surface a success/failure chip.
+ */
+router.get("/projects/:id/last-deployment-run", (req, res) => {
+  const project = projectRepo.getByIdInWorkspace(req.params.id, req.workspaceId);
+  if (!project) return res.status(404).json({ error: "not found" });
+
+  // 24-hour lookback window, matching NEXT.md:69 ("a deployment-triggered
+  // run completed in the last 24h").
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const rows = activityRepo.getFiltered({
+    type: "crawl.start.deployment",
+    projectId: project.id,
+    workspaceId: req.workspaceId,
+    after: since,
+    limit: 1,
+  });
+  if (rows.length === 0) return res.json({ run: null });
+
+  const activity = rows[0];
+  const runId = activity.meta?.runId || null;
+  if (!runId) return res.json({ run: null });
+
+  const run = runRepo.getById(runId);
+  // Badge renders even while the run is still in-flight ("Deployment crawl
+  // in progress…"), so we don't require a terminal status here — only that
+  // the run row still exists.
+  if (!run) return res.json({ run: null });
+
+  res.json({
+    run: {
+      id: run.id,
+      status: run.status,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt || null,
+      pagesFound: run.pagesFound ?? 0,
+      testsGenerated: Array.isArray(run.tests) ? run.tests.length : 0,
+      changedPages: run.changedPages || [],
+      removedPages: run.removedPages || [],
+      provider: activity.meta?.provider || null,
+      previewUrl: activity.meta?.previewUrl || null,
+      triggeredAt: activity.createdAt,
+    },
+  });
+});
 
 router.get("/runs/:runId/compare/:otherRunId", (req, res) => {
   const rawBaseRun = runRepo.getById(req.params.runId);

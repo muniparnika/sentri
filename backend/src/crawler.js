@@ -43,10 +43,125 @@ import { setStep } from "./utils/pipelineState.js";
 import { classifyError } from "./utils/errorClassifier.js";
 import { structuredLog } from "./utils/logFormatter.js";
 import * as runRepo from "./database/repositories/runRepo.js";
+import * as crawlBaselineRepo from "./database/repositories/crawlBaselineRepo.js";
+import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
 
 /**
  * setStep is imported from utils/pipelineState.js — shared with pipelineOrchestrator.js.
  */
+
+/**
+ * AUTO-002 / AUTO-002b: shared diff-aware baseline runner. Compares the
+ * current crawl's snapshots against the persisted baseline, emits the
+ * `pages_changed` SSE event, and merges the new fingerprints into the
+ * baseline table.
+ *
+ * Two callers, two key-derivation strategies:
+ *
+ * - **Link crawl** (`mode="crawl"`) keys baselines by snapshot URL — one
+ *   row per page. The caller filters `snapshots[]` down to changed pages
+ *   so generation only runs on what changed.
+ *
+ * - **State explorer** (`mode="state"`) keys baselines by a composite
+ *   `url#fp=<fingerprint>` — distinct states at the same URL (login form
+ *   blank vs login form with errors) are tracked as separate baseline
+ *   rows. The caller does **not** filter `snapshots[]` post-diff because
+ *   journeys reference unchanged states for context; filtering would
+ *   break flow generation. The diff is informational + persistent, but
+ *   no-change crawls still short-circuit the generation pipeline.
+ *
+ * @param {object} project - project record (must carry id + canonicalUrl/url)
+ * @param {object} run - mutable run record
+ * @param {object[]} snapshots - normalised snapshots (with synthetic .url for state mode)
+ * @param {string} mode - "crawl" | "state"
+ * @param {object} [opts]
+ * @param {function(object): string} [opts.fingerprintOf]
+ *   Forwarded to `diffCrawlSnapshots`. State mode supplies a function that
+ *   returns a pre-computed fingerprint so the composite `url#fp=<fp>` key
+ *   doesn't feed back into `fingerprintState`'s URL-derived computation
+ *   (which would make every state-mode re-crawl look "changed" — the
+ *   bug AUTO-002b's first round shipped with).
+ * @returns {{noChanges: boolean, changedSet: (Set<string>|null), skipped: boolean}}
+ *   `skipped=true` when the diff was bypassed (preview crawl or zero snapshots).
+ *   `noChanges=true` when there's an existing baseline and nothing changed.
+ *   `changedSet` is the set of keys (URLs or composite keys) that changed;
+ *   the caller decides whether to filter `snapshots[]` against it.
+ */
+function runDiffAwareBaseline(project, run, snapshots, mode, opts = {}) {
+  // AUTO-002 / AUTO-015: classify "preview crawl" by comparing the URL we
+  // *asked Playwright to load* (`project.url`) against the project's
+  // CANONICAL production URL. The AUTO-015 trigger routes overwrite
+  // `project.url` with the deployment preview URL while preserving
+  // `canonicalUrl`, so a mismatch is the unambiguous signal that this is a
+  // preview crawl and baselines must be preserved.
+  //
+  // We deliberately do NOT consult `snapshots[0].url` here. The first
+  // snapshot's URL is post-redirect — production sites routinely redirect
+  // their entry URL to a different origin (`example.com` → `www.example.com`,
+  // `http://` → `https://`, apex → www, etc.) and the previous code that
+  // used `snapshots[0]?.url || project.url` would falsely classify those
+  // crawls as "preview" and silently skip baseline updates on every
+  // subsequent crawl. Redirects are a property of the site, not a signal
+  // about *which* deployment we're hitting.
+  const canonicalForOriginCheck = project.canonicalUrl || project.url;
+  const sameOrigin = (() => {
+    try {
+      return new URL(project.url).origin === new URL(canonicalForOriginCheck).origin;
+    } catch { return false; }
+  })();
+  if (!sameOrigin) {
+    log(run, `↪️  Preview-deployment crawl detected — skipping baseline diff (preserving production baselines).`);
+    return { noChanges: false, changedSet: null, skipped: true };
+  }
+  if (snapshots.length === 0) {
+    // Defence-in-depth: a crawl that yielded zero snapshots but passed
+    // the unreachable-target check above (e.g. auth wall, SPA with no
+    // crawlable links, Playwright silent failure) must not wipe the
+    // project's baselines. Skip the diff entirely.
+    log(run, `⚠️  ${mode === "state" ? "State exploration" : "Crawl"} returned zero snapshots — skipping baseline diff to preserve existing fingerprints.`);
+    return { noChanges: false, changedSet: null, skipped: true };
+  }
+
+  const existingBaselines = crawlBaselineRepo.getMapByProjectId(project.id);
+  const diff = diffCrawlSnapshots(existingBaselines, snapshots, opts);
+  run.changedPages = diff.changedPages;
+  run.removedPages = diff.removedPages;
+  emitRunEvent(run.id, "pages_changed", {
+    changedPages: diff.changedPages,
+    removedPages: diff.removedPages,
+    unchangedPages: diff.unchangedPages,
+  });
+
+  if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
+    // No-change crawl: existing baselines still authoritative for observed
+    // pages. Signal short-circuit to the caller via run.noChangesDetected.
+    //
+    // Edge case: a crawl with zero added/changed pages can still report
+    // `removedPages` (a page genuinely went away while the rest stayed
+    // identical). We must drop those baseline rows here — otherwise they
+    // persist forever and every subsequent crawl re-reports them as
+    // `removedPages` indefinitely. The merge call with empty fingerprints
+    // is upsert-only, so existing observed-page rows are untouched.
+    if (diff.removedPages.length > 0) {
+      crawlBaselineRepo.mergeProjectBaselines(project.id, {}, diff.removedPages);
+    }
+    log(run, `🟰 No ${mode === "state" ? "state" : "page"} changes detected against the previous crawl baseline.`);
+    run.noChangesDetected = true;
+    return { noChanges: true, changedSet: null, skipped: false };
+  }
+
+  // Changes detected (or first-ever crawl). Merge upserts observed entries
+  // and only deletes URLs the diff explicitly classified as removed —
+  // partial-crawl-safe (a transient page failure won't wipe the baseline).
+  crawlBaselineRepo.mergeProjectBaselines(project.id, diff.fingerprints, diff.removedPages);
+  log(run, `🧬 ${mode === "state" ? "State" : "Crawl"} diff: ${diff.changedPages.length} changed/new, ${diff.removedPages.length} removed, ${diff.unchangedPages.length} unchanged.`);
+  return {
+    noChanges: false,
+    changedSet: new Set(diff.changedPages),
+    skipped: false,
+    hadExistingBaseline: Object.keys(existingBaselines).length > 0,
+  };
+}
 
 /**
  * Shared Steps 2 & 3: Element filtering + intent classification.
@@ -239,47 +354,129 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
 
   let snapshots, snapshotsByUrl, journeys, classifiedPages, classifiedPagesByUrl, filteredSnapshots;
   let apiEndpoints = [];
+  // AUTO-002: track the total pages the crawl actually discovered (before
+  // diff-aware filtering reduces `snapshots` to just the changed subset).
+  // Reported to the user as "pages found" / telemetry — otherwise a crawl
+  // that discovered 10 pages with 3 changed would misleadingly report
+  // `pagesFound: 3`, skewing both the UI and the `crawl.complete`
+  // telemetry funnel which measures crawl quality.
+  let pagesCrawled = 0;
 
   if (mode === "state") {
     // ── State-based exploration (new engine) ─────────────────────────────
+    //
+    // AUTO-002b: state-explorer mode is now diff-aware via composite keys.
+    // The state explorer produces multiple snapshots per URL (login form
+    // blank vs login form with errors), so we key the baseline by the
+    // composite `url#fp=<fingerprint>` instead of plain URL — this lets
+    // distinct states at the same URL be tracked as separate baseline
+    // rows. The caller does NOT filter `snapshots[]` post-diff because
+    // journeys reference unchanged states for flow context; we run the
+    // full state set through generation but short-circuit when nothing
+    // changed against the baseline (no-change crawl → `completed_empty`).
     const exploration = await exploreStates(project, run, { signal, tuning: explorerTuning });
     snapshots = exploration.snapshots;
     snapshotsByUrl = exploration.snapshotsByUrl;
     apiEndpoints = exploration.apiEndpoints || [];
+    pagesCrawled = snapshots.length;
 
     throwIfAborted(signal);
 
-    // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
-    ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
-      await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
-
-    // Enrich snapshotsByUrl with fingerprint-keyed entries so that downstream
-    // code (journeyPrompt.js) can look up per-state snapshots when a journey
-    // page carries _stateFingerprint. Without this, multiple states at the
-    // same URL (e.g. login form blank vs with errors) would all resolve to
-    // the last-captured snapshot for that URL.
-    const fpMap = exploration.stateGraph.snapshotsByFp;
-    for (const [fp, snap] of fpMap) {
-      snapshotsByUrl[fp] = snap;
-    }
-
-    // Use observed flows from the state explorer as journeys
-    journeys = exploration.journeys;
-    if (journeys.length > 0) {
-      log(run, `🗺️  Discovered ${journeys.length} observed flow(s):`);
-      for (const j of journeys) {
-        const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
-        log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+    // AUTO-002b: diff-aware baseline for state mode.
+    //
+    // We synthesise a composite key per state (`originalUrl#fp=<fp>`) so
+    // distinct states at the same URL (login blank vs login with errors)
+    // track as separate baseline rows. But we must NOT let the diff
+    // helper re-derive fingerprints from the composite-keyed snapshots —
+    // `fingerprintState()` includes `snap.url` in its hash, so feeding
+    // it a `url#fp=<fp>` URL would produce a different fingerprint than
+    // the one originally computed (and stored as the suffix of the
+    // composite key). Every re-crawl would then look "changed".
+    //
+    // Instead, we extract the pre-computed fingerprint directly from the
+    // composite-key suffix and pass it through `fingerprintOf`. The
+    // baseline stores it; the next run's diff compares apples to apples.
+    if (snapshots.length > 0) {
+      // Build an O(n) reverse lookup (snapshot → fingerprint) once, rather
+      // than scanning `fpMap.entries()` per snapshot (O(n²)) AND — more
+      // importantly — avoiding the fragility of relying on object identity
+      // via `===`. stateExplorer.js:215-216 currently stores the SAME
+      // snapshot reference in `snapshotsByFp` and `ctx.snapshots`, but if
+      // any future refactor ever clones snapshots between those two stores,
+      // identity comparison silently collapses all states into one baseline
+      // row (defeating AUTO-002b's composite-key design). A WeakMap keyed
+      // on the snapshot object is the same one-liner but makes the identity
+      // dependency explicit; callers that produce a fresh snapshot simply
+      // fall through to the `snap.url` fallback on line below.
+      const fpMap = exploration.stateGraph?.snapshotsByFp;
+      const snapshotToFp = new WeakMap();
+      if (fpMap) {
+        for (const [fp, s] of fpMap.entries()) snapshotToFp.set(s, fp);
       }
+      const stateKeyed = snapshots.map((snap) => {
+        const fp = snapshotToFp.get(snap) || null;
+        return fp ? { ...snap, url: `${snap.url}#fp=${fp}`, _stateFp: fp } : snap;
+      });
+      const stateDiff = runDiffAwareBaseline(project, run, stateKeyed, "state", {
+        // Pull the pre-computed fingerprint off the snapshot rather than
+        // recomputing — the composite-key URL would otherwise feed back
+        // into `fingerprintState` and falsely flip every state to changed.
+        fingerprintOf: (snap) => snap._stateFp || snap.url,
+      });
+      if (stateDiff.noChanges) {
+        // Short-circuit: nothing changed, skip generation entirely.
+        snapshots = [];
+        snapshotsByUrl = {};
+      }
+      // else: keep all snapshots — generation needs the full state set
+      // for journey/flow context; the diff has been persisted + emitted.
     }
 
-    // Also discover link-graph journeys from classified pages as a supplement
-    const linkJourneys = buildUserJourneys(classifiedPages, snapshotsByUrl);
-    const explorerUrls = new Set(journeys.flatMap(j => j.pages.map(p => p.url)));
-    for (const lj of linkJourneys) {
-      // Only add link-graph journeys that cover pages not already in observed flows
-      if (!lj.pages.some(p => explorerUrls.has(p.url))) {
-        journeys.push(lj);
+    // ── No-change short-circuit: skip filter/classify/journey/generation ─
+    // When the state-mode diff reported zero changes, `snapshots` is empty
+    // above. We must also zero out `journeys` and skip the supplementary
+    // link-journey discovery — otherwise `exploration.journeys` (still
+    // populated from the in-memory explorer run) would feed `generateAllTests`
+    // and produce LLM calls + tests on a "no changes" run, which the run
+    // is supposed to short-circuit to `completed_empty`.
+    if (run.noChangesDetected) {
+      filteredSnapshots = [];
+      classifiedPages = [];
+      classifiedPagesByUrl = {};
+      journeys = [];
+    } else {
+      // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
+      ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
+        await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
+
+      // Enrich snapshotsByUrl with fingerprint-keyed entries so that downstream
+      // code (journeyPrompt.js) can look up per-state snapshots when a journey
+      // page carries _stateFingerprint. Without this, multiple states at the
+      // same URL (e.g. login form blank vs with errors) would all resolve to
+      // the last-captured snapshot for that URL.
+      const fpMap = exploration.stateGraph.snapshotsByFp;
+      for (const [fp, snap] of fpMap) {
+        snapshotsByUrl[fp] = snap;
+      }
+
+      // Use observed flows from the state explorer as journeys
+      journeys = exploration.journeys;
+      if (journeys.length > 0) {
+        log(run, `🗺️  Discovered ${journeys.length} observed flow(s):`);
+        for (const j of journeys) {
+          const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
+          log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+        }
+      }
+
+      // Also discover link-graph journeys from classified pages as a supplement
+      const linkJourneys = buildUserJourneys(classifiedPages, snapshotsByUrl);
+      const explorerUrls = new Set(journeys.flatMap(j => j.pages.map(p => p.url)));
+      for (const lj of linkJourneys) {
+        // Only add link-graph journeys that cover pages not already in observed flows
+        if (!lj.pages.some(p => explorerUrls.has(p.url))) {
+          journeys.push(lj);
+        }
       }
     }
   } else {
@@ -288,6 +485,7 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     snapshots = crawlResult.snapshots;
     snapshotsByUrl = crawlResult.snapshotsByUrl;
     apiEndpoints = crawlResult.apiEndpoints || [];
+    pagesCrawled = snapshots.length;
 
     // ── Early failure: unreachable target ────────────────────────────────
     // If the crawl produced zero pages AND every navigation attempt failed
@@ -296,6 +494,10 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // clear DNS/network reason — instead of silently completing as
     // "completed_empty" after the Filter/Classify/Generate stages run on
     // an empty snapshot list.
+    //
+    // NOTE: This check uses the raw crawl result (before diff filtering) and
+    // runs BEFORE baselines are replaced — so a transient network failure
+    // does not wipe the project's baseline fingerprints.
     const failures = crawlResult.navigationFailures || [];
     if (snapshots.length === 0 && failures.length > 0) {
       const networkFailures = failures.filter(f =>
@@ -321,20 +523,61 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       }
     }
 
+    // ── Diff-aware crawl baseline (AUTO-002) ──────────────────────────────
+    // Runs after the unreachable-target check so that transient network
+    // failures cannot wipe existing baselines. The shared helper handles
+    // canonical-URL origin checking (AUTO-015 preview-crawl preservation),
+    // zero-snapshot defence, no-change short-circuit, and partial-crawl-safe
+    // baseline merging. See `runDiffAwareBaseline` JSDoc for details.
+    const diffOutcome = runDiffAwareBaseline(project, run, snapshots, "crawl");
+    if (diffOutcome.noChanges) {
+      // No-change crawl → short-circuit generation. The finalize block
+      // checks `run.noChangesDetected` to render the correct
+      // `completed_empty` message ("no changes" vs "AI returned empty").
+      snapshots = [];
+      snapshotsByUrl = {};
+    } else if (!diffOutcome.skipped && diffOutcome.hadExistingBaseline && diffOutcome.changedSet) {
+      // Diff-aware generation scope: filter to changed pages only.
+      // First-ever crawl (no existing baseline) skips this filter so every
+      // page flows through generation, matching pre-AUTO-002 behaviour.
+      const changedSet = diffOutcome.changedSet;
+      snapshots = snapshots.filter((snap) => changedSet.has(snap.url));
+      snapshotsByUrl = Object.fromEntries(
+        Object.entries(snapshotsByUrl).filter(([url]) => changedSet.has(url))
+      );
+      log(run, `🎯 Diff-aware generation scope: ${snapshots.length} changed page(s).`);
+    }
+
     throwIfAborted(signal);
 
-    // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
-    ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
-      await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
+    // ── No-change short-circuit: skip filter/classify/journey/generation ─
+    // Mirrors the state-mode branch above (see `if (run.noChangesDetected)`
+    // around line 442). When the diff reported zero changes, `snapshots` is
+    // empty — running filter/classify/journey detection on empty inputs is
+    // wasted work AND `journey` ends up undefined which `generateAllTests`
+    // happily processes (no LLM cost, but `journeys.length` access at the
+    // structuredLog call later would crash). Short-circuit to empty arrays
+    // and let the finalize block route to `completed_empty` with the
+    // "no page changes since baseline" message.
+    if (run.noChangesDetected) {
+      filteredSnapshots = [];
+      classifiedPages = [];
+      classifiedPagesByUrl = {};
+      journeys = [];
+    } else {
+      // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
+      ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
+        await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
 
-    // Journey detection — pass snapshotsByUrl so link-graph analysis can discover
-    // cross-intent journeys (e.g. pricing → signup → dashboard)
-    journeys = buildUserJourneys(classifiedPages, snapshotsByUrl);
-    if (journeys.length > 0) {
-      log(run, `🗺️  Detected ${journeys.length} user journey(s):`);
-      for (const j of journeys) {
-        const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
-        log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+      // Journey detection — pass snapshotsByUrl so link-graph analysis can discover
+      // cross-intent journeys (e.g. pricing → signup → dashboard)
+      journeys = buildUserJourneys(classifiedPages, snapshotsByUrl);
+      if (journeys.length > 0) {
+        log(run, `🗺️  Detected ${journeys.length} user journey(s):`);
+        for (const j of journeys) {
+          const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
+          log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+        }
       }
     }
   }
@@ -402,7 +645,12 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
   run.pages = filteredSnapshots.map(s => ({ url: s.url, title: s.title || s.url, status: "crawled" }));
   run.testsGenerated = run.tests.length;
   run.pipelineStats = buildPipelineStats({
-    pagesFound: snapshots.length, rawTests, removed, enhancedCount, rejected, journeys, dedupStats,
+    // pagesCrawled = total pages the crawl discovered, before AUTO-002 diff
+    // filtering. `snapshots.length` at this point has been narrowed to just
+    // the changed pages; reporting that as "pagesFound" would understate
+    // crawl breadth and break the telemetry funnel that distinguishes
+    // "small site" from "big site with few changes".
+    pagesFound: pagesCrawled, rawTests, removed, enhancedCount, rejected, journeys, dedupStats,
     apiEndpointsDiscovered: apiEndpoints.length,
   });
 
@@ -411,7 +659,12 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     run.duration = Date.now() - runStart;
     setStep(run, 8);
     log(run, `\n📊 Pipeline Summary:`);
-    log(run, `Pages: ${snapshots.length} | Raw tests: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length}`);
+    // Show both the crawl breadth AND the diff-aware generation scope when
+    // they differ, so reviewers can distinguish "big site with few changes"
+    // from "small site, everything generated". `pagesCrawled` is the full
+    // count, `snapshots.length` is the filtered subset that drove generation.
+    const scopeSuffix = pagesCrawled !== snapshots.length ? ` (${snapshots.length} changed → generated)` : "";
+    log(run, `Pages: ${pagesCrawled}${scopeSuffix} | Raw tests: ${rawTests.length} | Enhanced: ${enhancedTests.length} | Validated: ${validatedTests.length}`);
     log(run, `Journey tests: ${validatedTests.filter(t => t.isJourneyTest).length} | API tests: ${validatedTests.filter(t => t._generatedFrom === "api_har_capture" || t._generatedFrom === "api_user_described").length} | Rejected: ${rejected} | Avg quality: ${dedupStats.averageQuality}/100`);
     if (apiEndpoints.length > 0) {
       log(run, `API endpoints discovered: ${apiEndpoints.length}`);
@@ -423,6 +676,9 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     // "completed_empty" so the UI can show a warning instead of green success.
     if (run.tests.length === 0) {
       run.status = "completed_empty";
+      if (run.noChangesDetected) {
+        log(run, `✅ Crawl completed — no page changes since the last baseline; generation skipped.`);
+      } else {
       logWarn(run, `Crawl completed but no tests were generated.`);
       logWarn(run, `Possible causes:`);
       logWarn(run, `  1. AI provider is temporarily overloaded (503) — wait 5-10 min and Re-run, or configure multi-provider fallback in Settings`);
@@ -430,6 +686,7 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       logWarn(run, `  3. Pages have no interactive elements — try a different start URL`);
       logWarn(run, `  4. AI provider returned empty — check your API key in Settings`);
       logWarn(run, `  5. Try "State exploration" mode to discover dynamic content`);
+      }
     } else if (run.rateLimitError) {
       logWarn(run, `Completed with rate limit — only ${run.tests.length} test(s) generated. Switch AI provider or retry later.`);
     } else {
@@ -437,7 +694,11 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
     }
     structuredLog("crawl.complete", {
       runId: run.id, projectId: project.id, mode,
-      pages: snapshots.length, tests: run.tests.length, durationMs: run.duration,
+      // `pages` = full crawl breadth; `pagesGenerated` = diff-filtered
+      // subset that actually drove generation. Splitting these lets
+      // telemetry funnels measure both crawl cost and generation scope.
+      pages: pagesCrawled, pagesGenerated: snapshots.length,
+      tests: run.tests.length, durationMs: run.duration,
       apiEndpoints: apiEndpoints.length,
     });
     // DIF-013: report crawl outcome with the same shape as crawl.start so
@@ -447,7 +708,10 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       projectId: project.id,
       mode,
       status: run.status,
-      pages: snapshots.length,
+      // pages = full crawl breadth (matches crawl.start funnel shape);
+      // pagesGenerated = diff-filtered subset that drove generation.
+      pages: pagesCrawled,
+      pagesGenerated: snapshots.length,
       testsGenerated: run.tests.length,
       apiEndpoints: apiEndpoints.length,
       rateLimitHit: !!run.rateLimitError,

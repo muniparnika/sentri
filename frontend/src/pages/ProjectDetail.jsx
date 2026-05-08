@@ -185,7 +185,7 @@ export default function ProjectDetail() {
       });
     }
   }, [refresh, addNotification, activeRunId]);
-  const { sseDown, retryIn } = useProjectRunMonitor(activeRun, handleRunSettled);
+  const { sseDown, retryIn, pagesChanged } = useProjectRunMonitor(activeRun, handleRunSettled);
 
   async function doRun() {
     setActionLoading("run");
@@ -335,6 +335,7 @@ export default function ProjectDetail() {
         activeRun={activeRun}
         sseDown={sseDown}
         retryIn={retryIn}
+        pagesChanged={pagesChanged}
         onAbort={async () => {
           try {
             await api.abortRun(activeRun);

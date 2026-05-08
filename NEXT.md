@@ -24,147 +24,11 @@
 
 ---
 
-## ▶ Current PR — AUTO-002 + AUTO-015 (bundled)
+## ▶ Current PR — AI-001 — Generic OpenAI-compatible provider adapter (BYO endpoint)
 
-**Title:** Change detection / diff-aware crawling + continuous test discovery on deployment events
-**Branch:** `feat/auto-002-auto-015-diff-aware-crawl`
-**Effort:** L (L + M) | **Priority:** 🟢 Differentiator
-**All dependencies:** none — both scopes are net-new on top of the existing crawl pipeline; AUTO-015 consumes AUTO-002's `changedPages[]` signal, so they ship together.
-
-> AUTO-003 + AUTO-003b ✅ shipped in PR #10 (confidence-based auto-approval with provenance, revoke, and audit-trail UI). This bundle is the next step in Phase 4 — AUTO-002 establishes the diff-aware baseline mechanism, AUTO-015 wires it to deployment webhooks so new pages get tests the moment they're deployed. Both are prerequisites for AUTO-001 (risk-based ordering) and AUTO-004 (git-diff impact analysis).
-
-> **Bundling rationale (per the bundling-guidance note above):** AUTO-015 is listed in `ROADMAP.md:672-685` as directly dependent on AUTO-002 ("initiate a diff-aware crawl (AUTO-002) followed by test generation for changed pages only"). Shipping AUTO-002 without its deployment-webhook consumer would leave the `changedPages[]` signal unvalidated end-to-end — the consumer is the integration test. Both items touch `crawler.js` + `routes/trigger.js` + `routes/runs.js`, so reviewing them together avoids a second round of context-building on the same pipeline surface. Effort sits at L (L + M); AUTO-015 is mostly webhook-signature verification + preview-URL extraction (Vercel / Netlify), not net-new infrastructure.
-
-**Do not split this PR.** Codex agents tend to ship the minimum viable slice; this prompt is the explicit instruction to ship both scopes together.
-
-### Scope 1 — AUTO-002 — Change detection / diff-aware crawling
-
-Sentri re-crawls the entire site on every run. An autonomous system should detect what changed since the last crawl (new pages, modified DOM, removed elements) and only regenerate tests for affected pages. `backend/src/pipeline/crawlBrowser.js` has no concept of a previous crawl baseline today — this is the difference between "run everything nightly" and "test only what changed," and it's a hard prerequisite for AUTO-004 (test impact analysis from git diff) and the smarter slice of AUTO-001 (risk-based ordering).
-
-After each crawl, store a `crawl_baseline` snapshot per project (page URL → DOM fingerprint hash). On the next crawl, diff against the baseline to identify changed pages. Only run the generation pipeline for changed pages. Emit a `pages_changed` SSE event so the Test Lab live view can show "3 pages changed since last crawl → regenerating only those" instead of a generic progress bar.
-
-**Files:** new `backend/src/pipeline/crawlDiff.js` (DOM fingerprint diff engine — reuse the existing `stateFingerprint.js` hashing, don't invent a new scheme) · `backend/src/pipeline/crawlBrowser.js` (baseline comparison + early-skip for unchanged pages) · `backend/src/database/migrations/` (new `crawl_baselines` table keyed on `(projectId, pageUrl)`) · new `backend/src/database/repositories/crawlBaselineRepo.js` (no raw SQL in the pipeline module per AGENT.md) · `backend/src/routes/runs.js` (expose `changedPages[]` on the run response + SSE event) · `backend/tests/crawl-diff.test.js` (first-crawl baseline creation, unchanged-page skip, changed-page regen, added/removed-page handling, empty-baseline fallback)
-
-**Acceptance criteria:**
-- First crawl of a new project behaves identically to today (no baseline to diff against → full crawl + generate).
-- Second crawl with no changes emits zero generation calls and completes as `completed_empty` with a `changedPages: []` annotation — no regressed tests, no wasted LLM quota.
-- Second crawl with a modified page regenerates tests only for that URL; untouched pages' approved tests survive unchanged.
-- Pages removed from the site are surfaced in the run response so reviewers can decide whether to soft-delete their tests.
-
-### Scope 2 — AUTO-015 — Continuous test discovery on deployment events
-
-> **Why this scope ships in the same PR as AUTO-002:** AUTO-002 establishes the `changedPages[]` signal. AUTO-015 is the signal's first real consumer — when a Vercel / Netlify deployment webhook fires, the trigger endpoint should initiate a diff-aware crawl against the preview URL and generate tests only for newly-added pages. Without AUTO-015 in the same PR, AUTO-002's SSE event and API surface are validated only by unit tests; shipping them together exercises the full "deploy → detect → generate → review" loop end-to-end.
-
-Crawling is manually triggered today. An autonomous system should watch for deployment events (via webhook) and automatically re-crawl changed pages, generate new tests for new features, and flag removed pages — without any human action.
-
-Extend the CI/CD trigger endpoint to accept a `triggerCrawl: true` flag alongside `changedFiles[]`. When set, initiate a diff-aware crawl (AUTO-002) followed by test generation for changed pages only. Support Vercel (`X-Vercel-Signature`) and Netlify (`X-Netlify-Token`) deployment-event webhook payloads natively so users don't hand-roll signature verification.
-
-**Files:** `backend/src/routes/trigger.js` (add `triggerCrawl` parameter and `deployment.succeeded` event handlers — extract preview URL from the provider payload and use it as the crawl's base URL override) · `backend/src/crawler.js` (accept target URLs from the AUTO-002 diff so discovery is scoped to the deployment's changed pages, not the full site) · `backend/src/utils/webhookSignature.js` (new — shared HMAC / HMAC-SHA256 signature verification for Vercel + Netlify; reuse the pattern established by the existing GitHub trigger-token verifier, not a new signing scheme) · `frontend/src/components/automation/IntegrationSnippets.jsx` (add Vercel + Netlify deployment-webhook snippets alongside the existing GitHub Actions + GitLab CI examples; document the `[no-ui]`-opt-out is irrelevant here because the consumer surface IS a UI card) · `backend/.env.example` (document `VERCEL_WEBHOOK_SECRET`, `NETLIFY_WEBHOOK_SECRET`) · `backend/tests/deployment-triggers.test.js` (signature-verification happy path + tamper rejection for both providers; `triggerCrawl` end-to-end test that seeds a project baseline, POSTs a fake Vercel payload, and asserts only the changed pages are in the run's `changedPages[]`)
-
-**Acceptance criteria:**
-- Vercel deployment webhook with a valid signature + `deployment.succeeded` state triggers a diff-aware crawl against the preview URL; the resulting run carries `changedPages[]` scoped to that deployment.
-- Netlify webhook with a valid `X-Netlify-Token` does the same against the Netlify preview URL.
-- Tampered signatures (wrong secret, body modified) return 401 before any crawl work starts — no signal exposure on invalid inputs.
-- When `triggerCrawl: false` (or absent), the existing CI/CD trigger behaviour is unchanged — no regression for projects using the token-based trigger.
-- "Last deployment run" badge appears on the project header when a deployment-triggered run completed in the last 24h (reuses the existing `<GateBadge>` positioning).
-
-<!-- ── Original AUTO-003 / AUTO-003b spec body removed on promotion (PR #10 shipped both scopes); see ROADMAP.md § Completed Work Summary. ──
-
-> **Why this scope ships in the same PR as AUTO-003:** AUTO-003 ships the *mechanism* (auto-approve above threshold). This scope ships the *trust contract* — provenance, revoke, and audit surfaces. Splitting them risks the agent stopping at "auto-approval works" and skipping the UX that makes it safe to ship. Without this scope, the first bad auto-approval collapses trust in the whole system.
-
-Every approved test must answer three questions at a glance: **who** approved it (human vs `auto-approver`), **why** (reviewer judgment vs score X above threshold Y), and **can I revoke it** (one-click back to draft). All three must be scannable at table density — never hover-only.
-
-**Core principle — the single non-negotiable affordance:** a **Revoke to draft** button on every auto-approved test. Auto-approval is only trustworthy if it is reversible in one click. Every other element (badges, trays, timelines, calibration metrics) is decoration around that one affordance.
-
-#### Data model (combine into the AUTO-003 migration if AUTO-003 hasn't landed yet; otherwise new migration)
-
-```sql
-ALTER TABLE tests ADD COLUMN approvalSource TEXT;     -- 'human' | 'auto' | null
-ALTER TABLE tests ADD COLUMN approvalThreshold REAL;  -- threshold value at decision time
-ALTER TABLE tests ADD COLUMN approvedAt INTEGER;      -- epoch ms
-ALTER TABLE tests ADD COLUMN approvedBy TEXT;         -- userId or 'auto-approver'
-```
-
-**Critical:** persist `approvalThreshold` *at decision time*, not just a flag. If the threshold is later raised, the audit can flag historical approvals that would no longer pass.
-
-#### Backend
-
-- Migration adding the four provenance columns above.
-- `backend/src/pipeline/testPersistence.js` — populate provenance on the auto-approval path; write one `activities` row per auto-approval (`userName: "auto-approver"`, `meta: { score, threshold }`). No batching, no exceptions.
-- New `GET /api/v1/projects/:id/approval-stats` — returns counts (human / auto / draft) + 7-day revert rate for the project-settings calibration line.
-- New `POST /api/v1/tests/:id/revoke` — moves an approved test (auto or human) back to `draft`, writes an activity row, clears `approvedAt` / `approvedBy`. Register both routes in `backend/src/middleware/permissions.json`.
-
-#### Frontend
-
-- **`Tests.jsx`** — replace single "Approved" badge with a two-tone badge column: 🤖 `Auto · 0.91` (purple) vs 👤 `Human · alice` (green) vs 📝 `Draft · 0.62` (amber). Add ⚠ overlay on auto-approved rows whose first run failed (the calibration safety-net). Add filter pill row: `All | Human-approved | Auto-approved | Draft`. **Do not** merge auto + human under one green badge.
-- **`Tests.jsx` "Auto-approved" filter** — default sort: lowest confidence first; required column: first-run pass rate; bulk action: "Send back to draft for review".
-- **`ReviewQueue.jsx`** — render a "Last 24h auto-approvals" tray above the draft list when auto-approval is enabled. One-line strip with score chips so reviewers can spot-audit yesterday's auto-batch in 30 seconds.
-- **Test header (likely `RunDetail.jsx` or `TestDetail.jsx`)** — full provenance line + **Revoke to draft** button. Auto: `🤖 Auto-approved · score 0.91 · threshold 0.85 · 2h ago · [Revoke to draft]`. Human: `👤 Approved by @alice · 1d ago · [Revoke to draft]`.
-- **`ProjectDetail.jsx`** — header aggregate: `24 tests · 18 human · 6 auto · 0 drafts`. Do **not** clutter per-run rows.
-- **`Sidebar.jsx`** — second badge alongside draft count: `[3 drafts] [🤖 12 auto today]`. Hiding auto activity from the sidebar makes the system feel idle when it's working.
-- **Project Settings (`ProjectQualityCard` or wherever `autoApproveThreshold` lives post-PR #6)** — show inline calibration line under the threshold input: `Last 7 days: 42 auto-approved, 3 reverted by humans (7%).` Heuristic: <5% → threshold may be too high; 5–10% → healthy; >10% → tighten. First-time enablement guard: one-time modal showing "last 30 generated tests would have been auto-approved at this threshold — sample these before enabling."
-- **Approvals timeline (per project)** — daily groups: `🤖 12 auto-approved (avg score 0.89)` / `👤 @alice approved 3, rejected 1`. Click a batch → expanded list with per-test score, threshold-at-time, and per-test revoke action. Compliance bar: "who approved this test?" must be one click away six months later.
-
-**Files:** new migration `0NN_test_approval_provenance.sql` · `backend/src/pipeline/testPersistence.js` · new `backend/src/routes/approvalStats.js` (or extend `routes/projects.js`) · `backend/src/routes/tests.js` (revoke endpoint) · `backend/src/middleware/permissions.json` · `frontend/src/api.js` (`getApprovalStats`, `revokeApproval`) · `frontend/src/pages/Tests.jsx` · `frontend/src/pages/ReviewQueue.jsx` · `frontend/src/pages/ProjectDetail.jsx` · `frontend/src/components/layout/Sidebar.jsx` · `frontend/src/pages/RunDetail.jsx` (or `TestDetail.jsx`) · `frontend/src/components/automation/ProjectQualityCard.jsx` (calibration line + first-time-enable modal) · new `frontend/src/pages/ApprovalsTimeline.jsx` · `backend/tests/auto-approval.test.js` (extend) · `frontend/tests/approval-provenance.test.jsx`
-
-**Acceptance criteria:**
-- Every auto-approval writes an `activities` row with `userName: "auto-approver"`, score, and threshold-at-time.
-- The four provenance columns are populated on every approval (auto and human); `approvalThreshold` reflects the value *at decision time*, not the current project setting.
-- `Tests.jsx` visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft in the table without hover.
-- Auto-approved tests with a failed first run surface a ⚠ icon in `Tests.jsx` and the auto-approved filter view.
-- `POST /tests/:id/revoke` returns the test to `draft` for both auto- and human-approved tests, and writes an activity row.
-- Sidebar shows `🤖 N auto today` alongside the draft count when N > 0.
-- First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting the setting.
-
-**Anti-patterns to reject in review:** merging auto + human under one "Approved" badge · provenance only on hover · silent first-enable with no preview · skipping the activity row · shipping without the Revoke button · hiding the auto-count from the sidebar.
-
-
-### PR checklist
-
-- [ ] **Both scopes shipped in one PR — do not split**
-- [ ] AUTO-003: `tests.confidenceScore` column populated from the existing `deduplicator.js` quality score; new `projects.autoApproveThreshold` column (nullable, default `null`)
-- [ ] AUTO-003: With `autoApproveThreshold: null` (default), all tests are still persisted as `draft` — zero behaviour change for existing projects
-- [ ] AUTO-003: Tests above the threshold are persisted as `approved`, and an `activities` row is written with `userName: "auto-approver"`
-- [ ] AUTO-003: `Tests.jsx` exposes an "Auto-approved" filter pill so reviewers can audit the bypass path
-- [ ] AUTO-003b: Migration adds `approvalSource` / `approvalThreshold` / `approvedAt` / `approvedBy` columns to `tests`; `approvalThreshold` is captured *at decision time*, not the current project setting
-- [ ] AUTO-003b: `Tests.jsx` table visually distinguishes 🤖 Auto / 👤 Human / 📝 Draft without hover (two-tone badge column)
-- [ ] AUTO-003b: Test header surfaces full provenance line + **Revoke to draft** button on every approved test (auto and human)
-- [ ] AUTO-003b: New `POST /api/v1/tests/:id/revoke` and `GET /api/v1/projects/:id/approval-stats` routes registered in `backend/src/middleware/permissions.json`
-- [ ] AUTO-003b: Sidebar shows `🤖 N auto today` alongside the draft count when N > 0
-- [ ] AUTO-003b: First-time threshold enablement shows the "would-have-been-approved" preview modal before persisting
-- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]` (one entry per scope, grouped under appropriate Keep-a-Changelog sections)
-- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)
-
-End AUTO-003 / AUTO-003b archived spec ── -->
-
-### PR checklist (AUTO-002 + AUTO-015)
-
-- [ ] **Both scopes shipped in one PR — do not split**
-- [ ] AUTO-002: Migration `0NN_crawl_baselines.sql` adds `crawl_baselines (projectId, pageUrl, fingerprint, capturedAt)` keyed on `(projectId, pageUrl)`
-- [ ] AUTO-002: New `backend/src/pipeline/crawlDiff.js` reuses `stateFingerprint.js` hashing — no new fingerprint scheme
-- [ ] AUTO-002: First crawl of a new project: zero baseline rows, full crawl + generate (zero behaviour change)
-- [ ] AUTO-002: Second crawl with no changes: zero generation calls, `changedPages: []`, status `completed_empty`
-- [ ] AUTO-002: Second crawl with a modified page: only that URL is regenerated; approved tests on untouched pages survive
-- [ ] AUTO-002: Removed pages are surfaced in the run response so reviewers can soft-delete tests intentionally
-- [ ] AUTO-002: `pages_changed` SSE event wired into the Test Lab live view (replaces the generic progress bar)
-- [ ] AUTO-002: `backend/tests/crawl-diff.test.js` covers first-crawl, unchanged-skip, changed-regen, added/removed pages, empty-baseline fallback
-- [ ] AUTO-015: `POST /api/v1/projects/:id/trigger` accepts `triggerCrawl: true` and optional `previewUrl`; when set, initiates an AUTO-002 diff-aware crawl before generation
-- [ ] AUTO-015: Vercel webhook handler verifies `X-Vercel-Signature` (HMAC-SHA1 over the raw body with `VERCEL_WEBHOOK_SECRET`) and extracts the preview URL from `deployment.url`
-- [ ] AUTO-015: Netlify webhook handler verifies `X-Netlify-Token` (HMAC-SHA256 with `NETLIFY_WEBHOOK_SECRET`) and extracts the preview URL from `deploy_ssl_url` / `deploy_url`
-- [ ] AUTO-015: Tampered / missing signatures return `401` **before** any crawl or generation work starts — no timing side-channel on invalid inputs
-- [ ] AUTO-015: With `triggerCrawl: false` (or absent), the existing CI/CD trigger flow is byte-identical to today — no regression for token-based triggers
-- [ ] AUTO-015: `backend/tests/deployment-triggers.test.js` covers signature happy-path, tamper rejection (both providers), and an end-to-end `triggerCrawl` test that asserts `changedPages[]` scopes to the deployment
-- [ ] AUTO-015: Integration Snippets UI card ships with copy-pasteable Vercel + Netlify webhook payloads alongside the existing GitHub / GitLab examples
-- [ ] AUTO-015: `backend/.env.example` documents `VERCEL_WEBHOOK_SECRET` + `NETLIFY_WEBHOOK_SECRET` (off by default — setting them opts the project into webhook triggers)
-- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]` (one entry per scope, grouped under appropriate Keep-a-Changelog sections)
-- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)
-
----
-
-## ⏭ Queue (next 3 PRs after current)
-
-### 1 · AI-001 — Generic OpenAI-compatible provider adapter (BYO endpoint)
 **Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none | **Source:** Operator feedback — "support DeepSeek / Groq / Together / Fireworks / OpenRouter / Mistral / Azure OpenAI / xAI Grok / vLLM / LM Studio / LocalAI without hard-coding an SDK per vendor"
+
+> AUTO-002 + AUTO-015 ✅ shipped in PR #12 (diff-aware crawling primitive, Vercel/Netlify deployment webhooks with HMAC verification, shared `runDiffAwareBaseline` helper covering link-crawl AND state-explorer modes via composite-key baselines, `crawl.start.deployment` activity marker + "Last deployment run" badge on project header, `pages_changed` SSE wired into Test Lab live view, migration 019 + 020, full test coverage including end-to-end webhook happy-path). AI-001 is unblocked by none of AUTO-002 / AUTO-015 / AUTO-003 and can ship standalone; promoting it here per operator feedback pressure ahead of AUTO-001 which depends on AUTO-002's now-available `changedPages[]` signal.
 
 Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`, (2) a new branch in `callProvider()` at `backend/src/aiProvider.js:813`, and (3) wiring through `CLOUD_KEY_MAP` / `CLOUD_DEFAULT_MODELS` / `PROVIDER_DOCS`. This blocks every "support DeepSeek" / "support Groq" / "support OpenRouter" request behind a code change. The industry has converged on the **OpenAI Chat Completions wire format** — DeepSeek, Groq, Together, Fireworks, OpenRouter, Mistral, xAI, Azure OpenAI, vLLM, LM Studio, and LocalAI all expose `/v1/chat/completions` with the OpenAI request/response schema. Reuse the existing `openai` SDK with `new OpenAI({ apiKey, baseURL })` (the SDK's own supported pattern) and we get every one of them with **zero new dependencies**.
 
@@ -186,8 +50,22 @@ Adding each new AI vendor today requires (1) a new SDK in `backend/package.json`
 
 **Anti-patterns to reject in review:** adding a new SDK per vendor (defeats the point) · hand-rolling raw `fetch()` (loses streaming + retry semantics for nothing) · skipping SSRF validation on user-supplied baseUrl (Sentri runs server-side, this is a real security boundary) · letting compat slots bypass the FEA-003 circuit breaker (one bad endpoint shouldn't be exempt from rate-limit accounting) · merging compat into the existing `"openai"` branch instead of a separate type (makes "is this our OpenAI key or a compat slot" indistinguishable in logs/metrics).
 
-### 2 · AUTO-001 — Risk-based test selection / ordering
-**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-002 (item 1) provides the changed-pages signal that makes risk scoring meaningful | **Source:** `ROADMAP.md` Phase 4 (AUTO-001)
+### PR checklist (AI-001)
+
+- [ ] New `"openai_compatible"` provider type in `aiProvider.js`; existing Anthropic / Google / OpenAI / Ollama branches untouched
+- [ ] User-supplied `baseUrl` flows through `validateUrl()` SSRF guard before any request fires (private/loopback rejected unless `ALLOW_PRIVATE_URLS` set)
+- [ ] DeepSeek / Groq / Mistral / xAI / Azure configured via Settings produce working providers with zero code changes (mock SDK test covers the four shapes)
+- [ ] Compat providers participate in the FEA-003 fallback chain with per-slot circuit breaker accounting
+- [ ] `backend/tests/openai-compat-provider.test.js` registered in `backend/tests/run-tests.js`
+- [ ] Add entry to `docs/changelog.md` under `## [Unreleased]`
+- [ ] Frontend consumer ships in the same PR for every new backend route (PROC-001 no-orphan-routes guard)
+
+---
+
+## ⏭ Queue (next 3 PRs after current)
+
+### 1 · AUTO-001 — Risk-based test selection / ordering
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-002 (shipped in PR #12) provides the changed-pages signal that makes risk scoring meaningful | **Source:** `ROADMAP.md` Phase 4 (AUTO-001)
 
 Sentri runs every approved test on every trigger. An autonomous system should *order* tests by risk so the most likely-to-fail tests run first (fail-fast feedback) and budget-bounded runs cover the highest-signal slice. Risk inputs already present in the database: per-test historical pass rate (`runs.results[]`), recency of last edit (`tests.updatedAt`), self-heal frequency (CAP-004 telemetry), and — once AUTO-002 lands — whether the test's page changed since the last crawl. Compute a `riskScore` per test at run-planning time, sort the run queue by descending risk, and expose a `--budget=<minutes>` flag that truncates the queue when wall-clock exceeds budget (always-run smoke tests are pinned to the front regardless of score).
 
@@ -198,7 +76,7 @@ Sentri runs every approved test on every trigger. An autonomous system should *o
 - `budgetMinutes=10` truncates the queue at the 10-minute mark; pinned smoke tests still run even when truncated.
 - Default behaviour with no budget is identical to today (full queue, just reordered) — zero regression for existing schedules.
 
-### 3 · INT-002 — GitHub PR check comments
+### 2 · INT-002 — GitHub PR check comments
 **Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** none (uses existing GitHub App connection from CAP-003 / FEA secrets path) | **Source:** `ROADMAP.md` Phase 3 (INT-002)
 
 When a Sentri run triggered by a GitHub webhook completes, post a check-run comment on the PR summarising pass/fail counts, regressed tests (with diff vs the previous run on `main`), and Web Vitals budget violations. Today the run results live only in the Sentri UI — operators have to context-switch to see them. A native PR check makes Sentri feel like a first-class CI gate and unlocks the "block merge until tests pass" workflow that matters for AUTO-003 trust.
@@ -211,12 +89,26 @@ When a Sentri run triggered by a GitHub webhook completes, post a check-run comm
 - Web Vitals budget violations appear as a separate bullet so they don't get lost in the test-failure list.
 - The integration is opt-in per project; existing projects see no behaviour change until the toggle is flipped.
 
+### 3 · AUTO-004 — Test impact analysis from git diff
+**Effort:** M | **Priority:** 🟢 Differentiator | **Dependencies:** AUTO-002 (shipped in PR #12) — consumes the `changedPages[]` signal and extends it to file-level mapping | **Source:** `ROADMAP.md` Phase 4 (AUTO-004)
+
+Today Sentri runs every approved test on every CI trigger. With AUTO-002's baseline mechanism in place, the next step is mapping file-level git-diffs to affected tests: when a PR touches `src/checkout/CartPage.tsx`, only the tests whose crawl snapshots include elements from that component should run. This is the "smart subset" that makes Sentri viable on large suites where running the full regression on every push is prohibitive. The mapping is built by cross-referencing each test's `sourceUrl` + captured elements against the file paths extracted from the git diff (via GitHub's PR files API, already available on the webhook path), then unioning the file→URL mapping with AUTO-002's `changedPages[]` signal.
+
+**Files:** new `backend/src/pipeline/impactAnalysis.js` (git-diff → affected-test mapper, pure function: `{ changedFiles: string[], testsWithSnapshots: Test[] } → Test[]`) · `backend/src/routes/trigger.js` (accept `changedFiles[]` in the webhook payload, pass through to impact analysis, scope the run queue) · `backend/src/testRunner.js` (honour the scoped queue) · `frontend/src/pages/RunDetail.jsx` (new "Impact scope" panel showing which files drove the test selection) · `backend/tests/impact-analysis.test.js` (file→URL mapping correctness, empty-diff fallback, unknown-file graceful degradation)
+
+**Acceptance criteria:**
+- `changedFiles: ["src/checkout/CartPage.tsx"]` in the webhook payload scopes the run to tests whose snapshots touched `/checkout/*` URLs.
+- Empty `changedFiles` (or absent) falls back to current behaviour (full suite) — zero regression.
+- Unknown file paths (schema migrations, docs, config) produce an empty subset → run is marked `skipped_no_impact` rather than running the full suite.
+- The mapping merges with AUTO-002's `changedPages[]` — a page that's both DOM-changed AND file-affected is the strongest signal.
+
 ---
 
 ## ✅ Recently completed
 
 | ID | Title | PR |
 |----|-------|----|
+| AUTO-002 + AUTO-015 (bundled) | Change detection / diff-aware crawling (`crawl_baselines` table + `crawlBaselineRepo` with `mergeProjectBaselines` partial-crawl-safe upserts + `crawlDiff` primitive reusing `stateFingerprint.js`) + continuous test discovery on deployment events (Vercel `X-Vercel-Signature` HMAC-SHA1 + Netlify `X-Netlify-Token` HMAC-SHA256 webhooks, dual-auth via `requireTrigger` + signature, SSRF-guarded preview URL, `triggerCrawl: true` on POST /trigger). Shared `runDiffAwareBaseline(project, run, snapshots, mode)` helper handles **both** link-crawl and state-explorer modes — state mode uses composite keys (`url#fp=<fingerprint>`) so distinct states at the same URL (AUTO-002b) track as separate baseline rows. `pages_changed` SSE event wired into Test Lab live view via `useProjectRunMonitor` → `ActiveRunBanner` ("N pages changed → regenerating only those" replaces generic progress bar). Migration `019_crawl_baselines.sql` + migration `020_run_changed_pages.sql` (`runs.changedPages` + `runs.removedPages` JSON columns registered in `runRepo.JSON_FIELDS` + `INSERT_COLS`). `canonicalUrl` preservation on preview crawls prevents production-baseline corruption (`project.url` is overridden to `previewUrl` in `trigger.js` but `project.canonicalUrl` is set to the original, used by `sameOrigin` guard). `crawl.start.deployment` activity marker (AUTO-015b) + new `GET /api/v1/projects/:id/last-deployment-run` route powers the "Last deployment run" chip on `ProjectHeader.jsx` (24h window, navigates to run on click). `dialsConfig` honoured on `triggerCrawl` path + webhook-launched preview crawls. `req.rawBody` capture scoped to webhook routes only (avoids global Buffer copy). End-to-end happy-path test in `deployment-triggers.test.js` asserts webhook → run dispatch + activity marker; `crawl-diff.test.js` covers all 8 scenarios (added/changed/unchanged/removed, first-crawl fallback, null/undefined baseline, no-change, empty current crawl, state-mode composite keys, fingerprint stability); dedicated `crawl-baseline-repo.test.js` per REVIEW.md. AGENT.md gained new "Issue-handling rule" section codifying the "every finding produces an outcome (fix or ROADMAP entry), never a silent gap" norm. | #12 |
 | AUTO-003 + AUTO-003b (bundled) | Confidence scoring & auto-approval of low-risk tests + provenance / audit trail | #10 |
 | AUTO-017.3 + PROC-001 | Web Vitals trend charts on `ProjectQualityCard` (LCP / CLS / INP / TTFB) backed by per-run averages from `recordMetric()` in `backend/src/testRunner.js` via new `GET /api/v1/projects/:id/metrics` route + `useProjectMetricQuery` hook (fail-soft — transient API errors render an empty trend, not a banner); threshold lines sourced from `project.webVitalsBudgets`. **PROC-001:** new `.github/workflows/no-orphan-routes.yml` fails PRs that add a `router.<method>(…)` in `backend/src/routes/*.js` without touching `frontend/src/api.js` / pages / components; `[no-ui]` PR-title opt-out for genuinely UI-less endpoints. Convention documented in `REVIEW.md`, `AGENT.md`, `CONTRIBUTING.md`, and the PR template. New `backend/tests/web-vitals-trend.test.js` locks down that the recorded sample is the per-run average (not the budget); `backend/tests/quality-gates.test.js` extended with HTTP-level coverage for the new metrics route (400 / 404 / 200 + `limit` clamp). PROC-003 (sprint-promotion auto-prune) was reverted in PR #10 — the regex transforms had too many edge cases and the canonical hand-off is the manual checklist in `REVIEW.md § Sprint Tracker Hand-off`. | #9 |
 | CAP-003 | Secret scanner gate on AI-generated Playwright tests. New `backend/src/pipeline/secretScanner.js` runs a `gitleaks`-style scan inside the validate stage (`backend/src/pipeline/testValidator.js`); built-in detectors (AWS access key IDs, JWTs, `Bearer` tokens) plus best-effort `.github/.gitleaks.toml` reuse. Matched tests are rejected, annotated with a redacted finding list (first/last 4 chars only — never plaintext), and the run is flagged via `run.secretScanBlocked = true` in `pipelineOrchestrator.js` so CI consumers can fail the build on regression. Positive + negative fixtures (AWS keys / JWTs / `Bearer` tokens / clean code) in `backend/tests/secret-scanner.test.js`, registered in `backend/tests/run-tests.js`. | #12 |

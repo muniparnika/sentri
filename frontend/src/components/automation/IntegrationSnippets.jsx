@@ -78,6 +78,44 @@ function curlSnippet(projectId, apiBase) {
   "${apiBase}/api/projects/${projectId}/trigger"`.trim();
 }
 
+function vercelWebhookSnippet(projectId, apiBase) {
+  // The X-Vercel-Signature header is computed and added by Vercel automatically
+  // when the webhook is configured with a secret — users don't sign manually.
+  // The `type` field is required: the backend only fires a crawl on
+  // `deployment.ready` / `deployment.succeeded` / `readyState: "READY"` and
+  // acks 200 (ignored) for every other deployment lifecycle event.
+  return `POST ${apiBase}/api/projects/${projectId}/trigger/vercel
+Headers:
+  Authorization: Bearer <SENTRI_TRIGGER_TOKEN>
+  Content-Type: application/json
+  X-Vercel-Signature: <HMAC_SHA1_HEX_OF_RAW_BODY>   # added by Vercel automatically
+
+{
+  "type": "deployment.ready",
+  "deployment": {
+    "url": "my-app-git-main-yourteam.vercel.app",
+    "readyState": "READY"
+  }
+}`.trim();
+}
+
+function netlifyWebhookSnippet(projectId, apiBase) {
+  // X-Netlify-Token is computed and added by Netlify automatically when the
+  // outgoing webhook is configured with a secret — users don't sign manually.
+  // Only fires on `state: "ready"`; other states (building, error, …) ack
+  // 200 (ignored) without launching a run.
+  return `POST ${apiBase}/api/projects/${projectId}/trigger/netlify
+Headers:
+  Authorization: Bearer <SENTRI_TRIGGER_TOKEN>
+  Content-Type: application/json
+  X-Netlify-Token: <HMAC_SHA256_HEX_OF_RAW_BODY>   # added by Netlify automatically
+
+{
+  "state": "ready",
+  "deploy_ssl_url": "https://deploy-preview-42--my-site.netlify.app"
+}`.trim();
+}
+
 // ─── Snippet block ────────────────────────────────────────────────────────────
 
 function Snippet({ label, code }) {
@@ -145,6 +183,8 @@ export default function IntegrationSnippets({ projects, defaultProjectId }) {
             <Snippet label="GitHub Actions" code={ghActionsSnippet(selectedId, apiBase)} />
             <Snippet label="GitLab CI" code={gitlabSnippet(selectedId, apiBase)} />
             <Snippet label="cURL (direct)" code={curlSnippet(selectedId, apiBase)} />
+            <Snippet label="Vercel webhook payload" code={vercelWebhookSnippet(selectedId, apiBase)} />
+            <Snippet label="Netlify webhook payload" code={netlifyWebhookSnippet(selectedId, apiBase)} />
           </div>
 
           {/* How it works */}

@@ -221,6 +221,7 @@
     "GET /api/v1/projects/:id/quality-gates",
     "GET /api/v1/projects/:id/web-vitals-budgets",
     "GET /api/v1/projects/:id/metrics",
+    "GET /api/v1/projects/:id/last-deployment-run",
     "GET /api/v1/tests/:testId",
     "GET /api/v1/tests/counts",
     "GET /api/v1/recycle-bin",

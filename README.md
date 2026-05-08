@@ -88,6 +88,8 @@ Most AI test generators stop at code generation. Sentri treats generation as ste
 - Flaky test detection with 0–100 scoring based on run history
 - Scheduled runs with timezone support
 - CI/CD webhook trigger with per-project Bearer tokens
+- Diff-aware crawling — only regenerates tests for pages whose DOM fingerprint changed since the last crawl; zero LLM calls when nothing changed
+- Vercel + Netlify deployment webhooks — HMAC-signed payloads auto-launch a diff-aware crawl against the preview URL when a deployment is READY
 - Failure notifications via Microsoft Teams, email, and generic webhook
 - Workspace isolation and role-based access control (Admin / QA Lead / Viewer)
 - GDPR/CCPA account export and cascade deletion

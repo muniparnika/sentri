@@ -33,6 +33,7 @@ const JSON_FIELDS = [
   "tests", "results", "testQueue", "generateInput",
   "promptAudit", "pipelineStats", "feedbackLoop", "videoSegments",
   "qualityAnalytics", "pages", "gateResult", "webVitalsResult",
+  "changedPages", "removedPages", // AUTO-002: diff-aware crawl page-change summary
 ];
 
 function rowToRun(row) {
@@ -84,6 +85,7 @@ const INSERT_COLS = [
   "gateResult", // AUTO-012: quality gate pass/fail summary
   "webVitalsResult", // AUTO-017: web vitals budget pass/fail summary
   "secretScanBlocked", // CAP-003: set when post-generation secret scanner rejects any test (migration 015)
+  "changedPages", "removedPages", // AUTO-002: diff-aware crawl page-change summary (migration 020)
 ];
 
 const INSERT_SQL = `INSERT INTO runs (${INSERT_COLS.join(", ")})

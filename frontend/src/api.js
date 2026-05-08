@@ -304,6 +304,11 @@ export const api = {
    * @returns {Promise<{human: number, auto: number, draft: number, total: number}>}
    */
   getApprovalStats: (projectId) => req("GET", `/projects/${projectId}/approval-stats`),
+
+  // AUTO-015b: most-recent deployment-triggered run for this project within
+  // the last 24h. Powers the "Last deployment run" badge on the project
+  // header. Returns `{ run: null }` when there's no qualifying activity.
+  getLastDeploymentRun: (projectId) => req("GET", `/projects/${projectId}/last-deployment-run`),
   /**
    * Bulk update tests.
    * @param {string}   projectId

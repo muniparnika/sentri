@@ -78,6 +78,9 @@ const files = [
   "tests/web-vitals-trend.test.js",
   "tests/auto-approval.test.js",
   "tests/auto-approval-routes.test.js",
+  "tests/crawl-diff.test.js",
+  "tests/crawl-baseline-repo.test.js",
+  "tests/deployment-triggers.test.js",
   "tests/pr11-fixes.test.js",
 ];
 

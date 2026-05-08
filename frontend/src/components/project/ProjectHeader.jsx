@@ -12,7 +12,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Play, RefreshCw, Globe, Sparkles, ArrowRight, Zap, Clock,
+  Play, RefreshCw, Globe, Sparkles, ArrowRight, Zap, Clock, Rocket,
 } from "lucide-react";
 import { PARALLEL_WORKERS_TUNING } from "../../config/testDialsConfig.js";
 import { api } from "../../api.js";
@@ -68,6 +68,19 @@ export default function ProjectHeader({
     return () => { cancelled = true; };
   }, [projectId]);
 
+  // AUTO-015b: "Last deployment run" badge (NEXT.md:69). Fetches the most
+  // recent deployment-triggered crawl in the last 24h; badge is hidden when
+  // there's nothing to show. Fail-soft: a backend error just hides the chip.
+  const [lastDeploymentRun, setLastDeploymentRun] = useState(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api.getLastDeploymentRun(projectId)
+      .then((resp) => { if (!cancelled) setLastDeploymentRun(resp?.run || null); })
+      .catch(() => { /* non-fatal — badge just won't render */ });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
   return (
     <div className="card pd-header">
       <div className="pd-header-top">
@@ -107,6 +120,28 @@ export default function ProjectHeader({
                 <Clock size={11} />
                 {fmtFutureRelative(nextRunAt)}
               </span>
+            )}
+            {/* AUTO-015b: "Last deployment run" badge — only renders when a
+                webhook-triggered crawl completed in the last 24h. Click to
+                navigate to the run for diff inspection. */}
+            {lastDeploymentRun && (
+              <button
+                type="button"
+                onClick={() => navigate(`/runs/${lastDeploymentRun.id}`)}
+                title={`${lastDeploymentRun.provider || "deployment"} preview crawl${lastDeploymentRun.status === "running" ? " (in progress)" : ""} — ${lastDeploymentRun.previewUrl || ""}`}
+                className="btn btn-ghost btn-xs"
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  fontSize: "0.75rem",
+                  color: lastDeploymentRun.status === "failed" ? "var(--red)" : "var(--accent)",
+                  borderColor: lastDeploymentRun.status === "failed" ? "var(--red)" : "var(--accent)",
+                }}
+              >
+                <Rocket size={11} />
+                {lastDeploymentRun.status === "running"
+                  ? "Deployment crawl in progress"
+                  : `Last ${lastDeploymentRun.provider || "deployment"} run · ${lastDeploymentRun.changedPages?.length || 0} changed`}
+              </button>
             )}
             <button
               className="btn btn-ghost btn-sm"
