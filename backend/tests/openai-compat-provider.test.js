@@ -254,9 +254,17 @@ test('compat slot: per-call SSRF guard rejects loopback baseUrl after save (DNS-
   });
 
   ai.setActiveProvider('compat:rebind');
+  // The OpenAI SDK wraps fetch errors as APIConnectionError("Connection error.")
+  // and preserves the original Error in `err.cause`, so we walk the cause chain
+  // to find our SSRF rejection rather than matching only the top-level message.
   await assert.rejects(
     ai.generateText('hello', { responseFormat: 'text' }),
-    /SSRF guard rejected|private|reserved/i,
+    (err) => {
+      for (let e = err; e; e = e.cause) {
+        if (/SSRF guard rejected|private|reserved/i.test(e.message || '')) return true;
+      }
+      throw new Error(`per-call SSRF guard did not block loopback baseUrl; got: ${err?.message} cause=${err?.cause?.message}`);
+    },
     'per-call SSRF guard must block loopback baseUrl at request time',
   );
 });
