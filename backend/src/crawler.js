@@ -550,18 +550,34 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
 
     throwIfAborted(signal);
 
-    // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
-    ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
-      await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
+    // ── No-change short-circuit: skip filter/classify/journey/generation ─
+    // Mirrors the state-mode branch above (see `if (run.noChangesDetected)`
+    // around line 442). When the diff reported zero changes, `snapshots` is
+    // empty — running filter/classify/journey detection on empty inputs is
+    // wasted work AND `journey` ends up undefined which `generateAllTests`
+    // happily processes (no LLM cost, but `journeys.length` access at the
+    // structuredLog call later would crash). Short-circuit to empty arrays
+    // and let the finalize block route to `completed_empty` with the
+    // "no page changes since baseline" message.
+    if (run.noChangesDetected) {
+      filteredSnapshots = [];
+      classifiedPages = [];
+      classifiedPagesByUrl = {};
+      journeys = [];
+    } else {
+      // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
+      ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
+        await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
 
-    // Journey detection — pass snapshotsByUrl so link-graph analysis can discover
-    // cross-intent journeys (e.g. pricing → signup → dashboard)
-    journeys = buildUserJourneys(classifiedPages, snapshotsByUrl);
-    if (journeys.length > 0) {
-      log(run, `🗺️  Detected ${journeys.length} user journey(s):`);
-      for (const j of journeys) {
-        const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
-        log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+      // Journey detection — pass snapshotsByUrl so link-graph analysis can discover
+      // cross-intent journeys (e.g. pricing → signup → dashboard)
+      journeys = buildUserJourneys(classifiedPages, snapshotsByUrl);
+      if (journeys.length > 0) {
+        log(run, `🗺️  Detected ${journeys.length} user journey(s):`);
+        for (const j of journeys) {
+          const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
+          log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+        }
       }
     }
   }
