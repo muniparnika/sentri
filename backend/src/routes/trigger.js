@@ -65,6 +65,73 @@ const router = Router();
 // It sets req.triggerToken and req.triggerProject on success, with
 // detailed error messages (401/403/404) on failure.
 
+// ─── Canonical run-object builders ────────────────────────────────────────────
+// Two paths in this file create a `crawl`-type run (POST /trigger with
+// `triggerCrawl: true`, and the Vercel/Netlify webhook handlers via
+// `launchPreviewCrawl`). Two paths used to construct that same conceptual
+// object with different field sets — both worked because `runRepo.create`
+// binds missing INSERT_COLS as NULL and `rowToRun` defaults them on read,
+// but the drift made it easy to introduce subtle behaviour differences
+// (e.g. `tests: []` was missing from one path until a TypeError caught it,
+// see PR #12 history). One builder per run type, used by every caller.
+//
+// Shapes mirror the canonical entries in `routes/runs.js`:
+//   - buildCrawlRun → matches runs.js:71-83 (POST /projects/:id/crawl)
+//   - buildTestRun  → matches runs.js:161-179 (POST /projects/:id/run)
+
+/**
+ * Build a `type: "crawl"` run object aligned with `routes/runs.js:71-83`.
+ *
+ * @param {object} args
+ * @param {string} args.runId
+ * @param {object} args.project - must carry `id` and (optionally) `workspaceId`.
+ * @returns {object} the run record ready for `runRepo.create()`.
+ */
+function buildCrawlRun({ runId, project }) {
+  return {
+    id: runId,
+    projectId: project.id,
+    type: "crawl",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    logs: [],
+    // tests[] is required by persistGeneratedTests (testPersistence.js)
+    // which calls `run.tests.push(testId)` during the crawl pipeline.
+    tests: [],
+    pagesFound: 0,
+    workspaceId: project.workspaceId || null,
+  };
+}
+
+/**
+ * Build a `type: "test_run"` run object aligned with `routes/runs.js:161-179`.
+ *
+ * @param {object} args
+ * @param {string} args.runId
+ * @param {object} args.project - must carry `id` and (optionally) `workspaceId`.
+ * @param {Array<{id: string, name: string, steps?: any[]}>} args.tests
+ *   The approved tests this run will execute.
+ * @param {number} args.parallelWorkers
+ * @returns {object} the run record ready for `runRepo.create()`.
+ */
+function buildTestRun({ runId, project, tests, parallelWorkers }) {
+  return {
+    id: runId,
+    projectId: project.id,
+    type: "test_run",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    logs: [],
+    results: [],
+    passed: 0,
+    failed: 0,
+    total: tests.length,
+    parallelWorkers,
+    testQueue: tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
+    workspaceId: project.workspaceId || null,
+  };
+}
+
 /**
  * POST /api/projects/:id/trigger
  * Token-authenticated endpoint for CI/CD pipelines (ENH-011).
@@ -171,27 +238,13 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   }
 
   // ── 6. Create and start the run ──────────────────────────────────────
+  // One canonical builder per run type. Both shapes match the equivalents
+  // in `routes/runs.js` so test_run / crawl runs created via this endpoint
+  // are byte-identical to the ones POST /run and POST /crawl produce.
   const runId = generateRunId();
-  const run = {
-    id: runId,
-    projectId: project.id,
-    type: triggerCrawl ? "crawl" : "test_run",
-    status: "running",
-    startedAt: new Date().toISOString(),
-    logs: [],
-    results: [],
-    passed: 0,
-    failed: 0,
-    total: triggerCrawl ? 0 : tests.length,
-    parallelWorkers,
-    // tests[] is required by persistGeneratedTests (testPersistence.js)
-    // which calls run.tests.push(testId) when triggerCrawl runs the
-    // crawlAndGenerateTests path. Without this, the crawl crashes at
-    // the persistence step with "Cannot read properties of undefined".
-    tests: [],
-    testQueue: triggerCrawl ? [] : tests.map((t) => ({ id: t.id, name: t.name, steps: t.steps || [] })),
-    workspaceId: project.workspaceId || null,
-  };
+  const run = triggerCrawl
+    ? buildCrawlRun({ runId, project })
+    : buildTestRun({ runId, project, tests, parallelWorkers });
   runRepo.create(run);
 
   // Record that this token was used (updates lastUsedAt)
@@ -377,17 +430,9 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dia
   }
 
   const runId = generateRunId();
-  const run = {
-    id: runId,
-    projectId: project.id,
-    type: "crawl",
-    status: "running",
-    startedAt: new Date().toISOString(),
-    logs: [],
-    tests: [],
-    pagesFound: 0,
-    workspaceId: project.workspaceId || null,
-  };
+  // Same canonical shape as POST /trigger's crawl branch and runs.js's
+  // POST /crawl — see buildCrawlRun JSDoc above.
+  const run = buildCrawlRun({ runId, project });
   runRepo.create(run);
 
   if (tokenRow) webhookTokenRepo.touch(tokenRow.id);
