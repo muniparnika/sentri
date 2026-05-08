@@ -742,6 +742,35 @@ _(automated: see `tests/e2e/specs/ui-smoke.spec.mjs` for login negative path + v
 4. Optional `callbackUrl` → callback hits the URL on completion with run status.
 5. Revoke token via `DELETE /api/projects/:id/trigger-tokens/:tid` → subsequent trigger calls return 401.
 
+**Diff-aware CI crawl — `triggerCrawl: true`** (AUTO-002 + AUTO-015, PR #12, `backend/src/routes/trigger.js`):
+6. `POST /api/v1/projects/:id/trigger` with body `{ "triggerCrawl": true, "previewUrl": "https://your-preview.example.com" }` + valid Bearer token → returns **202** with `{ runId, statusUrl }`; the dispatched run has `type: "crawl"` (not `test_run`), and the `crawl.start` activity row reads `CI/CD triggered crawl — <previewUrl>`. Without `triggerCrawl`, the endpoint still runs the existing approved-tests flow (zero regression).
+7. **No-change short-circuit** — trigger a crawl twice against an unchanged site → second run ends as `completed_empty` with `run.noChangesDetected = true`, a `🟰 No page changes detected` log line, and zero LLM calls. Verify `run.changedPages` is `[]` and `run.removedPages` is `[]`.
+8. **Diff-scoped regeneration** — modify one page, re-crawl → only that URL appears in `run.changedPages`; untouched pages' approved tests remain untouched; pipeline summary log reads `Pages: 10 (3 changed → generated)` when the diff narrows generation scope.
+9. **Removed pages surfaced** — delete a page from the site, re-crawl → its URL appears in `run.removedPages`; baseline row dropped so it is not re-reported on subsequent crawls.
+10. **SSRF guard on previewUrl** — `POST /trigger` with `previewUrl: "http://169.254.169.254/latest/meta-data/"` or any RFC1918 address → 400 with the SSRF error (same validator as `callbackUrl`).
+
+**Deployment webhooks — Vercel + Netlify** (AUTO-015, PR #12):
+11. Set `VERCEL_WEBHOOK_SECRET` / `NETLIFY_WEBHOOK_SECRET` in `backend/.env` (see `docs/guide/env-vars.md` § Deployment Webhooks).
+12. Configure Vercel to POST to `/api/v1/projects/:id/trigger/vercel` with an `Authorization: Bearer <trigger-token>` header (dual-auth: HMAC signature + project-scoped Bearer). The Snippets tab on `/automation` renders a copy-pasteable payload template including both headers.
+13. Trigger a deployment → when Vercel fires `type: "deployment.ready"` (or `deployment.readyState: "READY"`) → backend returns **202** with `{ ok: true, provider: "vercel", runId, previewUrl }`; a `crawl.start.deployment` activity row is logged with `meta: { provider, previewUrl, runId }`; a diff-aware crawl against the preview URL launches.
+14. **Non-ready events ignored** — Vercel webhooks for `deployment.created` / `deployment.canceled` / `deployment.error` / `readyState: "BUILDING"` return **200** with `{ ignored: true, reason: "deployment not ready" }` and do NOT launch a run.
+15. **Netlify** — same dual-auth with `X-Netlify-Token` (HMAC-SHA256); payload uses `deploy_ssl_url` or `deploy_url`.
+16. **Tampered signature** — POST the correct payload with an invalid `X-Vercel-Signature` / `X-Netlify-Token` → **401 "invalid signature"** before any crawl work starts.
+17. **Missing / bogus Bearer token** — valid HMAC but no `Authorization` header, or a revoked token → **401** from `requireTrigger` BEFORE the HMAC check (dual-auth enforced in order).
+18. **Production baselines preserved on preview crawls** — the crawl against the preview URL must NOT overwrite the project's production baselines. Verify by running a production crawl, then a preview crawl, then another production crawl → the final production crawl should report `0 changed, 0 removed` (baselines intact).
+
+**Last deployment run badge** (AUTO-015b, `frontend/src/components/project/ProjectHeader.jsx`):
+19. After a deployment-triggered crawl completes, open the project's detail page → a **🚀 Last `<provider>` run · N changed** chip renders in the header. Click → navigates to `/runs/:runId`.
+20. Badge only renders when a `crawl.start.deployment` activity row exists within the last 24h (`GET /api/v1/projects/:id/last-deployment-run` returns `{ run: null }` otherwise).
+21. If the run failed, the chip tints red and the text reads `Last <provider> run · N changed` with a failed-state color. Hover tooltip shows the provider + preview URL.
+22. While the run is in flight, the chip reads **"Deployment crawl in progress"** in accent color.
+23. The endpoint is allowed for any authenticated workspace member (`backend/src/middleware/permissions.json` — `anyAuthenticatedMember` list). Outsiders hitting the URL directly → 404.
+
+**Diff-aware live view — `pages_changed` SSE** (AUTO-002, `frontend/src/components/project/ActiveRunBanner.jsx` via `useProjectRunMonitor`):
+24. Launch a crawl on a project with an existing baseline → the Test Lab live banner reads **"N pages changed → regenerating only those"** instead of the generic "Run in progress…", with a sub-line `N changed · M removed · K unchanged · live via SSE`.
+25. Launch a crawl on an unchanged site → banner reads **"No page changes since last crawl — skipping generation"**.
+26. First-ever crawl on a new project (no baseline yet) → banner falls back to the generic "Run in progress…" (no diff to report).
+
 **Scheduled runs** (`docs/changelog.md` ENH-006):
 1. Open `ScheduleManager` for a project → set a 5-field cron expression + IANA timezone via preset picker (hourly/daily/weekly).
 2. `PATCH /api/projects/:id/schedule` → server validates cron; invalid expression rejected (try `* * *` → 400).
