@@ -85,9 +85,14 @@ const router = Router();
  * @param {object} args
  * @param {string} args.runId
  * @param {object} args.project - must carry `id` and (optionally) `workspaceId`.
+ * @param {object} [args.dialsConfig] - validated dials (output of
+ *   `resolveDialsConfig(...)`). When present, persisted on the run record
+ *   as `generateInput: { dialsConfig }` so the RunDetail page can show
+ *   which dials drove the crawl and the MNT-010 re-run feature can
+ *   replicate the same configuration. Mirrors `runs.js:81`.
  * @returns {object} the run record ready for `runRepo.create()`.
  */
-function buildCrawlRun({ runId, project }) {
+function buildCrawlRun({ runId, project, dialsConfig }) {
   return {
     id: runId,
     projectId: project.id,
@@ -99,6 +104,10 @@ function buildCrawlRun({ runId, project }) {
     // which calls `run.tests.push(testId)` during the crawl pipeline.
     tests: [],
     pagesFound: 0,
+    // Mirror runs.js:81 so RunDetail + re-run can read back the dials.
+    // `undefined` (rather than `null`) so runRepo's INSERT_COLS filter drops
+    // the column entirely on no-dials calls — matches the canonical path.
+    generateInput: dialsConfig ? { dialsConfig } : undefined,
     workspaceId: project.workspaceId || null,
   };
 }
@@ -243,7 +252,7 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   // are byte-identical to the ones POST /run and POST /crawl produce.
   const runId = generateRunId();
   const run = triggerCrawl
-    ? buildCrawlRun({ runId, project })
+    ? buildCrawlRun({ runId, project, dialsConfig: validatedDials })
     : buildTestRun({ runId, project, tests, parallelWorkers });
   runRepo.create(run);
 
@@ -431,8 +440,10 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dia
 
   const runId = generateRunId();
   // Same canonical shape as POST /trigger's crawl branch and runs.js's
-  // POST /crawl — see buildCrawlRun JSDoc above.
-  const run = buildCrawlRun({ runId, project });
+  // POST /crawl — see buildCrawlRun JSDoc above. `validatedDials` is
+  // forwarded so the run record carries `generateInput: { dialsConfig }`
+  // exactly like manually-triggered crawls.
+  const run = buildCrawlRun({ runId, project, dialsConfig: validatedDials });
   runRepo.create(run);
 
   if (tokenRow) webhookTokenRepo.touch(tokenRow.id);
