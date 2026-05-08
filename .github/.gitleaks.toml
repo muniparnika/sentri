@@ -20,6 +20,14 @@ useDefault = true
 # .env.example dummy values, test fixtures).
 
 [allowlist]
+# Synthetic test fixtures for AI-001 compat-provider tests — not real secrets.
+# Listed by historical fingerprints because gitleaks scans the full PR commit
+# range, so inline `gitleaks:allow` on the tip commit doesn't suppress earlier
+# commits that introduced the same lines.
+stopwords = [
+  "test-fixture-key-a",
+  "test-fixture-key-b",
+]
   description = "CI placeholders and .env.example dummy values"
 
   # Allow the literal placeholder key used in CI smoke tests.
