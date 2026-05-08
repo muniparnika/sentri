@@ -1225,7 +1225,7 @@ export default function Settings() {
             {OPENAI_COMPAT_HINTS.map((url) => <option key={url} value={url} />)}
           </datalist>
           <input className="input" placeholder="Model" value={compatForm.model} onChange={(e) => setCompatForm((s) => ({ ...s, model: e.target.value }))} />
-          <input className="input" placeholder="API key" value={compatForm.apiKey} onChange={(e) => setCompatForm((s) => ({ ...s, apiKey: e.target.value }))} />
+          <input className="input" type="password" autoComplete="off" placeholder="API key" value={compatForm.apiKey} onChange={(e) => setCompatForm((s) => ({ ...s, apiKey: e.target.value }))} />
           {compatError && <div className="text-sm" style={{ color: "var(--red)" }}>{compatError}</div>}
           <button className="btn btn-primary btn-sm" disabled={compatSaving}>{compatSaving ? "Saving..." : "Save compat provider"}</button>
         </form>

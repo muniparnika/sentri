@@ -176,6 +176,14 @@ router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
   if (!validProviders.includes(provider) && !isCompat) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
+  // Defense-in-depth: mirror the POST route's slot-id validation so direct API
+  // callers can't smuggle exotic characters through the DELETE path either.
+  if (isCompat) {
+    const slotId = provider.slice("compat:".length);
+    if (!/^[a-z0-9_-]+$/.test(slotId)) {
+      return res.status(400).json({ error: "compat slot id must match /^[a-z0-9_-]+$/" });
+    }
+  }
 
   // Capture the active provider BEFORE removing the key/config, because
   // getProvider() checks the runtimeActiveProvider override first.
