@@ -154,7 +154,10 @@ export default function ProviderBadge({ style }) {
     );
   }
 
-  const c      = PROVIDER_STYLES[config.provider] || PROVIDER_STYLES.openai;
+  // Compat slots have no entry in PROVIDER_STYLES — fall back to compatStyle()
+  // so the badge trigger uses the same per-slot palette color as the dropdown
+  // rows (avoids a green/correct-color visual mismatch).
+  const c      = PROVIDER_STYLES[config.provider] || compatStyle(config.provider || "");
   const saved  = getSavedProviders(settings);
   const compatIds = getCompatIds(settings);
   const allSwitchable = [...ALL_IDS, ...compatIds];
