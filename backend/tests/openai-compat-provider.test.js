@@ -147,13 +147,15 @@ test('compat slots: baseURL is honored and circuit breakers are per-slot', async
   apiKeyRepo.setCompatSlot('a', {
     baseUrl: `http://127.0.0.1:${port}/ok`,
     model: 'test-model',
-    apiKey: 'sk-key-a-1234567890',
+    // Synthetic test fixture — Authorization header is matched on "key-a"
+    // below. Avoid an "sk-" prefix so gitleaks doesn't flag it as a real key.
+    apiKey: 'test-fixture-key-a',
     displayName: 'A',
   });
   apiKeyRepo.setCompatSlot('b', {
     baseUrl: `http://127.0.0.1:${port}/fail`,
     model: 'test-model',
-    apiKey: 'sk-key-b-1234567890',
+    apiKey: 'test-fixture-key-b',
     displayName: 'B',
   });
 
