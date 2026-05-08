@@ -224,13 +224,28 @@ function getOllamaModel() {
 // ── Provider metadata ─────────────────────────────────────────────────────────
 
 function buildProviderMeta() {
-  return {
+  const meta = {
     anthropic:  { name: getCloudName("anthropic"),  model: getCloudModel("anthropic"),  color: "#cd7f32" },
     openai:     { name: getCloudName("openai"),     model: getCloudModel("openai"),     color: "#10a37f" },
     google:     { name: getCloudName("google"),     model: getCloudModel("google"),     color: "#4285f4" },
     openrouter: { name: getCloudName("openrouter"), model: getCloudModel("openrouter"), color: "#6466f1" },
     local:      { name: `Ollama (${getOllamaModel()})`, model: getOllamaModel(), color: "#7c3aed" },
   };
+  // AI-001: synthesize entries for every configured compat slot so
+  // getProviderName() / getProviderMeta() don't throw when a compat provider
+  // is active (called from crawler.js, testPersistence.js, etc).
+  try {
+    for (const provider of apiKeyRepo.listCompatSlots()) {
+      const cfg = apiKeyRepo.get(provider) || {};
+      const slotId = provider.slice("compat:".length);
+      meta[provider] = {
+        name: cfg.displayName || slotId,
+        model: cfg.model || "",
+        color: "#6466f1",
+      };
+    }
+  } catch { /* DB unavailable — cloud entries still work */ }
+  return meta;
 }
 
 const PROVIDER_DOCS = {
@@ -355,12 +370,17 @@ export function isProviderDegraded() {
 /** @returns {string} Human-readable provider name (e.g. `"Claude Sonnet"`), or `"No provider configured"`. */
 export function getProviderName() {
   const p = getProvider();
-  return p ? buildProviderMeta()[p].name : "No provider configured";
+  if (!p) return "No provider configured";
+  // Defense-in-depth: a compat slot deleted between detectProvider() and
+  // here would otherwise read .name on undefined and crash hot paths
+  // (crawler.js, testPersistence.js).
+  return buildProviderMeta()[p]?.name || p;
 }
 /** @returns {{provider: string, name: string, model: string, color: string}|null} Full provider metadata, or `null`. */
 export function getProviderMeta() {
   const p = getProvider();
-  return p ? { provider: p, ...buildProviderMeta()[p] } : null;
+  if (!p) return null;
+  return { provider: p, ...(buildProviderMeta()[p] || { name: p, model: "", color: "#6466f1" }) };
 }
 
 /**
