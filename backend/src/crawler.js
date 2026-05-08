@@ -125,8 +125,18 @@ function runDiffAwareBaseline(project, run, snapshots, mode, opts = {}) {
   });
 
   if (Object.keys(existingBaselines).length > 0 && diff.changedPages.length === 0) {
-    // No-change crawl: existing baselines still authoritative. Don't rewrite,
-    // and signal short-circuit to the caller via run.noChangesDetected.
+    // No-change crawl: existing baselines still authoritative for observed
+    // pages. Signal short-circuit to the caller via run.noChangesDetected.
+    //
+    // Edge case: a crawl with zero added/changed pages can still report
+    // `removedPages` (a page genuinely went away while the rest stayed
+    // identical). We must drop those baseline rows here — otherwise they
+    // persist forever and every subsequent crawl re-reports them as
+    // `removedPages` indefinitely. The merge call with empty fingerprints
+    // is upsert-only, so existing observed-page rows are untouched.
+    if (diff.removedPages.length > 0) {
+      crawlBaselineRepo.mergeProjectBaselines(project.id, {}, diff.removedPages);
+    }
     log(run, `🟰 No ${mode === "state" ? "state" : "page"} changes detected against the previous crawl baseline.`);
     run.noChangesDetected = true;
     return { noChanges: true, changedSet: null, skipped: false };
@@ -391,37 +401,51 @@ export async function crawlAndGenerateTests(project, run, { dialsPrompt = "", te
       // for journey/flow context; the diff has been persisted + emitted.
     }
 
-    // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
-    ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
-      await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
+    // ── No-change short-circuit: skip filter/classify/journey/generation ─
+    // When the state-mode diff reported zero changes, `snapshots` is empty
+    // above. We must also zero out `journeys` and skip the supplementary
+    // link-journey discovery — otherwise `exploration.journeys` (still
+    // populated from the in-memory explorer run) would feed `generateAllTests`
+    // and produce LLM calls + tests on a "no changes" run, which the run
+    // is supposed to short-circuit to `completed_empty`.
+    if (run.noChangesDetected) {
+      filteredSnapshots = [];
+      classifiedPages = [];
+      classifiedPagesByUrl = {};
+      journeys = [];
+    } else {
+      // ── Steps 2 & 3: shared filter + classify ─────────────────────────────
+      ({ filteredSnapshots, classifiedPages, classifiedPagesByUrl } =
+        await filterAndClassify(snapshots, snapshotsByUrl, project, run, signal));
 
-    // Enrich snapshotsByUrl with fingerprint-keyed entries so that downstream
-    // code (journeyPrompt.js) can look up per-state snapshots when a journey
-    // page carries _stateFingerprint. Without this, multiple states at the
-    // same URL (e.g. login form blank vs with errors) would all resolve to
-    // the last-captured snapshot for that URL.
-    const fpMap = exploration.stateGraph.snapshotsByFp;
-    for (const [fp, snap] of fpMap) {
-      snapshotsByUrl[fp] = snap;
-    }
-
-    // Use observed flows from the state explorer as journeys
-    journeys = exploration.journeys;
-    if (journeys.length > 0) {
-      log(run, `🗺️  Discovered ${journeys.length} observed flow(s):`);
-      for (const j of journeys) {
-        const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
-        log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+      // Enrich snapshotsByUrl with fingerprint-keyed entries so that downstream
+      // code (journeyPrompt.js) can look up per-state snapshots when a journey
+      // page carries _stateFingerprint. Without this, multiple states at the
+      // same URL (e.g. login form blank vs with errors) would all resolve to
+      // the last-captured snapshot for that URL.
+      const fpMap = exploration.stateGraph.snapshotsByFp;
+      for (const [fp, snap] of fpMap) {
+        snapshotsByUrl[fp] = snap;
       }
-    }
 
-    // Also discover link-graph journeys from classified pages as a supplement
-    const linkJourneys = buildUserJourneys(classifiedPages, snapshotsByUrl);
-    const explorerUrls = new Set(journeys.flatMap(j => j.pages.map(p => p.url)));
-    for (const lj of linkJourneys) {
-      // Only add link-graph journeys that cover pages not already in observed flows
-      if (!lj.pages.some(p => explorerUrls.has(p.url))) {
-        journeys.push(lj);
+      // Use observed flows from the state explorer as journeys
+      journeys = exploration.journeys;
+      if (journeys.length > 0) {
+        log(run, `🗺️  Discovered ${journeys.length} observed flow(s):`);
+        for (const j of journeys) {
+          const via = j._discoveredBy ? ` [${j._discoveredBy}]` : "";
+          log(run, `   • ${j.name} (${j.pages.length} pages)${via}`);
+        }
+      }
+
+      // Also discover link-graph journeys from classified pages as a supplement
+      const linkJourneys = buildUserJourneys(classifiedPages, snapshotsByUrl);
+      const explorerUrls = new Set(journeys.flatMap(j => j.pages.map(p => p.url)));
+      for (const lj of linkJourneys) {
+        // Only add link-graph journeys that cover pages not already in observed flows
+        if (!lj.pages.some(p => explorerUrls.has(p.url))) {
+          journeys.push(lj);
+        }
       }
     }
   } else {

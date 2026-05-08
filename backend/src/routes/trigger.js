@@ -197,12 +197,19 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
   // Record that this token was used (updates lastUsedAt)
   webhookTokenRepo.touch(tokenRow.id);
 
+  // AUTO-002 / AUTO-015: when `triggerCrawl` is true we dispatch through
+  // `crawlAndGenerateTests`, so the activity rows must use the `crawl.*`
+  // type family (matching `runs.js:85-88`). Otherwise dashboard analytics
+  // that group by activity type miscount crawls as test runs and the
+  // detail text ("0 tests") is misleading on a fresh-project crawl.
   logActivity({
-    type: "test_run.start",
+    type: triggerCrawl ? "crawl.start" : "test_run.start",
     projectId: project.id,
     projectName: project.name,
     workspaceId: project.workspaceId,
-    detail: `CI/CD triggered test run — ${tests.length} test${tests.length !== 1 ? "s" : ""}${parallelWorkers > 1 ? ` (${parallelWorkers}x parallel)` : ""}`,
+    detail: triggerCrawl
+      ? `CI/CD triggered crawl${previewUrl ? ` — ${previewUrl}` : ""}`
+      : `CI/CD triggered test run — ${tests.length} test${tests.length !== 1 ? "s" : ""}${parallelWorkers > 1 ? ` (${parallelWorkers}x parallel)` : ""}`,
     status: "running",
   });
 
@@ -224,19 +231,23 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
     {
       onSuccess: () => {
         logActivity({
-          type: "test_run.complete",
+          type: triggerCrawl ? "crawl.complete" : "test_run.complete",
           projectId: project.id,
           projectName: project.name,
           workspaceId: project.workspaceId,
-          detail: `CI/CD run completed — ${run.passed || 0} passed, ${run.failed || 0} failed`,
+          detail: triggerCrawl
+            ? `CI/CD crawl completed — ${run.pagesFound || 0} page(s), ${run.tests?.length || 0} test(s) generated`
+            : `CI/CD run completed — ${run.passed || 0} passed, ${run.failed || 0} failed`,
         });
       },
       onFailActivity: (err) => ({
-        type: "test_run.fail",
+        type: triggerCrawl ? "crawl.fail" : "test_run.fail",
         projectId: project.id,
         projectName: project.name,
         workspaceId: project.workspaceId,
-        detail: `CI/CD run failed: ${classifyError(err, "run").message}`,
+        detail: triggerCrawl
+          ? `CI/CD crawl failed: ${classifyError(err, "crawl").message}`
+          : `CI/CD run failed: ${classifyError(err, "run").message}`,
       }),
       // Fire optional callback URL with run summary on ANY terminal state
       // (completed, failed, aborted) so CI pipelines always get notified.
@@ -410,6 +421,24 @@ async function launchPreviewCrawl({ project, previewUrl, provider, tokenRow, dia
 router.post("/projects/:id/trigger/vercel", expensiveOpLimiter, requireTrigger, async (req, res) => {
   const sig = req.get("X-Vercel-Signature");
   if (!verifyWebhookSignature("vercel", req.rawBody, sig)) return res.status(401).json({ error: "invalid signature" });
+
+  // AUTO-015: Vercel emits webhook events for every deployment state
+  // (CREATED, BUILDING, READY, ERROR, CANCELED, …). Crawling a deployment
+  // that isn't yet serving content captures a "building" placeholder page
+  // (junk tests) or fails with a navigation error. Only fire on READY —
+  // accept either the v1 event-type form (`type: "deployment.ready"` /
+  // `"deployment.succeeded"`) or the v2 readyState form
+  // (`deployment.readyState: "READY"`). Anything else acks 200 (so Vercel
+  // doesn't retry indefinitely) without launching a run.
+  const eventType = typeof req.body?.type === "string" ? req.body.type : "";
+  const readyState = typeof req.body?.deployment?.readyState === "string" ? req.body.deployment.readyState : "";
+  const isReady =
+    eventType === "deployment.ready" ||
+    eventType === "deployment.succeeded" ||
+    readyState.toUpperCase() === "READY";
+  if (!isReady) {
+    return res.status(200).json({ ok: true, ignored: true, reason: "deployment not ready", eventType, readyState });
+  }
 
   const deploymentUrl = req.body?.deployment?.url;
   if (!deploymentUrl) return res.status(400).json({ error: "deployment.url missing from payload" });

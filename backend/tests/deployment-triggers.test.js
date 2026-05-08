@@ -33,7 +33,7 @@ async function main() {
     //    This proves the dual-auth model (HMAC + project-scoped token) is
     //    enforced — a leaked global webhook secret alone cannot trigger
     //    crawls on arbitrary project IDs.
-    const vercelBody = JSON.stringify({ deployment: { url: "my-app-preview.vercel.app" } });
+    const vercelBody = JSON.stringify({ type: "deployment.ready", deployment: { url: "my-app-preview.vercel.app" } });
     const vercelSig = sign("sha1", vercelBody, process.env.VERCEL_WEBHOOK_SECRET);
     let res = await fetch(`${base}/api/projects/PRJ-1/trigger/vercel`, {
       method: "POST",
@@ -93,7 +93,7 @@ async function main() {
       label: "deploy-test",
     });
 
-    const happyBody = JSON.stringify({ deployment: { url: "preview-deploy-happy.vercel.app" } });
+    const happyBody = JSON.stringify({ type: "deployment.ready", deployment: { url: "preview-deploy-happy.vercel.app" } });
     const happySig = sign("sha1", happyBody, process.env.VERCEL_WEBHOOK_SECRET);
     const happyRes = await fetch(`${base}/api/projects/${proj.id}/trigger/vercel`, {
       method: "POST",
@@ -137,6 +137,26 @@ async function main() {
       entry.controller.abort();
       runAbortControllers.delete(happyJson.runId);
     }
+
+    // ── Vercel: non-ready events must NOT trigger a crawl.
+    //    Vercel emits webhook events for every deployment state (CREATED,
+    //    BUILDING, READY, ERROR, …). Crawling a building deployment captures
+    //    a placeholder page or fails outright; the trigger must short-circuit
+    //    with 200 (so Vercel doesn't retry) and ignore the event.
+    const buildingBody = JSON.stringify({ type: "deployment.created", deployment: { url: "preview-building.vercel.app", readyState: "BUILDING" } });
+    const buildingSig = sign("sha1", buildingBody, process.env.VERCEL_WEBHOOK_SECRET);
+    const buildingRes = await fetch(`${base}/api/projects/${proj.id}/trigger/vercel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Vercel-Signature": buildingSig,
+        "Authorization": `Bearer ${plaintext}`,
+      },
+      body: buildingBody,
+    });
+    assert.equal(buildingRes.status, 200, "non-ready deployment event must ack 200 without launching a run");
+    const buildingJson = await buildingRes.json();
+    assert.equal(buildingJson.ignored, true, "response must signal the event was ignored");
 
     console.log("deployment-triggers.test.js passed");
   } finally {
