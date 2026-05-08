@@ -194,6 +194,10 @@ router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
     setRuntimeOllama({ baseUrl: "", model: "", disabled: true });
   } else if (isCompat) {
     apiKeyRepo.deleteCompatSlot(provider);
+    // Clear the circuit-breaker entry + sticky fallback so a recreate of the
+    // same slot id doesn't inherit stale state, and so repeat create/delete
+    // cycles don't accumulate dead entries in the breakers map.
+    setRuntimeKey(provider, "");
   } else {
     setRuntimeKey(provider, "");
   }

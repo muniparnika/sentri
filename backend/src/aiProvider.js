@@ -117,7 +117,6 @@ const CLOUD_KEY_MAP = {
   openai:     "OPENAI_API_KEY",
   google:     "GOOGLE_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
-  openai_compatible: "OPENAI_COMPATIBLE_API_KEY",
 };
 
 // Default models per cloud provider — overridable via env vars
@@ -126,7 +125,6 @@ const CLOUD_DEFAULT_MODELS = {
   openai:     { envVar: "OPENAI_MODEL",     fallback: "gpt-4o-mini",              name: "GPT-4o-mini" },
   google:     { envVar: "GOOGLE_MODEL",     fallback: "gemini-2.5-flash",         name: "Gemini 2.5 Flash" },
   openrouter: { envVar: "OPENROUTER_MODEL", fallback: "openrouter/auto",          name: "OpenRouter" },
-  openai_compatible: { envVar: "OPENAI_COMPATIBLE_MODEL", fallback: "gpt-4o-mini", name: "OpenAI-compatible" },
 };
 
 // OpenRouter base URL — overridable for self-hosted proxies.
@@ -987,15 +985,15 @@ async function callProvider(provider, promptOrMessages, maxTokens, signal, respo
   }
 
 
-  if (provider === "openai_compatible" || isCompatProvider(provider)) {
+  if (isCompatProvider(provider)) {
     // baseUrl is SSRF-validated at config-save time in routes/settings.js
     // AND re-validated per-call via createSsrfGuardedFetch() below — closes
     // the DNS-rebinding window (a host that resolved to a public IP at save
     // time can't be flipped to a private/loopback IP between save and call).
-    const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
-    const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
+    const compat = getCompatConfig(provider);
+    const apiKey = compat?.apiKey;
     const baseURL = compat?.baseUrl;
-    const model = compat?.model || getCloudModel("openai_compatible");
+    const model = compat?.model;
     const client = new OpenAI({ apiKey, fetch: createSsrfGuardedFetch(), ...(baseURL ? { baseURL } : {}) });
     const messages = [];
     if (system) messages.push({ role: "system", content: system });
@@ -1288,15 +1286,15 @@ export async function streamText(promptOrMessages, onToken, options = {}) {
   }
 
 
-  if (provider === "openai_compatible" || isCompatProvider(provider)) {
+  if (isCompatProvider(provider)) {
     // Stream via the OpenAI SDK against the compat baseURL. On any retryable
     // error before tokens emit, fall back to non-streaming generateText().
     let tokensEmitted = 0;
     try {
-      const compat = isCompatProvider(provider) ? getCompatConfig(provider) : null;
-      const apiKey = compat?.apiKey || getKey(CLOUD_KEY_MAP.openai_compatible);
+      const compat = getCompatConfig(provider);
+      const apiKey = compat?.apiKey;
       const baseURL = compat?.baseUrl;
-      const model = compat?.model || getCloudModel("openai_compatible");
+      const model = compat?.model;
       // SSRF-validated at config-save time in routes/settings.js AND
       // re-validated per-call via createSsrfGuardedFetch() (DNS-rebinding
       // mitigation — see callProvider compat branch for the rationale).
