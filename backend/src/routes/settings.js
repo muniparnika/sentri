@@ -66,7 +66,8 @@ router.post("/settings", requireRole("admin"), (req, res) => {
   // active-provider override — no key is written or validated.
   if (apiKey === "__use_existing__" && provider !== "local") {
     const configured = getConfiguredKeys();
-    if (!configured[provider]) {
+    const hasCompat = isCompat && configured.compatProviders?.some((p) => p.provider === provider);
+    if (!configured[provider] && !hasCompat) {
       return res.status(400).json({ error: `No saved key for "${provider}". Add a key in Settings first.` });
     }
     setActiveProvider(provider);

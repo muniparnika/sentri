@@ -30,6 +30,10 @@ function getProviderInfo(config, id) {
 
 const ALL_IDS = ["anthropic", "openai", "google", "openrouter", "local"];
 
+function getCompatIds(settings) {
+  return (settings?.compatProviders || []).map((p) => p.provider);
+}
+
 // A provider is "saved" if getSettings() returns a non-empty masked key for it,
 // or (for Ollama) if the backend reports it as explicitly configured.
 function getSavedProviders(settings) {
@@ -40,6 +44,7 @@ function getSavedProviders(settings) {
   if (settings.google)     list.push("google");
   if (settings.openrouter) list.push("openrouter");
   if (settings.ollamaConfigured || settings.activeProvider === "local") list.push("local");
+  for (const compatId of getCompatIds(settings)) list.push(compatId);
   return list;
 }
 
@@ -136,7 +141,9 @@ export default function ProviderBadge({ style }) {
 
   const c      = PROVIDER_STYLES[config.provider] || PROVIDER_STYLES.openai;
   const saved  = getSavedProviders(settings);
-  const unsaved = ALL_IDS.filter(id => !saved.includes(id));
+  const compatIds = getCompatIds(settings);
+  const allSwitchable = [...ALL_IDS, ...compatIds];
+  const unsaved = allSwitchable.filter(id => !saved.includes(id));
 
   return (
     <div ref={ref} style={{ position: "relative", flexShrink: 0, ...style }}>
@@ -194,7 +201,7 @@ export default function ProviderBadge({ style }) {
           {saved.length > 0 && (
             <div style={{ padding: "4px 0" }}>
               {saved.map(id => {
-                const sty      = PROVIDER_STYLES[id];
+                const sty      = PROVIDER_STYLES[id] || PROVIDER_STYLES.openrouter;
                 const info     = getProviderInfo(config, id);
                 const isActive = config.provider === id;
                 const isBusy   = switching === id;
@@ -248,7 +255,7 @@ export default function ProviderBadge({ style }) {
                 Add provider
               </div>
               {unsaved.map(id => {
-                const sty  = PROVIDER_STYLES[id];
+                const sty  = PROVIDER_STYLES[id] || PROVIDER_STYLES.openrouter;
                 const info = getProviderInfo(config, id);
                 return (
                   <button key={id} onClick={() => { setOpen(false); navigate("/settings"); }}
