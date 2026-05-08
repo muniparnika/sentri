@@ -126,6 +126,15 @@ async function resolveAndCheckDns(host) {
  * @returns {Promise<string|null>} null if valid, or an error message string.
  */
 export async function validateUrl(raw) {
+  // AI-001: Operator escape hatch for self-hosted / on-prem OpenAI-compatible
+  // endpoints (e.g. a local LiteLLM proxy on 127.0.0.1, or an internal vLLM
+  // server on 10.0.0.x).  Off by default — when ALLOW_PRIVATE_URLS=true we
+  // skip ALL SSRF checks and emit a console.warn so operators see the risk
+  // they've opted into.
+  if (process.env.ALLOW_PRIVATE_URLS === "true") {
+    console.warn(`[ssrfGuard] ALLOW_PRIVATE_URLS=true — bypassing SSRF validation for ${raw}. Do not enable in multi-tenant deployments.`);
+    return null;
+  }
   let parsed;
   try { parsed = new URL(raw); } catch { return "URL is not valid."; }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {

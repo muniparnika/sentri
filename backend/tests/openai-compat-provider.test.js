@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { isRateLimitError, isTransientServerError } from '../src/aiProvider.js';
 import { validateUrl } from '../src/utils/ssrfGuard.js';
 
@@ -63,4 +64,131 @@ test('compat provider id shape: starts with "compat:" and has a slot id', () => 
   assert.equal(isCompat('compat:'), false);
   assert.equal(isCompat('openai'), false);
   assert.equal(isCompat(null), false);
+});
+
+// ── ALLOW_PRIVATE_URLS env bypass ────────────────────────────────────────────
+// Operator escape hatch for self-hosted / on-prem OpenAI-compatible endpoints
+// (e.g. local LiteLLM, internal vLLM). When the flag is unset, loopback URLs
+// MUST be rejected. When set to "true", validateUrl() returns null early.
+
+test('SSRF guard rejects loopback when ALLOW_PRIVATE_URLS is unset', async () => {
+  const prev = process.env.ALLOW_PRIVATE_URLS;
+  delete process.env.ALLOW_PRIVATE_URLS;
+  try {
+    const err = await validateUrl('http://127.0.0.1:8000/v1');
+    assert.ok(err, 'expected loopback URL to be rejected without the flag');
+  } finally {
+    if (prev !== undefined) process.env.ALLOW_PRIVATE_URLS = prev;
+  }
+});
+
+test('SSRF guard allows loopback when ALLOW_PRIVATE_URLS=true', async () => {
+  const prev = process.env.ALLOW_PRIVATE_URLS;
+  process.env.ALLOW_PRIVATE_URLS = 'true';
+  try {
+    const err = await validateUrl('http://127.0.0.1:8000/v1');
+    assert.equal(err, null, 'expected loopback URL to be allowed under the bypass');
+    // Sanity: also allows RFC1918 + link-local under the bypass.
+    assert.equal(await validateUrl('http://10.0.0.5/v1'), null);
+    assert.equal(await validateUrl('http://localhost:8000/v1'), null);
+  } finally {
+    if (prev === undefined) delete process.env.ALLOW_PRIVATE_URLS;
+    else process.env.ALLOW_PRIVATE_URLS = prev;
+  }
+});
+
+// ── Mock-SDK integration: baseURL routing + circuit-breaker independence ─────
+// We can't easily mock `new OpenAI(...)` from inside aiProvider.js (it's
+// imported at module-init time), so we stand up a real loopback HTTP server
+// that speaks the OpenAI chat-completions wire format and route compat slots
+// to it. ALLOW_PRIVATE_URLS=true lets the loopback baseURL pass save-time
+// validation. Each request records which slot called it (via Authorization
+// header) so we can prove (a) baseURL is honored and (b) per-slot accounting
+// is independent.
+
+test('compat slots: baseURL is honored and circuit breakers are per-slot', async (t) => {
+  process.env.ALLOW_PRIVATE_URLS = 'true';
+  // Speed up retries so the test doesn't burn 30s of backoff.
+  process.env.LLM_MAX_RETRIES = '0';
+  process.env.LLM_BASE_DELAY_MS = '1';
+  // Avoid touching the real DB; aiProvider tolerates missing DB via try/catch.
+  process.env.DB_PATH = ':memory:';
+
+  /** @type {{slot: string, ok: boolean}[]} */
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const auth = req.headers.authorization || '';
+      const slot = auth.includes('key-a') ? 'a' : auth.includes('key-b') ? 'b' : '?';
+      const fail = req.url.includes('/fail');
+      calls.push({ slot, ok: !fail });
+      if (fail) {
+        res.writeHead(429, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'rate_limit', type: 'rate_limit_error' } }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: `ok-from-${slot}` } }],
+      }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  t.after(() => new Promise((r) => server.close(r)));
+
+  // Lazy-import so env vars are set before the module reads them.
+  const apiKeyRepo = await import('../src/database/repositories/apiKeyRepo.js');
+  const ai = await import('../src/aiProvider.js');
+
+  // (a) baseURL routing — slot A points at /ok, slot B points at /fail.
+  apiKeyRepo.setCompatSlot('a', {
+    baseUrl: `http://127.0.0.1:${port}/ok`,
+    model: 'test-model',
+    apiKey: 'sk-key-a-1234567890',
+    displayName: 'A',
+  });
+  apiKeyRepo.setCompatSlot('b', {
+    baseUrl: `http://127.0.0.1:${port}/fail`,
+    model: 'test-model',
+    apiKey: 'sk-key-b-1234567890',
+    displayName: 'B',
+  });
+
+  ai.setActiveProvider('compat:a');
+  const out = await ai.generateText('hello', { responseFormat: 'text' });
+  assert.equal(out, 'ok-from-a', 'compat:a baseURL must route to slot A endpoint');
+  assert.ok(calls.some((c) => c.slot === 'a' && c.ok), 'slot A should have been called');
+  assert.ok(!calls.some((c) => c.slot === 'b'), 'slot B must not be called when compat:a is active');
+
+  // (b) Circuit-breaker independence — failing compat:b must not disable compat:a.
+  // Disable cross-provider fallback by clearing other cloud keys for the duration.
+  const savedKeys = {};
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'DEMO_GOOGLE_API_KEY']) {
+    savedKeys[k] = process.env[k];
+    delete process.env[k];
+  }
+  try {
+    ai.setActiveProvider('compat:b');
+    await assert.rejects(
+      ai.generateText('hello', { responseFormat: 'text' }),
+      /rate.?limit|429/i,
+      'compat:b should fail with a rate-limit error',
+    );
+    // After tripping compat:b's breaker, compat:a must still be usable.
+    ai.setActiveProvider('compat:a');
+    const out2 = await ai.generateText('hello again', { responseFormat: 'text' });
+    assert.equal(out2, 'ok-from-a', 'compat:a must remain usable after compat:b trips its breaker');
+    assert.equal(ai.isProviderDegraded(), false, 'compat:a should not be degraded by compat:b');
+  } finally {
+    for (const [k, v] of Object.entries(savedKeys)) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    apiKeyRepo.deleteCompatSlot('a');
+    apiKeyRepo.deleteCompatSlot('b');
+    ai.setActiveProvider(null);
+    delete process.env.ALLOW_PRIVATE_URLS;
+  }
 });

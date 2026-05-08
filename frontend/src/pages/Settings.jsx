@@ -1220,7 +1220,10 @@ export default function Settings() {
         <form onSubmit={handleCompatSave} style={{ display: "grid", gap: 8 }}>
           <input className="input" placeholder="Slot id (e.g. deepseek)" value={compatForm.slotId} onChange={(e) => setCompatForm((s) => ({ ...s, slotId: e.target.value }))} />
           <input className="input" placeholder="Display name" value={compatForm.displayName} onChange={(e) => setCompatForm((s) => ({ ...s, displayName: e.target.value }))} />
-          <input className="input" placeholder="Base URL" value={compatForm.baseUrl} onChange={(e) => setCompatForm((s) => ({ ...s, baseUrl: e.target.value }))} />
+          <input className="input" placeholder="Base URL" list="compat-baseurl-hints" value={compatForm.baseUrl} onChange={(e) => setCompatForm((s) => ({ ...s, baseUrl: e.target.value }))} />
+          <datalist id="compat-baseurl-hints">
+            {OPENAI_COMPAT_HINTS.map((url) => <option key={url} value={url} />)}
+          </datalist>
           <input className="input" placeholder="Model" value={compatForm.model} onChange={(e) => setCompatForm((s) => ({ ...s, model: e.target.value }))} />
           <input className="input" placeholder="API key" value={compatForm.apiKey} onChange={(e) => setCompatForm((s) => ({ ...s, apiKey: e.target.value }))} />
           {compatError && <div className="text-sm" style={{ color: "var(--red)" }}>{compatError}</div>}
