@@ -213,6 +213,24 @@ router.post("/projects/:id/trigger", expensiveOpLimiter, requireTrigger, async (
     status: "running",
   });
 
+  // AUTO-015b: if this is a deployment-preview crawl (`triggerCrawl: true` +
+  // `previewUrl`), also emit the `crawl.start.deployment` marker so the
+  // "Last deployment run" badge on the project header surfaces CI-pipeline-
+  // triggered preview crawls — not just provider-webhook ones. The badge
+  // query (`GET /projects/:id/last-deployment-run`) filters on this exact
+  // type and reads `meta.runId` to cross-reference the run record.
+  if (triggerCrawl && previewUrl) {
+    logActivity({
+      type: "crawl.start.deployment",
+      projectId: project.id,
+      projectName: project.name,
+      workspaceId: project.workspaceId,
+      detail: `CI/CD deployment — ${previewUrl}`,
+      status: "running",
+      meta: { provider: "ci", previewUrl, runId },
+    });
+  }
+
   runWithAbort(runId, run,
     (signal) => triggerCrawl
       // AUTO-002 / AUTO-015: when crawling a preview URL we overwrite

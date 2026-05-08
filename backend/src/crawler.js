@@ -88,14 +88,25 @@ import { diffCrawlSnapshots } from "./pipeline/crawlDiff.js";
  *   the caller decides whether to filter `snapshots[]` against it.
  */
 function runDiffAwareBaseline(project, run, snapshots, mode, opts = {}) {
-  // AUTO-002 / AUTO-015: compare the crawl's actual origin against the
-  // project's CANONICAL (production) URL — not `project.url`, which the
-  // AUTO-015 trigger routes overwrite with the deployment preview URL
-  // before invoking this function.
+  // AUTO-002 / AUTO-015: classify "preview crawl" by comparing the URL we
+  // *asked Playwright to load* (`project.url`) against the project's
+  // CANONICAL production URL. The AUTO-015 trigger routes overwrite
+  // `project.url` with the deployment preview URL while preserving
+  // `canonicalUrl`, so a mismatch is the unambiguous signal that this is a
+  // preview crawl and baselines must be preserved.
+  //
+  // We deliberately do NOT consult `snapshots[0].url` here. The first
+  // snapshot's URL is post-redirect — production sites routinely redirect
+  // their entry URL to a different origin (`example.com` → `www.example.com`,
+  // `http://` → `https://`, apex → www, etc.) and the previous code that
+  // used `snapshots[0]?.url || project.url` would falsely classify those
+  // crawls as "preview" and silently skip baseline updates on every
+  // subsequent crawl. Redirects are a property of the site, not a signal
+  // about *which* deployment we're hitting.
   const canonicalForOriginCheck = project.canonicalUrl || project.url;
   const sameOrigin = (() => {
     try {
-      return new URL(snapshots[0]?.url || project.url).origin === new URL(canonicalForOriginCheck).origin;
+      return new URL(project.url).origin === new URL(canonicalForOriginCheck).origin;
     } catch { return false; }
   })();
   if (!sameOrigin) {
