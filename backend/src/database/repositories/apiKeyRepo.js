@@ -17,6 +17,7 @@
 import { getDatabase } from "../sqlite.js";
 import { encryptCredentials, decryptCredentials } from "../../utils/credentialEncryption.js";
 import { formatLogLine } from "../../utils/logFormatter.js";
+import * as compatConfigCache from "../../utils/compatConfigCache.js";
 
 // Valid provider identifiers — mirrors CLOUD_KEY_MAP + local in aiProvider.js
 const VALID_PROVIDERS = ["anthropic", "openai", "google", "openrouter", "local"];
@@ -155,9 +156,15 @@ export function getCompatSlot(slotId) {
 export function setCompatSlot(slotId, config) {
   const provider = slotId.startsWith(COMPAT_PREFIX) ? slotId : `${COMPAT_PREFIX}${slotId}`;
   set(provider, config);
+  // Write-through invalidation: clear the local cache AND publish on Redis
+  // so other instances drop their stale entry for this slot.  Runs AFTER
+  // the DB write so a concurrent reader on another instance that pre-empts
+  // the publish will still see the new row via the DB loader.
+  compatConfigCache.invalidate(provider);
 }
 
 export function deleteCompatSlot(slotId) {
   const provider = slotId.startsWith(COMPAT_PREFIX) ? slotId : `${COMPAT_PREFIX}${slotId}`;
   remove(provider);
+  compatConfigCache.invalidate(provider);
 }

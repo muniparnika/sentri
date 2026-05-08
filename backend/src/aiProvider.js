@@ -31,6 +31,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { throwIfAborted } from "./utils/abortHelper.js";
 import { formatLogLine } from "./utils/logFormatter.js";
 import * as apiKeyRepo from "./database/repositories/apiKeyRepo.js";
+import * as compatConfigCache from "./utils/compatConfigCache.js";
 import { validateUrl } from "./utils/ssrfGuard.js";
 
 /**
@@ -156,7 +157,11 @@ function isCompatProvider(provider) {
 }
 
 function getCompatConfig(provider) {
-  return isCompatProvider(provider) ? apiKeyRepo.get(provider) : null;
+  if (!isCompatProvider(provider)) return null;
+  // Read through the TTL cache to avoid hitting SQLite (decrypt + JSON.parse)
+  // on every AI call.  Cache is write-through invalidated in apiKeyRepo and
+  // coherent across processes via Redis pub/sub (utils/compatConfigCache.js).
+  return compatConfigCache.get(provider, () => apiKeyRepo.get(provider));
 }
 
 // Auto-detect order for cloud providers
