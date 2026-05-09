@@ -585,9 +585,11 @@ export const api = {
    * @param {string|null} apiKey     - API key (null for Ollama).
    * @param {Object}      [ollamaOpts] - `{ baseUrl, model }` for local provider.
    */
-  saveApiKey: (provider, apiKey, ollamaOpts) =>
+  saveApiKey: (provider, apiKey, opts = {}) =>
     provider === "local"
-      ? req("POST", "/settings", { provider, ...ollamaOpts })
+      ? req("POST", "/settings", { provider, ...opts })
+      : provider?.startsWith("compat:")
+      ? req("POST", "/settings", { provider, apiKey, ...opts })
       : req("POST", "/settings", { provider, apiKey }),
   /** @param {string} provider - Remove API key or deactivate Ollama. */
   deleteApiKey: (provider) => req("DELETE", `/settings/${provider}`),

@@ -49,6 +49,8 @@ const files = [
   "tests/device-emulation.test.js",
   "tests/ai-fallback.test.js",
   "tests/openrouter-provider.test.js",
+  "tests/openai-compat-provider.test.js",
+  "tests/compat-config-cache.test.js",
   "tests/api-versioning.test.js",
   "tests/robots-sitemap.test.js",
   "tests/openapi.test.js",

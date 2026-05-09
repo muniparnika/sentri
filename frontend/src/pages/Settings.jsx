@@ -20,6 +20,8 @@ import { resetOnboarding, emitTourEvent } from "../hooks/useOnboarding.js";
 import usePageTitle from "../hooks/usePageTitle.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
+const OPENAI_COMPAT_HINTS = ["https://api.deepseek.com/v1", "https://api.groq.com/openai/v1", "https://api.mistral.ai/v1", "https://api.x.ai/v1"];
+
 const PROVIDERS = [
   {
     id: "anthropic",
@@ -1087,6 +1089,33 @@ export default function Settings() {
     await reload();
   }
 
+  const [compatForm, setCompatForm] = useState({ slotId: "", displayName: "", baseUrl: "", model: "", apiKey: "" });
+  const [compatSaving, setCompatSaving] = useState(false);
+  const [compatError, setCompatError] = useState("");
+
+  async function handleCompatSave(e) {
+    e.preventDefault();
+    setCompatError("");
+    const slot = compatForm.slotId.trim().toLowerCase();
+    if (!slot || !/^[a-z0-9_-]+$/.test(slot)) return setCompatError("Slot ID is required (letters, numbers, _ or -).");
+    if (!compatForm.baseUrl.trim() || !compatForm.model.trim() || !compatForm.apiKey.trim()) return setCompatError("baseUrl, model, and apiKey are required.");
+    setCompatSaving(true);
+    try {
+      await api.saveApiKey(`compat:${slot}`, compatForm.apiKey.trim(), {
+        baseUrl: compatForm.baseUrl.trim(),
+        model: compatForm.model.trim(),
+        displayName: compatForm.displayName.trim() || slot,
+      });
+      invalidateConfigCache();
+      await reload();
+      setCompatForm({ slotId: "", displayName: "", baseUrl: "", model: "", apiKey: "" });
+    } catch (err) {
+      setCompatError(err.message || "Failed to save provider.");
+    } finally {
+      setCompatSaving(false);
+    }
+  }
+
   return (
     <div className="fade-in page-container-md">
       <button className="btn btn-ghost btn-sm mb-lg" onClick={() => navigate(-1)}>
@@ -1183,6 +1212,36 @@ export default function Settings() {
             Keys saved here are stored in memory and will reset when the server restarts.
             For persistent configuration, see the deployment documentation.
           </div>
+        </div>
+      </div>
+
+      <div className="card-padded" style={{ marginTop: 16 }}>
+        <h3 style={{ marginBottom: 10 }}>OpenAI-compatible providers</h3>
+        <form onSubmit={handleCompatSave} style={{ display: "grid", gap: 8 }}>
+          <input className="input" placeholder="Slot id (e.g. deepseek)" value={compatForm.slotId} onChange={(e) => setCompatForm((s) => ({ ...s, slotId: e.target.value }))} />
+          <input className="input" placeholder="Display name" value={compatForm.displayName} onChange={(e) => setCompatForm((s) => ({ ...s, displayName: e.target.value }))} />
+          <input className="input" placeholder="Base URL" list="compat-baseurl-hints" value={compatForm.baseUrl} onChange={(e) => setCompatForm((s) => ({ ...s, baseUrl: e.target.value }))} />
+          <datalist id="compat-baseurl-hints">
+            {OPENAI_COMPAT_HINTS.map((url) => <option key={url} value={url} />)}
+          </datalist>
+          <input className="input" placeholder="Model" value={compatForm.model} onChange={(e) => setCompatForm((s) => ({ ...s, model: e.target.value }))} />
+          <input className="input" type="password" autoComplete="off" placeholder="API key" value={compatForm.apiKey} onChange={(e) => setCompatForm((s) => ({ ...s, apiKey: e.target.value }))} />
+          {compatError && <div className="text-sm" style={{ color: "var(--red)" }}>{compatError}</div>}
+          <button className="btn btn-primary btn-sm" disabled={compatSaving}>{compatSaving ? "Saving..." : "Save compat provider"}</button>
+        </form>
+        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          {(settings?.compatProviders || []).map((p) => (
+            <div key={p.provider} className="card-padded-sm" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div className="font-semi">{p.displayName} <span className="text-mono text-sub">({p.provider})</span></div>
+                <div className="text-xs text-sub">{p.baseUrl} · {p.model} · {p.apiKey}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-ghost btn-xs" onClick={() => setCompatForm({ slotId: p.provider.replace("compat:", ""), displayName: p.displayName || "", baseUrl: p.baseUrl || "", model: p.model || "", apiKey: "" })}>Edit</button>
+                <button className="btn btn-danger btn-xs" onClick={() => handleDelete(p.provider)}>Delete</button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
       </>}

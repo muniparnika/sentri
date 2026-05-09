@@ -18,6 +18,8 @@ import { hasProvider, setRuntimeKey, setRuntimeOllama, setActiveProvider, checkO
 import { actor } from "../utils/actor.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { isDemoEnabled, getDemoQuotaStatus } from "../middleware/demoQuota.js";
+import { validateUrl } from "../utils/ssrfGuard.js";
+import * as apiKeyRepo from "../database/repositories/apiKeyRepo.js";
 
 const router = Router();
 
@@ -50,11 +52,12 @@ router.get("/settings", requireRole("admin"), (req, res) => {
 });
 
 // POST /api/settings — save API key at runtime (no server restart needed)
-router.post("/settings", requireRole("admin"), (req, res) => {
+router.post("/settings", requireRole("admin"), async (req, res) => {
   const { provider, apiKey, baseUrl, model } = req.body;
   const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
+  const isCompat = typeof provider === "string" && provider.startsWith("compat:");
 
-  if (!provider || !validProviders.includes(provider)) {
+  if (!provider || (!validProviders.includes(provider) && !isCompat)) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
   }
 
@@ -63,7 +66,8 @@ router.post("/settings", requireRole("admin"), (req, res) => {
   // active-provider override — no key is written or validated.
   if (apiKey === "__use_existing__" && provider !== "local") {
     const configured = getConfiguredKeys();
-    if (!configured[provider]) {
+    const hasCompat = isCompat && configured.compatProviders?.some((p) => p.provider === provider);
+    if (!configured[provider] && !hasCompat) {
       return res.status(400).json({ error: `No saved key for "${provider}". Add a key in Settings first.` });
     }
     setActiveProvider(provider);
@@ -76,6 +80,44 @@ router.post("/settings", requireRole("admin"), (req, res) => {
     });
   }
 
+
+  if (isCompat) {
+    // Defense-in-depth: the frontend already enforces /^[a-z0-9_-]+$/ on the
+    // slot id, but the backend is the trust boundary — re-validate here so
+    // direct API callers can't smuggle exotic characters into the DB key
+    // (which would also confuse log filters and the compat slot listing).
+    const slotId = provider.slice("compat:".length);
+    if (!/^[a-z0-9_-]+$/.test(slotId)) {
+      return res.status(400).json({ error: "compat slot id must match /^[a-z0-9_-]+$/" });
+    }
+    const normalizedBaseUrl = (baseUrl || "").trim();
+    const normalizedModel = (model || "").trim();
+    const normalizedApiKey = (apiKey || "").trim();
+    if (!normalizedBaseUrl) return res.status(400).json({ error: "baseUrl is required for compat providers" });
+    if (!normalizedModel) return res.status(400).json({ error: "model is required for compat providers" });
+    if (!normalizedApiKey || normalizedApiKey.length < 10) return res.status(400).json({ error: "apiKey is required and must be at least 10 characters" });
+    // validateUrl is async + returns an error string (or null). Await it
+    // and surface the message as a 400 — never let an unvalidated user
+    // baseUrl reach the OpenAI SDK (SSRF boundary, NEXT.md AI-001).
+    //
+    // AI-001: Operator escape hatch for self-hosted / on-prem OpenAI-compatible
+    // endpoints (e.g. a local LiteLLM proxy on 127.0.0.1, or an internal vLLM
+    // server on 10.0.0.x).  Scoped to compat provider config — does NOT relax
+    // SSRF for trigger callbacks, preview URLs, or webhook URLs.
+    if (process.env.ALLOW_PRIVATE_URLS === "true") {
+      console.warn(`[settings] ALLOW_PRIVATE_URLS=true — bypassing SSRF validation for compat baseUrl ${normalizedBaseUrl}. Do not enable in multi-tenant deployments.`);
+    } else {
+      const ssrfErr = await validateUrl(normalizedBaseUrl);
+      if (ssrfErr) return res.status(400).json({ error: ssrfErr });
+    }
+    apiKeyRepo.setCompatSlot(provider, { baseUrl: normalizedBaseUrl, model: normalizedModel, apiKey: normalizedApiKey, displayName: (req.body.displayName || provider.replace("compat:", "")).trim() });
+    // Reset circuit breaker so updated credentials are retried immediately
+    // (consistent with cloud-provider save flow via setRuntimeKey).
+    setRuntimeKey(provider, normalizedApiKey);
+    setActiveProvider(provider);
+    logActivity({ ...actor(req), type: "settings.update", detail: `Compat provider configured: ${provider}` });
+    return res.json({ ok: true, provider, providerName: req.body.displayName || provider });
+  }
   if (provider === "local") {
     if (baseUrl && baseUrl.trim()) {
       let parsedUrl;
@@ -130,16 +172,32 @@ router.post("/settings", requireRole("admin"), (req, res) => {
 router.delete("/settings/:provider", requireRole("admin"), (req, res) => {
   const { provider } = req.params;
   const validProviders = ["anthropic", "openai", "google", "openrouter", "local"];
-  if (!validProviders.includes(provider)) {
+  const isCompat = typeof provider === "string" && provider.startsWith("compat:");
+  if (!validProviders.includes(provider) && !isCompat) {
     return res.status(400).json({ error: `provider must be one of: ${validProviders.join(", ")}` });
+  }
+  // Defense-in-depth: mirror the POST route's slot-id validation so direct API
+  // callers can't smuggle exotic characters through the DELETE path either.
+  if (isCompat) {
+    const slotId = provider.slice("compat:".length);
+    if (!/^[a-z0-9_-]+$/.test(slotId)) {
+      return res.status(400).json({ error: "compat slot id must match /^[a-z0-9_-]+$/" });
+    }
   }
 
   // Capture the active provider BEFORE removing the key/config, because
   // getProvider() checks the runtimeActiveProvider override first.
   const wasActive = getProvider();
 
+
   if (provider === "local") {
     setRuntimeOllama({ baseUrl: "", model: "", disabled: true });
+  } else if (isCompat) {
+    apiKeyRepo.deleteCompatSlot(provider);
+    // Clear the circuit-breaker entry + sticky fallback so a recreate of the
+    // same slot id doesn't inherit stale state, and so repeat create/delete
+    // cycles don't accumulate dead entries in the breakers map.
+    setRuntimeKey(provider, "");
   } else {
     setRuntimeKey(provider, "");
   }
